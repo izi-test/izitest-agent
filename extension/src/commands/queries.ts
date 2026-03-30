@@ -2,13 +2,13 @@
 // These use chrome.scripting.executeScript (not CDP)
 // because they only need DOM read access
 
-import { resolveTabId, delay } from '../helpers';
+import { resolveTabId, delay, ensureContentScript } from '../helpers';
 import type {
   SnapshotParams, ExtractParams, PageInfoParams,
   ScreenshotParams, ExecuteJsParams, WaitParams,
   GetCookiesParams, CloseTabParams, SnapshotResult
 } from '../types';
-import { sendCdpCommand } from '../cdp-client';
+import { getPage } from '../puppeteer-client';
 
 const MAX_SNAPSHOT_ELEMENTS = 500;
 const WAIT_POLL_INTERVAL_MS = 200;
@@ -18,6 +18,7 @@ const WAIT_MAX_TIMEOUT_MS = 10000;
 
 export async function cmdSnapshot({ tabId, ...options }: SnapshotParams): Promise<SnapshotResult> {
   const resolvedTabId = await resolveTabId(tabId);
+  await ensureContentScript(resolvedTabId);
 
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(resolvedTabId, { type: 'get_snapshot', options }, (response) => {
@@ -164,15 +165,9 @@ export async function cmdWait({ ms, selector, tabId }: WaitParams) {
 
 export async function cmdExecuteJs({ code, tabId }: ExecuteJsParams) {
   const resolvedTabId = await resolveTabId(tabId);
-  const result = await sendCdpCommand<{ result: { value: unknown } }>(
-    resolvedTabId,
-    'Runtime.evaluate',
-    {
-      expression: code,
-      returnByValue: true
-    }
-  );
-  return result.result?.value;
+  const page = await getPage(resolvedTabId);
+  const result = await page.evaluate(code);
+  return result;
 }
 
 // ─── Cookies ────────────────────────────────────────────────────────

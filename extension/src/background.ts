@@ -9,11 +9,11 @@ import {
   cmdGetTabs, cmdCloseTab, cmdWait, cmdExecuteJs, cmdGetCookies
 } from './commands/queries';
 
-// Importing cdp-client to register its lifecycle listeners
-import './cdp-client';
+// Importing puppeteer-client to register its lifecycle listeners
+import './puppeteer-client';
 
 const WS_URL = 'ws://127.0.0.1:3456';
-const RECONNECT_DELAY_MS = 3000;
+const RECONNECT_DELAY_MS = 1000;
 
 let websocket: WebSocket | null = null;
 let profileId: string | null = null;

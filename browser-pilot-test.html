@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Browser Pilot — Test Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0c0c0f;
+  --surface: #16161a;
+  --surface-2: #1e1e24;
+  --surface-3: #26262e;
+  --border: #2e2e38;
+  --border-hover: #3e3e4a;
+  --text: #e8e6e3;
+  --text-muted: #8a8a96;
+  --text-dim: #5a5a66;
+  --accent: #6c5ce7;
+  --accent-glow: rgba(108, 92, 231, 0.15);
+  --green: #00b894;
+  --green-glow: rgba(0, 184, 148, 0.12);
+  --orange: #e17055;
+  --orange-glow: rgba(225, 112, 85, 0.12);
+  --red: #d63031;
+  --red-glow: rgba(214, 48, 49, 0.12);
+  --cyan: #00cec9;
+  --yellow: #fdcb6e;
+  --radius: 10px;
+  --font: 'DM Sans', sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+/* Header */
+.header {
+  padding: 40px 0 20px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(108,92,231,0.06) 0%, transparent 100%);
+}
+.header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 6px;
+}
+.header h1 span { color: var(--accent); }
+.header p { color: var(--text-muted); font-size: 14px; }
+
+/* Event log */
+.event-log-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 32px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.event-log-bar .dot {
+  width: 7px; height: 7px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.event-log-bar span { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+#event-output {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+/* Layout */
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+/* Section */
+.section {
+  margin-top: 48px;
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.difficulty {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid;
+}
+.difficulty.easy { color: var(--green); border-color: var(--green); background: var(--green-glow); }
+.difficulty.medium { color: var(--orange); border-color: var(--orange); background: var(--orange-glow); }
+.difficulty.hard { color: var(--red); border-color: var(--red); background: var(--red-glow); }
+.section-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+}
+.section-desc {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  margin-bottom: 16px;
+  transition: border-color 0.2s;
+}
+.card:hover { border-color: var(--border-hover); }
+.card h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.card .card-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  margin-bottom: 20px;
+}
+
+/* Form elements */
+label.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+}
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="tel"],
+input[type="date"],
+input[type="url"],
+input[type="search"],
+input[type="time"],
+textarea,
+select {
+  width: 100%;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+textarea { resize: vertical; min-height: 80px; }
+select { cursor: pointer; }
+select option { background: var(--surface-2); }
+
+.field-group { margin-bottom: 16px; }
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.field-row-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+
+/* Checkbox / Radio */
+.check-group, .radio-group { display: flex; flex-wrap: wrap; gap: 12px; }
+.check-item, .radio-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+input[type="checkbox"], input[type="radio"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* Range */
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Toggle */
+.toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  cursor: pointer;
+}
+.toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle .track {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-3);
+  border-radius: 12px;
+  transition: background 0.2s;
+}
+.toggle input:checked + .track { background: var(--accent); }
+.toggle .thumb {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 18px; height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.toggle input:checked ~ .thumb { transform: translateX(20px); }
+
+/* Buttons */
+.btn {
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 24px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { filter: brightness(1.15); }
+.btn-secondary {
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { border-color: var(--border-hover); }
+.btn-danger {
+  background: transparent;
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+.btn-danger:hover { background: var(--red-glow); }
+.btn-row { display: flex; gap: 10px; margin-top: 20px; }
+
+/* Tags input */
+.tags-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-height: 42px;
+  align-items: center;
+  cursor: text;
+}
+.tags-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-glow);
+  border: 1px solid rgba(108,92,231,0.3);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.tag .remove {
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 14px;
+  line-height: 1;
+}
+.tag .remove:hover { opacity: 1; }
+.tags-input input {
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--text);
+  flex: 1;
+  min-width: 80px;
+  padding: 0;
+}
+
+/* Star rating */
+.star-rating { display: flex; gap: 4px; flex-direction: row-reverse; justify-content: flex-end; }
+.star-rating input { display: none; }
+.star-rating label {
+  font-size: 28px;
+  color: var(--surface-3);
+  cursor: pointer;
+  transition: color 0.15s;
+  user-select: none;
+}
+.star-rating input:checked ~ label,
+.star-rating label:hover,
+.star-rating label:hover ~ label {
+  color: var(--yellow);
+}
+
+/* Autocomplete */
+.autocomplete-wrap { position: relative; }
+.autocomplete-list {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+  z-index: 10;
+}
+.autocomplete-list.active { display: block; }
+.autocomplete-item {
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.autocomplete-item:hover, .autocomplete-item.highlighted {
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
+/* Drag and drop sortable */
+.sortable-list { display: flex; flex-direction: column; gap: 6px; }
+.sortable-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: grab;
+  user-select: none;
+  transition: all 0.15s;
+}
+.sortable-item:active { cursor: grabbing; }
+.sortable-item.dragging {
+  opacity: 0.5;
+  border-color: var(--accent);
+}
+.sortable-item .grip {
+  color: var(--text-dim);
+  font-size: 16px;
+  letter-spacing: 2px;
+}
+.sortable-item .item-text { flex: 1; font-size: 14px; }
+.sortable-item .item-num {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Multi-step wizard */
+.wizard-steps {
+  display: flex;
+  gap: 0;
+  margin-bottom: 24px;
+}
+.wizard-step {
+  flex: 1;
+  text-align: center;
+  padding: 10px 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  border-bottom: 2px solid var(--border);
+  transition: all 0.2s;
+}
+.wizard-step.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.wizard-step.done {
+  color: var(--green);
+  border-color: var(--green);
+}
+.wizard-panel { display: none; }
+.wizard-panel.active { display: block; }
+
+/* File drop zone */
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 14px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+.drop-zone input { display: none; }
+
+/* Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 1000;
+  justify-content: center;
+  align-items: center;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  width: 90%;
+  max-width: 440px;
+}
+.modal h3 { font-size: 16px; margin-bottom: 16px; }
+
+/* Result panel */
+.result-panel {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: var(--green-glow);
+  border: 1px solid rgba(0,184,148,0.2);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--green);
+  display: none;
+}
+.result-panel.visible { display: block; }
+
+/* Inline edit */
+.inline-edit {
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: 1px solid transparent;
+}
+.inline-edit:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+/* Color picker swatch */
+.color-row { display: flex; gap: 8px; align-items: center; }
+input[type="color"] {
+  width: 40px; height: 40px;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  background: none;
+  padding: 2px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>Browser Pilot</span> — Test Arena</h1>
+  <p>Forms of increasing complexity to test extension automation</p>
+</div>
+
+<div class="event-log-bar">
+  <div class="dot"></div>
+  <span>EVENT LOG</span>
+  <div id="event-output">waiting for interaction...</div>
+</div>
+
+<div class="container">
+
+  <!-- ======================== LEVEL 1 — EASY ======================== -->
+
+  <div class="section">
+    <div class="section-header">
+      <span class="difficulty easy">Easy</span>
+      <h2>1 — Simple login</h2>
+    </div>
+    <p class="section-desc">Basic text inputs, password field, submit button. The minimum viable form.</p>
+    <div class="card">
+      <h3>Sign in</h3>
+      <div class="card-hint">data-testid="login-form"</div>
+      <form id="login-form" data-testid="login-form" onsubmit="return handleSubmit(event, 'login')">
+        <div class="field-group">
+          <label class="field-label" for="login-email">Email</label>
+          <input type="email" id="login-email" name="email" placeholder="you@example.com" required autocomplete="off">
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="login-password">Password</label>
+          <input type="password" id="login-password" name="password" placeholder="••••••••" required>
+        </div>
+        <label class="check-item" style="margin-bottom:16px">
+          <input type="checkbox" id="login-remember" name="remember">
+          Remember me
+        </label>
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary">Sign in</button>
+          <button type="reset" class="btn btn-secondary">Clear</button>
+        </div>
+        <div class="result-panel" id="result-login"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================== LEVEL 2 — EASY ======================== -->
+
+  <div class="section">
+    <div class="section-header">
+      <span class="difficulty easy">Easy</span>
+      <h2>2 — Contact form</h2>
+    </div>
+    <p class="section-desc">Multiple input types, textarea, select dropdown, radio buttons.</p>
+    <div class="card">
+      <h3>Get in touch</h3>
+      <div class="card-hint">data-testid="contact-form"</div>
+      <form id="contact-form" data-testid="contact-form" onsubmit="return handleSubmit(event, 'contact')">
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label" for="contact-first">First name</label>
+            <input type="text" id="contact-first" name="firstName" placeholder="Jane" required>
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="contact-last">Last name</label>
+            <input type="text" id="contact-last" name="lastName" placeholder="Doe" required>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="contact-email">Email</label>
+          <input type="email" id="contact-email" name="email" placeholder="jane@company.com" required>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="contact-phone">Phone</label>
+          <input type="tel" id="contact-phone" name="phone" placeholder="+1 (555) 000-0000">
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="contact-subject">Subject</label>
+          <select id="contact-subject" name="subject" required>
+            <option value="" disabled selected>Choose a topic</option>
+            <option value="sales">Sales inquiry</option>
+            <option value="support">Technical support</option>
+            <option value="billing">Billing question</option>
+            <option value="partnership">Partnership</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Priority</label>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="priority" value="low"> Low</label>
+            <label class="radio-item"><input type="radio" name="priority" value="medium" checked> Medium</label>
+            <label class="radio-item"><input type="radio" name="priority" value="high"> High</label>
+            <label class="radio-item"><input type="radio" name="priority" value="urgent"> Urgent</label>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="contact-message">Message</label>
+          <textarea id="contact-message" name="message" placeholder="Tell us what you need..." rows="4" required></textarea>
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary">Send message</button>
+          <button type="reset" class="btn btn-secondary">Clear</button>
+        </div>
+        <div class="result-panel" id="result-contact"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================== LEVEL 3 — MEDIUM ======================== -->
+
+  <div class="section">
+    <div class="section-header">
+      <span class="difficulty medium">Medium</span>
+      <h2>3 — User profile</h2>
+    </div>
+    <p class="section-desc">Checkboxes, toggle switches, range slider, color picker, date input, file upload zone.</p>
+    <div class="card">
+      <h3>Edit profile</h3>
+      <div class="card-hint">data-testid="profile-form"</div>
+      <form id="profile-form" data-testid="profile-form" onsubmit="return handleSubmit(event, 'profile')">
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label" for="profile-name">Display name</label>
+            <input type="text" id="profile-name" name="displayName" placeholder="janedoe42" required>
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="profile-url">Website</label>
+            <input type="url" id="profile-url" name="website" placeholder="https://yoursite.com">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="profile-bio">Bio</label>
+          <textarea id="profile-bio" name="bio" placeholder="A few words about yourself..." rows="3" maxlength="280"></textarea>
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label" for="profile-dob">Date of birth</label>
+            <input type="date" id="profile-dob" name="dob">
+          </div>
+          <div class="field-group">
+            <label class="field-label">Theme color</label>
+            <div class="color-row">
+              <input type="color" id="profile-color" name="themeColor" value="#6c5ce7">
+              <span id="color-label" style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">#6c5ce7</span>
+            </div>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Interests</label>
+          <div class="check-group">
+            <label class="check-item"><input type="checkbox" name="interests" value="tech"> Technology</label>
+            <label class="check-item"><input type="checkbox" name="interests" value="design"> Design</label>
+            <label class="check-item"><input type="checkbox" name="interests" value="music"> Music</label>
+            <label class="check-item"><input type="checkbox" name="interests" value="sports"> Sports</label>
+            <label class="check-item"><input type="checkbox" name="interests" value="travel"> Travel</label>
+            <label class="check-item"><input type="checkbox" name="interests" value="food"> Food</label>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Notification volume</label>
+          <div style="display:flex;align-items:center;gap:12px">
+            <input type="range" id="profile-volume" name="volume" min="0" max="100" value="60">
+            <span id="volume-label" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);min-width:35px">60</span>
+          </div>
+        </div>
+        <div class="field-group" style="display:flex;flex-direction:column;gap:10px">
+          <div class="toggle-wrap">
+            <label class="toggle">
+              <input type="checkbox" name="emailNotifs" checked>
+              <div class="track"></div>
+              <div class="thumb"></div>
+            </label>
+            Email notifications
+          </div>
+          <div class="toggle-wrap">
+            <label class="toggle">
+              <input type="checkbox" name="darkMode" checked>
+              <div class="track"></div>
+              <div class="thumb"></div>
+            </label>
+            Dark mode
+          </div>
+          <div class="toggle-wrap">
+            <label class="toggle">
+              <input type="checkbox" name="publicProfile">
+              <div class="track"></div>
+              <div class="thumb"></div>
+            </label>
+            Public profile
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Avatar</label>
+          <div class="drop-zone" id="avatar-drop" onclick="document.getElementById('avatar-input').click()">
+            Drop an image here or click to browse
+            <input type="file" id="avatar-input" name="avatar" accept="image/*">
+          </div>
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary">Save profile</button>
+          <button type="reset" class="btn btn-secondary">Discard</button>
+          <button type="button" class="btn btn-danger" onclick="logEvent('delete-account-clicked')">Delete account</button>
+        </div>
+        <div class="result-panel" id="result-profile"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================== LEVEL 4 — MEDIUM ======================== -->
+
+  <div class="section">
+    <div class="section-header">
+      <span class="difficulty medium">Medium</span>
+      <h2>4 — Dynamic interactions</h2>
+    </div>
+    <p class="section-desc">Autocomplete, tags input, star rating, inline editing — elements that require JS interaction.</p>
+    <div class="card">
+      <h3>Review &amp; tagging</h3>
+      <div class="card-hint">data-testid="dynamic-form"</div>
+      <form id="dynamic-form" data-testid="dynamic-form" onsubmit="return handleSubmit(event, 'dynamic')">
+
+        <div class="field-group">
+          <label class="field-label">Rating</label>
+          <div class="star-rating" id="star-rating">
+            <input type="radio" name="rating" value="5" id="star5"><label for="star5">★</label>
+            <input type="radio" name="rating" value="4" id="star4"><label for="star4">★</label>
+            <input type="radio" name="rating" value="3" id="star3"><label for="star3">★</label>
+            <input type="radio" name="rating" value="2" id="star2"><label for="star2">★</label>
+            <input type="radio" name="rating" value="1" id="star1"><label for="star1">★</label>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Country (autocomplete)</label>
+          <div class="autocomplete-wrap">
+            <input type="text" id="country-input" name="country" placeholder="Start typing..." autocomplete="off">
+            <div class="autocomplete-list" id="country-list"></div>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Tags (type + Enter)</label>
+          <div class="tags-input" id="tags-container" onclick="document.getElementById('tag-input').focus()">
+            <input type="text" id="tag-input" placeholder="Add a tag...">
+          </div>
+          <input type="hidden" id="tags-hidden" name="tags" value="">
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Inline editable title</label>
+          <div class="inline-edit" id="inline-title" contenteditable="true" data-testid="inline-edit">Click to edit this title</div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Review text</label>
+          <textarea id="review-text" name="review" placeholder="Write your review..." rows="3"></textarea>
+        </div>
+
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary">Submit review</button>
+        </div>
+        <div class="result-panel" id="result-dynamic"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================== LEVEL 5 — HARD ======================== -->
+
+  <div class="section">
+    <div class="section-header">
+      <span class="difficulty hard">Hard</span>
+      <h2>5 — Multi-step wizard</h2>
+    </div>
+    <p class="section-desc">Three-step form with navigation, conditional fields, and validation between steps.</p>
+    <div class="card">
+      <h3>Create workspace</h3>
+      <div class="card-hint">data-testid="wizard-form"</div>
+      <div class="wizard-steps" id="wizard-steps">
+        <div class="wizard-step active" data-step="1">1 — Details</div>
+        <div class="wizard-step" data-step="2">2 — Team</div>
+        <div class="wizard-step" data-step="3">3 — Confirm</div>
+      </div>
+      <form id="wizard-form" data-testid="wizard-form" onsubmit="return handleSubmit(event, 'wizard')">
+        <!-- Step 1 -->
+        <div class="wizard-panel active" id="wizard-panel-1">
+          <div class="field-group">
+            <label class="field-label" for="ws-name">Workspace name</label>
+            <input type="text" id="ws-name" name="workspaceName" placeholder="My Workspace" required>
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ws-plan">Plan</label>
+            <select id="ws-plan" name="plan" required>
+              <option value="" disabled selected>Select a plan</option>
+              <option value="free">Free — 3 members</option>
+              <option value="pro">Pro — 25 members ($29/mo)</option>
+              <option value="enterprise">Enterprise — Unlimited ($99/mo)</option>
+            </select>
+          </div>
+          <div class="field-group" id="ws-domain-group" style="display:none">
+            <label class="field-label" for="ws-domain">Custom domain (enterprise only)</label>
+            <input type="text" id="ws-domain" name="customDomain" placeholder="workspace.yourcompany.com">
+          </div>
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary" onclick="wizardNext(1)">Next →</button>
+          </div>
+        </div>
+        <!-- Step 2 -->
+        <div class="wizard-panel" id="wizard-panel-2">
+          <div class="field-group">
+            <label class="field-label" for="ws-invite-1">Invite member 1</label>
+            <input type="email" id="ws-invite-1" name="invite1" placeholder="colleague@company.com">
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ws-invite-2">Invite member 2</label>
+            <input type="email" id="ws-invite-2" name="invite2" placeholder="another@company.com">
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ws-role">Default role</label>
+            <select id="ws-role" name="defaultRole">
+              <option value="viewer">Viewer</option>
+              <option value="editor" selected>Editor</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div class="btn-row">
+            <button type="button" class="btn btn-secondary" onclick="wizardBack(2)">← Back</button>
+            <button type="button" class="btn btn-primary" onclick="wizardNext(2)">Next →</button>
+          </div>
+        </div>
+        <!-- Step 3 -->
+        <div class="wizard-panel" id="wizard-panel-3">
+          <div class="field-group">
+            <label class="field-label">Summary</label>
+            <div id="wizard-summary" style="font-size:13px;color:var(--text-muted);line-height:1.8;font-family:var(--mono)"></div>
+          </div>
+          <div class="field-group">
+            <label class="check-item">
+              <input type="checkbox" name="agreeTerms" required>
+              I agree to the terms and conditions
+            </label>
+          </div>
+          <div class="btn-row">
+            <button type="button" class="btn btn-secondary" onclick="wizardBack(3)">← Back</button>
+            <button type="submit" class="btn btn-primary">Create workspace</button>
+          </div>
+        </div>
+        <div class="result-panel" id="result-wizard"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================== LEVEL 6 — HARD ======================== -->
+
+  <div class="section">
+    <div class="section-header">
+      <span class="difficulty hard">Hard</span>
+      <h2>6 — Drag &amp; drop + modal</h2>
+    </div>
+    <p class="section-desc">Sortable list, modal dialog with a nested form, and confirmation flow.</p>
+    <div class="card">
+      <h3>Priority ordering</h3>
+      <div class="card-hint">data-testid="sortable-form"</div>
+      <div class="field-group">
+        <label class="field-label">Drag to reorder priorities</label>
+        <div class="sortable-list" id="sortable-list">
+          <div class="sortable-item" draggable="true" data-value="performance"><span class="grip">⠿</span><span class="item-text">Performance</span><span class="item-num">#1</span></div>
+          <div class="sortable-item" draggable="true" data-value="security"><span class="grip">⠿</span><span class="item-text">Security</span><span class="item-num">#2</span></div>
+          <div class="sortable-item" draggable="true" data-value="ux"><span class="grip">⠿</span><span class="item-text">User Experience</span><span class="item-num">#3</span></div>
+          <div class="sortable-item" draggable="true" data-value="scalability"><span class="grip">⠿</span><span class="item-text">Scalability</span><span class="item-num">#4</span></div>
+          <div class="sortable-item" draggable="true" data-value="cost"><span class="grip">⠿</span><span class="item-text">Cost Efficiency</span><span class="item-num">#5</span></div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary" onclick="openModal()">Save & confirm</button>
+      </div>
+      <div class="result-panel" id="result-sortable"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="confirm-modal">
+  <div class="modal">
+    <h3>Confirm your priorities</h3>
+    <div class="field-group">
+      <label class="field-label" for="modal-reason">Why this ordering?</label>
+      <textarea id="modal-reason" placeholder="Explain your reasoning..." rows="3"></textarea>
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="modal-confidence">Confidence level</label>
+      <select id="modal-confidence">
+        <option value="low">Low — might change</option>
+        <option value="medium" selected>Medium — fairly sure</option>
+        <option value="high">High — very confident</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmSortable()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== EVENT LOG =====
+function logEvent(msg) {
+  const out = document.getElementById('event-output');
+  const ts = new Date().toLocaleTimeString('en', {hour12:false});
+  out.textContent = `[${ts}] ${msg}`;
+  out.style.color = 'var(--cyan)';
+  setTimeout(() => out.style.color = 'var(--cyan)', 300);
+}
+
+document.addEventListener('click', e => {
+  const t = e.target;
+  const desc = t.id ? `#${t.id}` : t.className ? `.${t.className.split(' ')[0]}` : t.tagName.toLowerCase();
+  logEvent(`click → ${t.tagName.toLowerCase()}${desc}`);
+});
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.type === 'range') logEvent(`input → ${t.name || t.id} = ${t.value}`);
+  else if (t.type === 'color') logEvent(`input → color = ${t.value}`);
+  else if (t.id) logEvent(`input → #${t.id}`);
+});
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.tagName === 'SELECT') logEvent(`change → ${t.name || t.id} = "${t.value}"`);
+  else if (t.type === 'checkbox') logEvent(`change → ${t.name || t.id} = ${t.checked}`);
+  else if (t.type === 'radio') logEvent(`change → ${t.name} = "${t.value}"`);
+});
+
+// ===== FORM SUBMIT =====
+function handleSubmit(e, formName) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  const panel = document.getElementById(`result-${formName}`);
+  panel.textContent = `✓ Submitted: ${JSON.stringify(data, null, 2)}`;
+  panel.classList.add('visible');
+  logEvent(`submit → ${formName}: ${JSON.stringify(data)}`);
+  return false;
+}
+
+// ===== RANGE + COLOR =====
+document.getElementById('profile-volume').addEventListener('input', function() {
+  document.getElementById('volume-label').textContent = this.value;
+});
+document.getElementById('profile-color').addEventListener('input', function() {
+  document.getElementById('color-label').textContent = this.value;
+});
+
+// ===== AUTOCOMPLETE =====
+const countries = ['Afghanistan','Albania','Algeria','Argentina','Australia','Austria','Belgium','Brazil','Canada','Chile','China','Colombia','Croatia','Czech Republic','Denmark','Egypt','Finland','France','Germany','Greece','Hungary','Iceland','India','Indonesia','Iran','Iraq','Ireland','Israel','Italy','Japan','Kenya','Mexico','Morocco','Netherlands','New Zealand','Nigeria','Norway','Pakistan','Peru','Philippines','Poland','Portugal','Romania','Russia','Saudi Arabia','Singapore','South Africa','South Korea','Spain','Sweden','Switzerland','Thailand','Turkey','Ukraine','United Arab Emirates','United Kingdom','United States','Vietnam'];
+
+const countryInput = document.getElementById('country-input');
+const countryList = document.getElementById('country-list');
+let hlIndex = -1;
+
+countryInput.addEventListener('input', function() {
+  const val = this.value.toLowerCase();
+  countryList.innerHTML = '';
+  hlIndex = -1;
+  if (val.length < 1) { countryList.classList.remove('active'); return; }
+  const matches = countries.filter(c => c.toLowerCase().includes(val)).slice(0, 8);
+  if (!matches.length) { countryList.classList.remove('active'); return; }
+  matches.forEach((c, i) => {
+    const div = document.createElement('div');
+    div.className = 'autocomplete-item';
+    div.textContent = c;
+    div.onclick = () => { countryInput.value = c; countryList.classList.remove('active'); logEvent(`autocomplete → selected "${c}"`); };
+    countryList.appendChild(div);
+  });
+  countryList.classList.add('active');
+});
+countryInput.addEventListener('keydown', function(e) {
+  const items = countryList.querySelectorAll('.autocomplete-item');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); hlIndex = Math.min(hlIndex + 1, items.length - 1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); hlIndex = Math.max(hlIndex - 1, 0); }
+  else if (e.key === 'Enter' && hlIndex >= 0) { e.preventDefault(); items[hlIndex].click(); return; }
+  items.forEach((it, i) => it.classList.toggle('highlighted', i === hlIndex));
+});
+document.addEventListener('click', e => { if (!e.target.closest('.autocomplete-wrap')) countryList.classList.remove('active'); });
+
+// ===== TAGS =====
+const tagsContainer = document.getElementById('tags-container');
+const tagInput = document.getElementById('tag-input');
+const tagsHidden = document.getElementById('tags-hidden');
+let tags = [];
+
+tagInput.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && this.value.trim()) {
+    e.preventDefault();
+    addTag(this.value.trim());
+    this.value = '';
+  } else if (e.key === 'Backspace' && !this.value && tags.length) {
+    removeTag(tags.length - 1);
+  }
+});
+function addTag(text) {
+  if (tags.includes(text)) return;
+  tags.push(text);
+  renderTags();
+  logEvent(`tag-add → "${text}"`);
+}
+function removeTag(i) {
+  logEvent(`tag-remove → "${tags[i]}"`);
+  tags.splice(i, 1);
+  renderTags();
+}
+function renderTags() {
+  tagsContainer.querySelectorAll('.tag').forEach(t => t.remove());
+  tags.forEach((t, i) => {
+    const el = document.createElement('span');
+    el.className = 'tag';
+    el.innerHTML = `${t}<span class="remove" onclick="removeTag(${i})">×</span>`;
+    tagsContainer.insertBefore(el, tagInput);
+  });
+  tagsHidden.value = tags.join(',');
+}
+
+// ===== DROP ZONE =====
+const dropZone = document.getElementById('avatar-drop');
+const avatarInput = document.getElementById('avatar-input');
+['dragenter','dragover'].forEach(ev => dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); }));
+['dragleave','drop'].forEach(ev => dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove('dragover'); }));
+dropZone.addEventListener('drop', e => {
+  avatarInput.files = e.dataTransfer.files;
+  dropZone.textContent = `✓ ${e.dataTransfer.files[0].name}`;
+  logEvent(`file-drop → ${e.dataTransfer.files[0].name}`);
+});
+avatarInput.addEventListener('change', function() {
+  if (this.files[0]) {
+    dropZone.textContent = `✓ ${this.files[0].name}`;
+    logEvent(`file-select → ${this.files[0].name}`);
+  }
+});
+
+// ===== WIZARD =====
+let currentStep = 1;
+const planSelect = document.getElementById('ws-plan');
+planSelect.addEventListener('change', function() {
+  document.getElementById('ws-domain-group').style.display = this.value === 'enterprise' ? 'block' : 'none';
+});
+
+function wizardNext(from) {
+  if (from === 1) {
+    if (!document.getElementById('ws-name').value || !planSelect.value) {
+      logEvent('wizard → validation failed on step 1');
+      return;
+    }
+  }
+  if (from === 2) {
+    updateWizardSummary();
+  }
+  setWizardStep(from + 1);
+}
+function wizardBack(from) { setWizardStep(from - 1); }
+function setWizardStep(step) {
+  currentStep = step;
+  document.querySelectorAll('.wizard-step').forEach(s => {
+    const n = parseInt(s.dataset.step);
+    s.classList.toggle('active', n === step);
+    s.classList.toggle('done', n < step);
+  });
+  document.querySelectorAll('.wizard-panel').forEach((p, i) => p.classList.toggle('active', i + 1 === step));
+  logEvent(`wizard → step ${step}`);
+}
+function updateWizardSummary() {
+  const name = document.getElementById('ws-name').value;
+  const plan = planSelect.value;
+  const inv1 = document.getElementById('ws-invite-1').value;
+  const inv2 = document.getElementById('ws-invite-2').value;
+  const role = document.getElementById('ws-role').value;
+  const domain = document.getElementById('ws-domain').value;
+  let html = `Workspace: ${name}<br>Plan: ${plan}`;
+  if (domain) html += `<br>Domain: ${domain}`;
+  if (inv1) html += `<br>Invite: ${inv1}`;
+  if (inv2) html += `<br>Invite: ${inv2}`;
+  html += `<br>Default role: ${role}`;
+  document.getElementById('wizard-summary').innerHTML = html;
+}
+
+// ===== SORTABLE =====
+const sortableList = document.getElementById('sortable-list');
+let dragItem = null;
+
+sortableList.addEventListener('dragstart', e => {
+  dragItem = e.target.closest('.sortable-item');
+  dragItem.classList.add('dragging');
+  logEvent(`drag-start → "${dragItem.dataset.value}"`);
+});
+sortableList.addEventListener('dragend', e => {
+  dragItem.classList.remove('dragging');
+  updateSortNumbers();
+  dragItem = null;
+});
+sortableList.addEventListener('dragover', e => {
+  e.preventDefault();
+  const target = e.target.closest('.sortable-item');
+  if (target && target !== dragItem) {
+    const rect = target.getBoundingClientRect();
+    const mid = rect.top + rect.height / 2;
+    if (e.clientY < mid) sortableList.insertBefore(dragItem, target);
+    else sortableList.insertBefore(dragItem, target.nextSibling);
+  }
+});
+function updateSortNumbers() {
+  sortableList.querySelectorAll('.sortable-item').forEach((item, i) => {
+    item.querySelector('.item-num').textContent = `#${i + 1}`;
+  });
+}
+
+// ===== MODAL =====
+function openModal() {
+  document.getElementById('confirm-modal').classList.add('active');
+  logEvent('modal → opened');
+}
+function closeModal() {
+  document.getElementById('confirm-modal').classList.remove('active');
+  logEvent('modal → closed');
+}
+function confirmSortable() {
+  const order = [...sortableList.querySelectorAll('.sortable-item')].map(i => i.dataset.value);
+  const reason = document.getElementById('modal-reason').value;
+  const confidence = document.getElementById('modal-confidence').value;
+  const data = { order, reason, confidence };
+  const panel = document.getElementById('result-sortable');
+  panel.textContent = `✓ Confirmed: ${JSON.stringify(data, null, 2)}`;
+  panel.classList.add('visible');
+  closeModal();
+  logEvent(`sortable-confirm → ${JSON.stringify(data)}`);
+}
+
+document.getElementById('confirm-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// ===== INLINE EDIT =====
+document.getElementById('inline-title').addEventListener('blur', function() {
+  logEvent(`inline-edit → "${this.textContent}"`);
+});
+
+// ===== STAR RATING LOG =====
+document.querySelectorAll('.star-rating input').forEach(r => {
+  r.addEventListener('change', function() { logEvent(`rating → ${this.value} stars`); });
+});
+</script>
+</body>
+</html>

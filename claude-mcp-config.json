@@ -2,7 +2,7 @@
   "mcpServers": {
     "browser-pilot": {
       "command": "node",
-      "args": ["/CHEMIN/VERS/browser-pilot/mcp-server/server.js"],
+      "args": ["/Library/Dev/browser-pilot/mcp-server/server.js"],
       "env": {}
     }
   }

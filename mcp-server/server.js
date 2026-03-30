@@ -9,6 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { WebSocketServer } from 'ws';
 import { z } from 'zod';
 import { createRequire } from 'module';
+import { execSync } from 'child_process';
 
 const WS_PORT = process.env.WS_PORT ? parseInt(process.env.WS_PORT) : 3456;
 
@@ -18,9 +19,33 @@ const profiles = new Map(); // profileId → ws
 const pendingCommands = new Map(); // commandId → { resolve, reject, timeout }
 let commandCounter = 0;
 
-const wss = new WebSocketServer({ port: WS_PORT, host: '127.0.0.1' });
+let wss;
 
-wss.on('connection', (ws) => {
+function startWebSocketServer() {
+  wss = new WebSocketServer({ port: WS_PORT, host: '127.0.0.1' });
+
+  wss.on('listening', () => {
+    log(`WebSocket bridge listening on port ${WS_PORT}`);
+  });
+
+  wss.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      log(`Port ${WS_PORT} is in use. Attempting to kill zombie process...`);
+      try {
+        // Find PID holding the port and kill it
+        execSync(`lsof -ti:${WS_PORT} | xargs kill -9`);
+        log(`Successfully killed zombie process on port ${WS_PORT}. Restarting server...`);
+        setTimeout(startWebSocketServer, 500);
+      } catch (killErr) {
+        log(`Failed to kill process on port ${WS_PORT}. Is it available? ${killErr.message}`);
+        process.exit(1);
+      }
+    } else {
+      log(`WebSocket error: ${err.message}`);
+    }
+  });
+
+  wss.on('connection', (ws) => {
   let registeredProfileId = null;
 
   ws.on('message', (data) => {
@@ -60,15 +85,39 @@ wss.on('connection', (ws) => {
     }
   });
 });
+}
+
+startWebSocketServer();
+
+// Wait for at least one browser profile to connect (up to waitMs)
+function waitForProfile(profileId, waitMs = 8000) {
+  return new Promise((resolve) => {
+    const getWs = () => profileId ? profiles.get(profileId) : profiles.values().next().value;
+    const ws = getWs();
+    if (ws && ws.readyState === 1) return resolve(ws);
+
+    const start = Date.now();
+    const interval = setInterval(() => {
+      const ws = getWs();
+      if (ws && ws.readyState === 1) {
+        clearInterval(interval);
+        resolve(ws);
+      } else if (Date.now() - start >= waitMs) {
+        clearInterval(interval);
+        resolve(null);
+      }
+    }, 250);
+  });
+}
 
 function sendCommand(profileId, command, params, timeoutMs = 30000) {
-  return new Promise((resolve, reject) => {
-    const ws = profileId ? profiles.get(profileId) : profiles.values().next().value;
-    if (!ws || ws.readyState !== 1) {
+  return new Promise(async (resolve, reject) => {
+    const ws = await waitForProfile(profileId);
+    if (!ws) {
       reject(new Error(
         profileId
           ? `Profile "${profileId}" not connected. Connected profiles: ${[...profiles.keys()].join(', ') || 'none'}`
-          : 'No browser profiles connected'
+          : 'No browser profiles connected. Make sure Chrome is open with the Browser Pilot extension.'
       ));
       return;
     }
@@ -92,7 +141,7 @@ function log(msg) {
   process.stderr.write(`[BrowserPilot] ${msg}\n`);
 }
 
-log(`WebSocket bridge listening on port ${WS_PORT}`);
+
 
 // ─── MCP Server ─────────────────────────────────────────────────────
 
@@ -383,3 +432,16 @@ server.tool(
 const transport = new StdioServerTransport();
 await server.connect(transport);
 log('MCP server running on stdio');
+
+// ─── Graceful Shutdown ──────────────────────────────────────────────
+
+function cleanup() {
+  log('Shutting down server...');
+  if (wss) wss.close();
+  server.close();
+  process.exit(0);
+}
+
+process.on('SIGINT', cleanup);
+process.on('SIGTERM', cleanup);
+process.stdin.on('close', cleanup);
