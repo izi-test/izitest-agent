@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "browser-pilot": {
+      "command": "node",
+      "args": ["/CHEMIN/VERS/browser-pilot/mcp-server/server.js"],
+      "env": {}
+    }
+  }
+}

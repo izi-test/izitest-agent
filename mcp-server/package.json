@@ -1,0 +1,15 @@
+{
+  "name": "browser-pilot-mcp",
+  "version": "1.0.0",
+  "description": "MCP server + WebSocket bridge for Browser Pilot",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "ws": "^8.18.0"
+  }
+}
