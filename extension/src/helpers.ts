@@ -61,7 +61,7 @@ export async function captureTabScreenshot(tabId: number, options: { format?: 'p
   // (captureVisibleTab captures the active tab of the specified window)
   if (!tab.active) {
     await chrome.tabs.update(tabId, { active: true });
-    await delay(100); // brief settle for tab activation
+    await delay(50); // brief settle for tab activation
   }
 
   const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {

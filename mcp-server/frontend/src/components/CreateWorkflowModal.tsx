@@ -223,16 +223,13 @@ WORKFLOW DESCRIPTION: "${description}"
 
 INSTRUCTIONS:
 1. First, call the "start_recording" tool with the name "${name}" and description "${description}".
-2. Then, execute the browser actions described above step by step. For each action:
-   - Use the appropriate browser tool (navigate, click, fill, snapshot, etc.)
-   - After each successful action, call "record_step" with the action_id returned.
-3. After all steps are recorded, call "stop_recording" to save the workflow.
+2. Then, execute the browser actions described above step by step using the appropriate browser tools (navigate, click, fill, snapshot, etc.). Steps are automatically recorded — do NOT call record_step.
+3. After all steps are done, call "stop_recording" to save the workflow (variable detection runs automatically).
 
 IMPORTANT:
 - Use "snapshot" to scan the page and identify elements before interacting with them.
 - Use the element references (@e1, @e2, etc.) from snapshot results for precise interactions.
 - Be methodical: navigate first, then snapshot, then interact with elements.
-- Record every meaningful action as a step in the workflow.
 - If a step fails, try an alternative approach (different selector, etc.).
 
 Begin now.`;

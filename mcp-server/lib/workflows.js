@@ -46,6 +46,24 @@ export function saveActionToHistory(command, params, refKey) {
   if (actionHistory.size > 100) {
     actionHistory.delete(actionHistory.keys().next().value);
   }
+
+  // Auto-record step when recording is active
+  if (recording) {
+    const step = {
+      command,
+      params: { ...recordParams },
+      ...(locators && { locators }),
+    };
+    // Purge null/undefined from params
+    Object.keys(step.params).forEach(k => {
+      if (step.params[k] === undefined || step.params[k] === null) {
+        delete step.params[k];
+      }
+    });
+    recording.steps.push(step);
+    log(`Auto-recorded step: ${command} via ${id} (${recording.steps.length} steps total)`);
+  }
+
   return id;
 }
 
@@ -275,30 +293,36 @@ export async function deleteWorkflow(name) {
 }
 
 export async function listWorkflows() {
-  const wfResult = await pool.query('SELECT * FROM workflows ORDER BY updated_at DESC');
-  const workflows = [];
+  const result = await pool.query(
+    `SELECT w.*, s.step_order, s.command, s.params, s.locators, s.intent, s.variable
+     FROM workflows w
+     LEFT JOIN workflow_steps s ON s.workflow_id = w.id
+     ORDER BY w.updated_at DESC, s.step_order ASC`
+  );
 
-  for (const wf of wfResult.rows) {
-    const stepsResult = await pool.query(
-      'SELECT * FROM workflow_steps WHERE workflow_id = $1 ORDER BY step_order',
-      [wf.id]
-    );
-    workflows.push({
-      name: wf.name,
-      description: wf.description,
-      createdAt: wf.created_at.toISOString(),
-      variables: wf.variables || {},
-      steps: stepsResult.rows.map(row => ({
+  const workflowMap = new Map();
+  for (const row of result.rows) {
+    if (!workflowMap.has(row.id)) {
+      workflowMap.set(row.id, {
+        name: row.name,
+        description: row.description,
+        createdAt: row.created_at.toISOString(),
+        variables: row.variables || {},
+        steps: []
+      });
+    }
+    if (row.step_order != null) {
+      workflowMap.get(row.id).steps.push({
         command: row.command,
         params: row.params || {},
         ...(row.locators && { locators: row.locators }),
         ...(row.intent && { intent: row.intent }),
         ...(row.variable && { variable: row.variable }),
-      }))
-    });
+      });
+    }
   }
 
-  return workflows;
+  return [...workflowMap.values()];
 }
 
 export async function executeWorkflow(name, variables, substitutions, start_step, new_window, sendCommand, trigger = 'manual', onProgress = null) {

@@ -36,7 +36,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
     async ({ url, profile, tabId }) => {
       const result = await sendCommand(profile, 'navigate', { url, tabId });
       const actionId = saveActionToHistory('navigate', { url, tabId });
-      return { content: [{ type: 'text', text: `Action executed successfully. To record this step in a workflow, use record_step passing action_id: "${actionId}".\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
 
@@ -54,7 +54,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
     async ({ profile, selector, text, ref, tabId }) => {
       const result = await sendCommand(profile, 'click', { selector, text, ref, tabId });
       const actionId = saveActionToHistory('click', { selector, text, tabId }, ref);
-      return { content: [{ type: 'text', text: `Action executed successfully. To record this step in a workflow, use record_step passing action_id: "${actionId}".\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
 
@@ -73,7 +73,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
     async ({ selector, value, profile, tabId, ref, clear }) => {
       const result = await sendCommand(profile, 'fill', { selector, value, tabId, ref, clear });
       const actionId = saveActionToHistory('fill', { selector, value, tabId, clear }, ref);
-      return { content: [{ type: 'text', text: `Action executed successfully. To record this step in a workflow, use record_step passing action_id: "${actionId}".\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
 
@@ -238,7 +238,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
     async ({ profile, tabId, ms, selector }) => {
       const result = await sendCommand(profile, 'wait', { ms, selector, tabId });
       const actionId = saveActionToHistory('wait', { ms, selector, tabId });
-      return { content: [{ type: 'text', text: `Action executed successfully. To record this step in a workflow, use record_step passing action_id: "${actionId}".\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
 
@@ -255,7 +255,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
       const result = await sendCommand(profile, 'execute_js', { code, tabId });
       const actionId = saveActionToHistory('execute_js', { code, tabId });
       const textResponse = result !== undefined ? JSON.stringify(result, null, 2) : "Execution successful (no return value)";
-      return { content: [{ type: 'text', text: `Action executed successfully. To record this step in a workflow, use record_step passing action_id: "${actionId}".\n\nResult:\n` + textResponse }] };
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + textResponse }] };
     }
   );
 
@@ -272,7 +272,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
     async ({ key, modifiers, profile, tabId }) => {
       const result = await sendCommand(profile, 'keyboard', { key, modifiers, tabId });
       const actionId = saveActionToHistory('keyboard', { key, modifiers, tabId });
-      return { content: [{ type: 'text', text: `Action executed successfully. To record this step in a workflow, use record_step passing action_id: "${actionId}".\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
 

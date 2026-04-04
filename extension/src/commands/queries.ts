@@ -11,7 +11,6 @@ import type {
 import { getPage } from '../puppeteer-client';
 
 const MAX_SNAPSHOT_ELEMENTS = 500;
-const WAIT_POLL_INTERVAL_MS = 200;
 const WAIT_MAX_TIMEOUT_MS = 10000;
 
 // ─── Snapshot ───────────────────────────────────────────────────────
@@ -124,7 +123,7 @@ export async function cmdScreenshot({ tabId, annotate }: ScreenshotParams) {
       chrome.tabs.sendMessage(resolvedTabId, { type: 'draw_annotations' }, resolve);
     });
     // Wait for render
-    await delay(300);
+    await delay(100);
   }
 
   const dataUrl = await captureTabScreenshot(resolvedTabId, { format: 'png', quality: 90 });
@@ -168,18 +167,50 @@ export async function cmdWait({ ms, selector, tabId }: WaitParams) {
 
   if (selector) {
     const resolvedTabId = await resolveTabId(tabId);
-    const startTime = Date.now();
 
-    while (Date.now() - startTime < WAIT_MAX_TIMEOUT_MS) {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: resolvedTabId },
-        func: (sel: string) => !!document.querySelector(sel),
-        args: [selector]
-      });
-      if (results[0]?.result) return { found: true, selector };
-      await delay(WAIT_POLL_INTERVAL_MS);
-    }
-    return { found: false, selector, timeout: true };
+    // First check if the element already exists
+    const immediate = await chrome.scripting.executeScript({
+      target: { tabId: resolvedTabId },
+      func: (sel: string) => !!document.querySelector(sel),
+      args: [selector]
+    });
+    if (immediate[0]?.result) return { found: true, selector };
+
+    // Use MutationObserver instead of polling for better performance
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: resolvedTabId },
+      func: (sel: string, timeoutMs: number) => {
+        return new Promise<{ found: boolean; selector: string; timeout?: boolean }>((resolve) => {
+          // Check once more in case it appeared between checks
+          if (document.querySelector(sel)) {
+            return resolve({ found: true, selector: sel });
+          }
+
+          const timer = setTimeout(() => {
+            observer.disconnect();
+            resolve({ found: false, selector: sel, timeout: true });
+          }, timeoutMs);
+
+          const observer = new MutationObserver(() => {
+            if (document.querySelector(sel)) {
+              observer.disconnect();
+              clearTimeout(timer);
+              resolve({ found: true, selector: sel });
+            }
+          });
+
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'id', 'style', 'hidden']
+          });
+        });
+      },
+      args: [selector, WAIT_MAX_TIMEOUT_MS]
+    });
+
+    return results[0]?.result || { found: false, selector, timeout: true };
   }
 
   return { error: 'Specify either ms or selector' };

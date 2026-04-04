@@ -2,10 +2,12 @@
 
 import { WebSocketServer } from 'ws';
 import { execSync } from 'child_process';
+import { EventEmitter } from 'events';
 import { log } from './logger.js';
 
 const profiles = new Map();       // profileId → ws
 const pendingCommands = new Map(); // commandId → { resolve, reject, timeout }
+const profileEvents = new EventEmitter();
 let commandCounter = 0;
 let wss;
 
@@ -50,6 +52,7 @@ export function startWebSocketServer(port) {
         if (msg.type === 'register') {
           registeredProfileId = msg.profileId;
           profiles.set(msg.profileId, ws);
+          profileEvents.emit('connected', msg.profileId);
           log(`Profile registered: ${msg.profileId}`);
         }
 
@@ -101,17 +104,21 @@ function waitForProfile(profileId, waitMs = 8000) {
     const ws = getWs();
     if (ws && ws.readyState === 1) return resolve(ws);
 
-    const start = Date.now();
-    const interval = setInterval(() => {
+    const timer = setTimeout(() => {
+      profileEvents.removeListener('connected', onConnected);
+      resolve(null);
+    }, waitMs);
+
+    function onConnected() {
       const ws = getWs();
       if (ws && ws.readyState === 1) {
-        clearInterval(interval);
+        clearTimeout(timer);
+        profileEvents.removeListener('connected', onConnected);
         resolve(ws);
-      } else if (Date.now() - start >= waitMs) {
-        clearInterval(interval);
-        resolve(null);
       }
-    }, 250);
+    }
+
+    profileEvents.on('connected', onConnected);
   });
 }
 

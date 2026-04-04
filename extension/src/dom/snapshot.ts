@@ -70,7 +70,7 @@ export async function resolveRef(ref: string): Promise<{ x: number; y: number; t
   if (!inViewport) {
     (el as HTMLElement).scrollIntoView({ behavior: 'instant', block: 'center' });
     // Wait for layout to settle after scrolling
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 50));
     rect = el.getBoundingClientRect();
   }
 

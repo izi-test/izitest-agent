@@ -7,9 +7,8 @@ trigger: always_on
 When the user asks to "enregistrer", "record", or "sauvegarder" a workflow/parcours for browser automation, use the **browser-pilot** MCP tools in this order:
 
 1. `start_recording({ name, description })` - Start recording
-2. Perform browser actions (`navigate`, `click`, `fill`, etc.)
-3. After EACH successful action, call `record_step({ command, params, intent })` with the exact command and params that worked
-4. When the task is complete, call `stop_recording()` to save the workflow
+2. Perform browser actions (`navigate`, `click`, `fill`, etc.) — steps are automatically recorded, do NOT call `record_step`
+3. When the task is complete, call `stop_recording()` to save the workflow (variable detection runs automatically in batch)
 
 When the user asks to "rejouer", "replay", or "relancer" a workflow:
 - Call `replay_workflow({ name })` — this single tool call executes ALL steps automatically

@@ -265,6 +265,7 @@ interface ReplayStep extends WorkflowStep {
 
 interface LocatingResult {
   locatorUsed: string;
+  locatorValue: string;
   handle: ElementHandle<Element>;
   usedFallback: boolean;
 }
@@ -314,8 +315,8 @@ async function findElementWithLocators(
     else selector = locator.value; // css, testid, attribute
 
     const waitOptions = condition === 'visible'
-      ? { timeout: 5500, visible: true }
-      : { timeout: 5500 };
+      ? { timeout: 2000, visible: true }
+      : { timeout: 2000 };
 
     try {
       let handle = await page.waitForSelector(selector, waitOptions).catch(() => null);
@@ -323,7 +324,7 @@ async function findElementWithLocators(
 
       // Fallback: if visible condition failed, retry without it
       if (!handle && condition === 'visible') {
-        handle = await page.waitForSelector(selector, { timeout: 1500 }).catch(() => null);
+        handle = await page.waitForSelector(selector, { timeout: 800 }).catch(() => null);
         if (handle) usedFallback = true;
       }
 
@@ -348,7 +349,7 @@ async function findElementWithLocators(
 
       hasWinner = true;
       console.log(`  ✅ Found element with locator ${locator.type}="${locator.value}"${usedFallback ? ' (fallback)' : ''}`);
-      return { locatorUsed: locator.type, handle, usedFallback };
+      return { locatorUsed: locator.type, locatorValue: locator.value, handle, usedFallback };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       throw new Error(errorMessage);
@@ -569,7 +570,7 @@ export async function cmdReplaySequence({ steps, startIndex, newWindow }: Replay
       }
 
       if (resolvedViaVariable) {
-        const delayMs = step.command === 'click' ? 800 : 300;
+        const delayMs = step.command === 'click' ? 150 : 50;
         console.log(`  ⏳ Waiting ${delayMs}ms...`);
         await delay(delayMs);
         continue;
@@ -611,21 +612,37 @@ export async function cmdReplaySequence({ steps, startIndex, newWindow }: Replay
               // so it always hits the live context regardless of re-renders.
               await handle.dispose().catch(() => {});
 
-              const cssLocator = (step.locators || []).find((l: Locator) => l.type === 'css');
-              const sel = cssLocator?.value || baseParams.selector;
+              const winningType = result.locatorUsed;
+              const winningValue = result.locatorValue;
 
-              if (!sel) throw new Error('No CSS selector available for click fallback');
-
-              console.log(`  🖱️ Querying element position via page.evaluate (${sel})...`);
-              const box = await page.evaluate((s: string) => {
-                const el = document.querySelector(s);
+              console.log(`  🖱️ Querying element position via page.evaluate (${winningType}="${winningValue}")...`);
+              const box = await page.evaluate((type: string, value: string) => {
+                let el: Element | null = null;
+                if (type === 'xpath') {
+                  const xResult = document.evaluate(value, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                  el = xResult.singleNodeValue as Element | null;
+                } else if (type === 'text') {
+                  // Walk text nodes to find containing element
+                  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+                  while (walker.nextNode()) {
+                    if (walker.currentNode.textContent?.includes(value)) {
+                      el = walker.currentNode.parentElement;
+                      break;
+                    }
+                  }
+                } else if (type === 'aria' || type === 'label') {
+                  el = document.querySelector(`[aria-label="${value}"]`) || document.querySelector(`[role][aria-label="${value}"]`);
+                } else {
+                  // css, testid, attribute, placeholder
+                  el = document.querySelector(value);
+                }
                 if (!el) return null;
                 el.scrollIntoView({ behavior: 'instant', block: 'center' });
                 const r = el.getBoundingClientRect();
                 return r.width > 0 && r.height > 0
                   ? { x: r.left + r.width / 2, y: r.top + r.height / 2 }
                   : null;
-              }, sel);
+              }, winningType, winningValue);
 
               if (box) {
                 console.log(`  🖱️ Clicking at (${Math.round(box.x)}, ${Math.round(box.y)}) via mouse...`);
@@ -633,9 +650,16 @@ export async function cmdReplaySequence({ steps, startIndex, newWindow }: Replay
               } else {
                 // Off-screen or zero-size element — JS dispatch click
                 console.log(`  ↩️  No bounding box, dispatching JS click via page.evaluate`);
-                await page.evaluate((s: string) => {
-                  (document.querySelector(s) as HTMLElement | null)?.click();
-                }, sel);
+                await page.evaluate((type: string, value: string) => {
+                  let el: Element | null = null;
+                  if (type === 'xpath') {
+                    const xResult = document.evaluate(value, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    el = xResult.singleNodeValue as Element | null;
+                  } else {
+                    el = document.querySelector(value);
+                  }
+                  (el as HTMLElement | null)?.click();
+                }, winningType, winningValue);
               }
             } else if (step.command === 'fill') {
               console.log(`  ⌨️ Filling with value: "${baseParams.value}"`);
@@ -644,30 +668,43 @@ export async function cmdReplaySequence({ steps, startIndex, newWindow }: Replay
               // then page.keyboard (Input.dispatchKeyEvent = no context needed).
               await handle.dispose().catch(() => {});
 
-              const cssLocator = (step.locators || []).find((l: Locator) => l.type === 'css');
-              const sel = cssLocator?.value || baseParams.selector;
-              if (!sel) throw new Error('No CSS selector available for fill');
+              const fillType = result.locatorUsed;
+              const fillValue = result.locatorValue;
 
               // Focus the element via page.evaluate + mouse click for real focus
-              const box = await page.evaluate((s: string) => {
-                const el = document.querySelector(s) as HTMLElement | null;
+              const box = await page.evaluate((type: string, value: string) => {
+                let el: Element | null = null;
+                if (type === 'xpath') {
+                  const xResult = document.evaluate(value, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                  el = xResult.singleNodeValue as Element | null;
+                } else if (type === 'aria' || type === 'label') {
+                  el = document.querySelector(`[aria-label="${value}"]`) || document.querySelector(`[role][aria-label="${value}"]`);
+                } else {
+                  el = document.querySelector(value);
+                }
                 if (!el) return null;
                 el.scrollIntoView({ behavior: 'instant', block: 'center' });
                 const r = el.getBoundingClientRect();
                 return r.width > 0 && r.height > 0
                   ? { x: r.left + r.width / 2, y: r.top + r.height / 2 }
                   : null;
-              }, sel);
+              }, fillType, fillValue);
 
               if (box) {
                 await page.mouse.click(box.x, box.y);
               } else {
                 // Fallback: JS focus
-                await page.evaluate((s: string) => {
-                  const el = document.querySelector(s) as HTMLElement | null;
-                  el?.focus();
-                  el?.click();
-                }, sel);
+                await page.evaluate((type: string, value: string) => {
+                  let el: Element | null = null;
+                  if (type === 'xpath') {
+                    const xResult = document.evaluate(value, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    el = xResult.singleNodeValue as Element | null;
+                  } else {
+                    el = document.querySelector(value);
+                  }
+                  (el as HTMLElement | null)?.focus();
+                  (el as HTMLElement | null)?.click();
+                }, fillType, fillValue);
               }
               await delay(50);
 
@@ -762,7 +799,7 @@ export async function cmdReplaySequence({ steps, startIndex, newWindow }: Replay
       break;
     }
 
-    const delayMs = step.command === 'navigate' ? 1500 : step.command === 'click' ? 800 : 300;
+    const delayMs = step.command === 'navigate' ? 300 : step.command === 'click' ? 150 : 50;
     console.log(`  ⏳ Waiting ${delayMs}ms...`);
     await delay(delayMs);
   }

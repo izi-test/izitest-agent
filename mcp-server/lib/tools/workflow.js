@@ -17,7 +17,7 @@ export function registerWorkflowTools(server, { sendCommand }) {
   // --- Tool: start_recording ---
   server.tool(
     'start_recording',
-    'Start recording a reusable browser automation workflow. When the user asks to "record", "save", or "enregistrer" a workflow/parcours, call this tool FIRST. Then use record_step after each successful browser action (navigate, click, fill, etc.). Finally call stop_recording when done.',
+    'Start recording a reusable browser automation workflow. When the user asks to "record", "save", or "enregistrer" a workflow/parcours, call this tool FIRST. Every browser action (navigate, click, fill, etc.) is automatically recorded — no need to call record_step. When done, call stop_recording to save (variable detection runs automatically at save time).',
     {
       name: z.string().describe('Name of the workflow (used as filename)'),
       description: z.string().optional().describe('Human-readable description of what the workflow does')
@@ -33,15 +33,15 @@ export function registerWorkflowTools(server, { sendCommand }) {
     }
   );
 
-  // --- Tool: record_step ---
+  // --- Tool: record_step (deprecated — steps are now auto-recorded) ---
   server.tool(
     'record_step',
-    'Record a single successful browser action step into the current workflow. Call this AFTER an action succeeds by passing its action_id (e.g. "act_1"). Automatically detects if the step should be variabilized (fill values become {{variables}}, clicks on list/box items become selectable by index or text). This guarantees 100% accurate parameters recording and enables dynamic workflow replay with different data sets.',
+    '[DEPRECATED] Steps are now automatically recorded when a recording is active. You do NOT need to call this tool. Just execute browser actions and call stop_recording when done. If called, it will add an intent/variable_name override to the last recorded step.',
     {
-      action_id: z.string().describe('The ID of the action to record (returned when you executed the command, e.g. "act_1")'),
-      intent: z.string().optional().describe('Human-readable description of what this step does (e.g. "click the login button")'),
-      variable_name: z.string().optional().describe('Override the auto-detected variable name for this step (e.g. "search_query", "product")'),
-      skip_variable: z.boolean().optional().describe('Set to true to skip variable detection for this step (e.g. for fixed navigation clicks)')
+      action_id: z.string().describe('The ID of the action (ignored — steps are auto-recorded)'),
+      intent: z.string().optional().describe('Human-readable description of what this step does'),
+      variable_name: z.string().optional().describe('Override the auto-detected variable name for this step'),
+      skip_variable: z.boolean().optional().describe('Set to true to skip variable detection for this step')
     },
     async ({ action_id, intent, variable_name, skip_variable }) => {
       const recording = getRecording();
@@ -49,116 +49,25 @@ export function registerWorkflowTools(server, { sendCommand }) {
         return { content: [{ type: 'text', text: 'No recording in progress. Call start_recording first.' }] };
       }
 
-      const action = getAction(action_id);
-      if (!action) {
-        return { content: [{ type: 'text', text: `Action ID "${action_id}" not found. It might have expired or never existed. You must execute an action and pass the exact action_id returned.` }] };
+      if (recording.steps.length === 0) {
+        return { content: [{ type: 'text', text: 'No steps recorded yet. Steps are now auto-recorded — just execute browser actions.' }] };
       }
 
-      const step = {
-        command: action.command,
-        params: { ...action.params },
-        ...(action.locators && { locators: action.locators }),
-        ...(intent && { intent })
-      };
+      // Apply optional overrides to the last auto-recorded step
+      const lastStep = recording.steps[recording.steps.length - 1];
+      if (intent) lastStep.intent = intent;
+      if (variable_name) lastStep._variableNameOverride = variable_name;
+      if (skip_variable) lastStep._skipVariable = true;
 
-      // Purge null/undefined from params
-      Object.keys(step.params).forEach(k => {
-        if (step.params[k] === undefined || step.params[k] === null) {
-          delete step.params[k];
-        }
-      });
-
-      let variableInfo = null;
-      let variableMsg = '';
-      const lastRefMap = getLastRefMap();
-
-      if (!skip_variable) {
-        // Auto-variabilize FILL steps
-        if (action.command === 'fill' && step.params.value) {
-          const varName = variable_name || 'input_' + (recording.steps.length + 1);
-          const originalValue = step.params.value;
-          step.params.value = `{{${varName}}}`;
-          variableInfo = {
-            name: varName,
-            type: 'text',
-            defaultValue: originalValue
-          };
-          variableMsg = `\n📝 Variable detected: "{{${varName}}}" (type: text, default: "${originalValue}")`;
-          log(`Auto-variabilized fill step: {{${varName}}} = "${originalValue}"`);
-        }
-
-        // Auto-detect CLICK on list/box items
-        if (action.command === 'click' && !variableInfo) {
-          const cssLocator = (action.locators || []).find(l => l.type === 'css');
-          const selector = step.params.selector || (cssLocator && cssLocator.value);
-          const clickText = step.params.text;
-
-          if (selector || clickText) {
-            log(`Detecting list context for ${selector ? 'selector: ' + selector : 'text: ' + clickText}`);
-            const listContext = await detectListContext(sendCommand, { selector, text: clickText, tabId: action.params.tabId });
-
-            if (listContext) {
-              log(`List context detected: ${JSON.stringify(listContext)}`);
-              const llmResult = await classifyWithLLM(listContext, intent);
-
-              if (llmResult.isList) {
-                const varName = variable_name || llmResult.variableName;
-                variableInfo = {
-                  name: varName,
-                  type: listContext.type === 'box' ? 'box_item' : 'list_item',
-                  defaultValue: llmResult.selectionMode === 'by_text'
-                    ? listContext.selectedText
-                    : String(listContext.selectedIndex),
-                  listContext: {
-                    type: listContext.type,
-                    parentSelector: listContext.parentSelector,
-                    itemXpath: listContext.itemXpath,
-                    totalItems: listContext.totalItems,
-                    selectedIndex: listContext.selectedIndex,
-                    selectedText: listContext.selectedText,
-                    selectionMode: llmResult.selectionMode
-                  }
-                };
-                variableMsg = `\n🔗 Variable detected: "{{${varName}}}" (type: ${variableInfo.type}, ${llmResult.selectionMode === 'by_text' ? `text: "${listContext.selectedText}"` : `index: ${listContext.selectedIndex}`}, total items: ${listContext.totalItems})`;
-                log(`Auto-variabilized click step: {{${varName}}} in ${listContext.type} (${llmResult.selectionMode})`);
-              } else {
-                log(`LLM classified element as NOT a list — skipping variabilization`);
-              }
-            }
-          }
-        }
-
-        // Auto-variabilize SELECT interactions
-        if (action.command === 'fill' && !variableInfo) {
-          const refKey = action.params.ref ? String(action.params.ref).replace('@', '') : null;
-          if (refKey && lastRefMap[refKey] && lastRefMap[refKey].role === 'combobox') {
-            const varName = variable_name || 'select_' + (recording.steps.length + 1);
-            const originalValue = action.params.value;
-            step.params.value = `{{${varName}}}`;
-            variableInfo = {
-              name: varName,
-              type: 'select',
-              defaultValue: originalValue
-            };
-            variableMsg = `\n📋 Variable detected: "{{${varName}}}" (type: select, default: "${originalValue}")`;
-          }
-        }
-      }
-
-      if (variableInfo) {
-        step.variable = variableInfo;
-      }
-
-      recording.steps.push(step);
-      log(`Step recorded: ${action.command} via ${action_id} (${recording.steps.length} steps total)`);
-      return { content: [{ type: 'text', text: `Step ${recording.steps.length} successfully appended to workflow: ${intent || action.command}${variableMsg}` }] };
+      log(`record_step called (deprecated) — applied overrides to step ${recording.steps.length}`);
+      return { content: [{ type: 'text', text: `Step ${recording.steps.length} (${lastStep.command}) updated with overrides. Note: record_step is deprecated — steps are auto-recorded. Just call stop_recording when done.` }] };
     }
   );
 
   // --- Tool: stop_recording ---
   server.tool(
     'stop_recording',
-    'Stop the current recording and save the workflow to disk. Returns a summary including detected variables that can be customized during replay.',
+    'Stop the current recording and save the workflow. Automatically detects variables (fill values become {{variables}}, clicks on list/box items become selectable by index or text). All variable detection runs in batch at save time for faster recording.',
     {},
     async () => {
       const recording = getRecording();
@@ -170,6 +79,76 @@ export function registerWorkflowTools(server, { sendCommand }) {
         return { content: [{ type: 'text', text: 'Recording cancelled — no steps were recorded.' }] };
       }
 
+      log(`Batch variable detection for ${recording.steps.length} steps...`);
+      const lastRefMap = getLastRefMap();
+
+      // ─── Batch variable detection ─────────────────────────────────
+      for (let i = 0; i < recording.steps.length; i++) {
+        const step = recording.steps[i];
+        if (step.variable) continue; // already variabilized
+
+        // Auto-variabilize FILL steps
+        if (step.command === 'fill' && step.params.value) {
+          const varName = 'input_' + (i + 1);
+          const originalValue = step.params.value;
+          step.params.value = `{{${varName}}}`;
+          step.variable = { name: varName, type: 'text', defaultValue: originalValue };
+          log(`Auto-variabilized fill step ${i + 1}: {{${varName}}} = "${originalValue}"`);
+          continue;
+        }
+
+        // Auto-detect CLICK on list/box items
+        if (step.command === 'click') {
+          const cssLocator = (step.locators || []).find(l => l.type === 'css');
+          const selector = step.params.selector || (cssLocator && cssLocator.value);
+          const clickText = step.params.text;
+
+          if (selector || clickText) {
+            try {
+              const listContext = await detectListContext(sendCommand, { selector, text: clickText, tabId: step.params.tabId });
+              if (listContext) {
+                const llmResult = await classifyWithLLM(listContext, step.intent);
+                if (llmResult.isList) {
+                  const varName = llmResult.variableName;
+                  step.variable = {
+                    name: varName,
+                    type: listContext.type === 'box' ? 'box_item' : 'list_item',
+                    defaultValue: llmResult.selectionMode === 'by_text'
+                      ? listContext.selectedText
+                      : String(listContext.selectedIndex),
+                    listContext: {
+                      type: listContext.type,
+                      parentSelector: listContext.parentSelector,
+                      itemXpath: listContext.itemXpath,
+                      totalItems: listContext.totalItems,
+                      selectedIndex: listContext.selectedIndex,
+                      selectedText: listContext.selectedText,
+                      selectionMode: llmResult.selectionMode
+                    }
+                  };
+                  log(`Auto-variabilized click step ${i + 1}: {{${varName}}} in ${listContext.type}`);
+                }
+              }
+            } catch (err) {
+              log(`Variable detection failed for step ${i + 1}: ${err.message}`);
+            }
+          }
+          continue;
+        }
+
+        // Auto-variabilize SELECT interactions
+        if (step.command === 'fill' && !step.variable) {
+          const refKey = step.params.ref ? String(step.params.ref).replace('@', '') : null;
+          if (refKey && lastRefMap[refKey] && lastRefMap[refKey].role === 'combobox') {
+            const varName = 'select_' + (i + 1);
+            const originalValue = step.params.value;
+            step.params.value = `{{${varName}}}`;
+            step.variable = { name: varName, type: 'select', defaultValue: originalValue };
+          }
+        }
+      }
+
+      // ─── Build variables summary ──────────────────────────────────
       const variables = {};
       recording.steps.forEach((step, i) => {
         if (step.variable) {
