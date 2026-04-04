@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "browser-pilot": {
-      "command": "node",
-      "args": ["/Library/Dev/browser-pilot/mcp-server/server.js"],
-      "env": {}
+      "type": "sse",
+      "url": "http://127.0.0.1:3457/sse"
     }
   }
 }

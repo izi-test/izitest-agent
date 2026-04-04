@@ -1,3 +1,5 @@
+export type SnapshotPurpose = 'fill' | 'click' | 'read';
+
 export interface SnapshotOptions {
   interactiveOnly?: boolean;
   compact?: boolean;
@@ -8,6 +10,13 @@ export interface SnapshotOptions {
   includeHidden?: boolean;
   includeRects?: boolean;
   inlineFrames?: boolean;
+  purposeFilter?: SnapshotPurpose;
+  searchText?: string;
+}
+
+export interface Locator {
+  type: string;
+  value: string;
 }
 
 export interface RefNodeInfo {
@@ -15,6 +24,7 @@ export interface RefNodeInfo {
   name: string;
   level?: number;
   selector?: string;
+  locators?: Locator[];
   rect?: { x: number; y: number; w: number; h: number };
 }
 
@@ -77,73 +87,133 @@ export async function resolveRef(ref: string): Promise<{ x: number; y: number; t
 export function drawAnnotations() {
   clearAnnotations();
 
-  const container = document.createElement('div');
-  container.id = 'browser-pilot-annotations';
-  container.style.position = 'fixed'; // viewport relative!
-  container.style.top = '0';
-  container.style.left = '0';
-  container.style.width = '100vw';
-  container.style.height = '100vh';
-  container.style.pointerEvents = 'none';
-  container.style.zIndex = '2147483647';
-  
+  // Use a Shadow DOM host to completely isolate annotations from the page's CSS.
+  // Sites like lacentrale.fr have aggressive CSS rules (resets, flex overrides,
+  // overflow:hidden) that break plain div overlays.
+  const host = document.createElement('browser-pilot-annotations');
+  host.id = 'browser-pilot-annotations';
+  // Host styles must use !important to resist page-level CSS on custom elements
+  host.style.cssText = [
+    'position: fixed !important',
+    'top: 0 !important',
+    'left: 0 !important',
+    'width: 100vw !important',
+    'height: 100vh !important',
+    'pointer-events: none !important',
+    'z-index: 2147483647 !important',
+    'display: block !important',
+    'overflow: visible !important',
+    'opacity: 1 !important',
+    'visibility: visible !important',
+    'transform: none !important',
+    'margin: 0 !important',
+    'padding: 0 !important',
+  ].join('; ');
+
+  const shadow = host.attachShadow({ mode: 'open' });
+
+  // All styles scoped inside the shadow — immune to the page's CSS
+  const style = document.createElement('style');
+  style.textContent = `
+    :host {
+      all: initial !important;
+      position: fixed !important;
+      top: 0 !important; left: 0 !important;
+      width: 100vw !important; height: 100vh !important;
+      pointer-events: none !important;
+      z-index: 2147483647 !important;
+    }
+    .bp-box {
+      position: absolute;
+      border: 2px solid #ef4444;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    .bp-label {
+      position: absolute;
+      background: #ef4444;
+      color: #fff;
+      padding: 1px 4px;
+      font: bold 12px/1.2 monospace;
+      border-radius: 3px;
+      border: 1px solid #fff;
+      white-space: nowrap;
+      z-index: 1;
+    }
+    .bp-banner {
+      position: absolute;
+      top: 10px; left: 10px;
+      padding: 5px 10px;
+      background: #7c3aed;
+      color: #fff;
+      font: bold 12px/1.4 monospace;
+      border-radius: 4px;
+      z-index: 2;
+    }
+  `;
+  shadow.appendChild(style);
+
   const refMap = window.__browserPilotRefMap || new Map();
   refMap.forEach((el, ref) => {
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
     if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) return;
-    
-    // Label
-    const marker = document.createElement('div');
-    marker.style.position = 'absolute';
-    marker.style.left = `${Math.max(0, rect.left)}px`;
-    marker.style.top = `${Math.max(0, rect.top)}px`;
-    marker.style.backgroundColor = '#ef4444';
-    marker.style.color = '#fff';
-    marker.style.padding = '1px 4px';
-    marker.style.fontSize = '12px';
-    marker.style.fontWeight = 'bold';
-    marker.style.fontFamily = 'monospace';
-    marker.style.borderRadius = '3px';
-    marker.style.border = '1px solid #fff';
-    marker.style.zIndex = '2147483647';
-    marker.textContent = ref;
-    
-    // Bounding Box
+
     const box = document.createElement('div');
-    box.style.position = 'absolute';
+    box.className = 'bp-box';
     box.style.left = `${rect.left}px`;
     box.style.top = `${rect.top}px`;
     box.style.width = `${rect.width}px`;
     box.style.height = `${rect.height}px`;
-    box.style.border = '2px solid #ef4444';
-    box.style.boxSizing = 'border-box';
-    box.style.pointerEvents = 'none';
+    shadow.appendChild(box);
 
-    container.appendChild(box);
-    container.appendChild(marker);
+    const label = document.createElement('div');
+    label.className = 'bp-label';
+    label.style.left = `${Math.max(0, rect.left)}px`;
+    label.style.top = `${Math.max(0, rect.top)}px`;
+    label.textContent = ref;
+    shadow.appendChild(label);
   });
-  
-  // Debug banner to ensure it actually injects
+
   const banner = document.createElement('div');
-  banner.style.position = 'absolute';
-  banner.style.top = '10px';
-  banner.style.left = '10px';
-  banner.style.padding = '5px 10px';
-  banner.style.backgroundColor = 'blue';
-  banner.style.color = 'white';
-  banner.style.zIndex = '2147483647';
-  banner.style.fontWeight = 'bold';
-  banner.style.fontFamily = 'monospace';
-  banner.textContent = `Browser Pilot: ${refMap.size} Refs Annotated`;
-  container.appendChild(banner);
-  
-  document.documentElement.appendChild(container);
+  banner.className = 'bp-banner';
+  banner.textContent = `Browser Pilot: ${refMap.size} refs`;
+  shadow.appendChild(banner);
+
+  document.documentElement.appendChild(host);
 }
 
 export function clearAnnotations() {
   const el = document.getElementById('browser-pilot-annotations');
   if (el) el.remove();
+}
+
+const FILLABLE_ROLES = new Set([
+  'textbox', 'combobox', 'listbox', 'checkbox', 'radio', 'slider',
+  'spinbutton', 'searchbox', 'switch'
+]);
+
+const CLICKABLE_ROLES = new Set([
+  'link', 'button', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+  'tab', 'option', 'treeitem', 'switch', 'gridcell'
+]);
+
+function matchesPurposeFilter(role: string, tag: string, purpose: SnapshotPurpose | undefined): boolean {
+  if (!purpose || purpose === 'read') return true;
+  if (purpose === 'fill') {
+    if (FILLABLE_ROLES.has(role)) return true;
+    // Include <select> even though its role may resolve to 'combobox' or 'listbox'
+    if (['input', 'textarea', 'select'].includes(tag)) return true;
+    // Include form/region containers so there's structural context around fields
+    if (['form', 'region', 'group', 'search'].includes(role)) return true;
+    return false;
+  }
+  if (purpose === 'click') {
+    if (CLICKABLE_ROLES.has(role)) return true;
+    if (['a', 'button', 'summary', 'details'].includes(tag)) return true;
+    return false;
+  }
+  return true;
 }
 
 export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotResult {
@@ -174,16 +244,22 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     return clean;
   };
 
+  const isCustomElement = (tag: string): boolean => tag.includes('-');
+
   const isVisible = (el: Element): boolean => {
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
       return false;
     }
     const rect = el.getBoundingClientRect();
+    const tag = el.tagName.toLowerCase();
     if (rect.width === 0 || rect.height === 0) {
       if (style.display === 'contents') {
         // Elements with display: contents have a 0x0 rect, but render children normally.
         // We must consider them visible so we can traverse their children.
+      } else if (isCustomElement(tag) || el.shadowRoot) {
+        // Custom elements (Angular, Web Components) may have 0x0 host dimensions
+        // but render visible children — treat as visible to traverse them.
       } else if (el.tagName !== 'A' && el.tagName !== 'SPAN' && el.tagName !== 'SVG') {
         return false;
       }
@@ -300,13 +376,25 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     return false;
   };
 
+  const isDynamicId = (id: string): boolean => {
+    // React, Angular, Radix, Ember, etc. generated IDs
+    if (/react-aria|radix-|ember|ng-|_r_|rc-|headlessui-/i.test(id)) return true;
+    // IDs with 4+ consecutive digits (likely auto-generated)
+    if (/\d{4,}/.test(id)) return true;
+    // UUID-like patterns
+    if (/^[a-f0-9-]{8,}$/i.test(id)) return true;
+    // Colon-separated IDs (e.g. :r1:, :r2a:)
+    if (/^:.*:$/.test(id)) return true;
+    return false;
+  };
+
   const buildSelector = (el: Element): string => {
-    if (el.id) return `#${CSS.escape(el.id)}`;
+    if (el.id && !isDynamicId(el.id)) return `#${CSS.escape(el.id)}`;
     let current = el;
     const path: string[] = [];
     while (current && current !== document.body) {
       let part = current.tagName.toLowerCase();
-      if (current.id) {
+      if (current.id && !isDynamicId(current.id)) {
         path.unshift(`#${CSS.escape(current.id)}`);
         break;
       }
@@ -320,6 +408,107 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       current = current.parentElement!;
     }
     return path.join(' > ');
+  };
+
+  const buildXPath = (el: Element): string => {
+    if (el.id && !isDynamicId(el.id) && !el.id.includes('"') && !el.id.includes("'")) {
+      return `//*[@id="${el.id}"]`;
+    }
+    if (el.tagName.toLowerCase() === 'html') return '/html';
+    if (el.tagName.toLowerCase() === 'body') return '/html/body';
+    
+    let current: Element | null = el;
+    const path: string[] = [];
+    
+    while (current && current !== document.body && current !== document.documentElement) {
+      let part = current.tagName.toLowerCase();
+      let index = 1;
+      let sibling = current.previousElementSibling;
+      while (sibling) {
+        if (sibling.tagName === current.tagName) index++;
+        sibling = sibling.previousElementSibling;
+      }
+      
+      const hasSameTagSiblings = index > 1 || Array.from(current.parentElement?.children || []).some(
+        e => e !== current && e.tagName === current!.tagName
+      );
+      
+      if (hasSameTagSiblings) {
+        part += `[${index}]`;
+      }
+      path.unshift(part);
+      current = current.parentElement;
+    }
+    return `/html/body/${path.join('/')}`;
+  };
+
+  const buildLocators = (el: Element, name: string, role: string): Array<{type: string, value: string}> => {
+    const locators: Array<{type: string, value: string}> = [];
+    const tag = el.tagName.toLowerCase();
+
+    // 1. ARIA-based (accessible name)
+    // L'ancien système mettait tout sous "text", ici on le passe en "aria" (plus descriptif)
+    if (name && name.length > 0 && name.length < 100) {
+      locators.push({ type: 'aria', value: name });
+    }
+
+    // 2. Strict Text Content
+    // Utile pour p-text dans Puppeteer
+    const textContent = el.textContent?.trim();
+    if (textContent && textContent.length > 0 && textContent.length < 100) {
+      // On évite les doublons si textContent == name, sinon on l'ajoute comme locator de texte
+      if (textContent !== name) {
+        locators.push({ type: 'text', value: textContent });
+      } else if (!locators.some(l => l.type === 'text')) {
+        // Même si égal à name, on l'ajoute explicitement sous "text" pour que le replay Puppeteer ait le choix
+        locators.push({ type: 'text', value: textContent });
+      }
+    }
+
+    // 3. data-testid (très stable, ajouté par les devs)
+    const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-cy');
+    if (testId) {
+      locators.push({ type: 'testid', value: `[data-testid="${CSS.escape(testId)}"]` });
+    }
+
+    // 4. Attributs Spécifiques (name, alt, placeholder)
+    const nameAttr = el.getAttribute('name');
+    if (nameAttr) {
+      locators.push({ type: 'attribute', value: `${tag}[name="${CSS.escape(nameAttr)}"]` });
+    }
+
+    const altAttr = el.getAttribute('alt');
+    if (altAttr) {
+      locators.push({ type: 'attribute', value: `${tag}[alt="${CSS.escape(altAttr)}"]` });
+    }
+
+    const placeholder = el.getAttribute('placeholder');
+    if (placeholder) {
+      locators.push({ type: 'placeholder', value: placeholder });
+      locators.push({ type: 'attribute', value: `${tag}[placeholder="${CSS.escape(placeholder)}"]` });
+    }
+
+    const ariaLabel = el.getAttribute('aria-label');
+    if (ariaLabel) {
+      locators.push({ type: 'attribute', value: `${tag}[aria-label="${CSS.escape(ariaLabel)}"]` });
+    }
+
+    // 5. Stable ID selector
+    if (el.id && !isDynamicId(el.id)) {
+      locators.push({ type: 'css', value: `#${CSS.escape(el.id)}` });
+    }
+
+    // 6. CSS selector (structurel)
+    const cssSelector = buildSelector(el);
+    if (!locators.some(l => l.type === 'css' && l.value === cssSelector)) {
+      locators.push({ type: 'css', value: cssSelector });
+    }
+
+    // 7. XPath
+    const xpath = buildXPath(el);
+    locators.push({ type: 'xpath', value: xpath });
+
+    return locators;
   };
 
   const treeLines: string[] = [];
@@ -344,6 +533,13 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       skipNodeRender = true;
     } else if (options.compact && role === 'generic' && !name && !interactive) {
       skipNodeRender = true;
+    }
+
+    // Purpose-based filtering: skip elements that don't match the intended action
+    if (!skipNodeRender && providedOptions.purposeFilter && providedOptions.purposeFilter !== 'read') {
+      if (!matchesPurposeFilter(role, tag, providedOptions.purposeFilter)) {
+        skipNodeRender = true;
+      }
     }
 
     // Process iframes
@@ -440,26 +636,35 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
 
       treeLines.push(line);
 
-      // JSON mapping
-      if (options.format === 'json') {
-        const refInfo: RefNodeInfo = {
-          role,
-          name: truncate(name),
-          selector: buildSelector(el)
-        };
-        if (role === 'heading') {
-           const level = parseInt(tag.replace('h', ''), 10);
-           if (!isNaN(level)) refInfo.level = level;
+      // Always build ref mapping (needed for workflow recording)
+      const refInfo: RefNodeInfo = {
+        role,
+        name: truncate(name),
+        selector: buildSelector(el),
+        locators: buildLocators(el, name, role)
+      };
+      if (role === 'heading') {
+         const level = parseInt(tag.replace('h', ''), 10);
+         if (!isNaN(level)) refInfo.level = level;
+      }
+      if (options.includeRects) {
+        const rect = el.getBoundingClientRect();
+        refInfo.rect = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) };
+      }
+      jsonRefs[ref.substring(1)] = refInfo; // removing the '@' for json keys
+    }
+
+    // Recurse into Shadow DOM if present
+    if (el.shadowRoot) {
+      for (const child of el.shadowRoot.children) {
+        if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE' || child.tagName === 'NOSCRIPT' || child.tagName === 'LINK' || child.tagName === 'META') {
+          continue;
         }
-        if (options.includeRects) {
-          const rect = el.getBoundingClientRect();
-          refInfo.rect = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) };
-        }
-        jsonRefs[ref.substring(1)] = refInfo; // removing the '@' for json keys
+        traverse(child, skipNodeRender ? depth : depth + 1);
       }
     }
 
-    // Recurse children
+    // Recurse light DOM children
     for (const child of el.children) {
       if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE' || child.tagName === 'NOSCRIPT' || child.tagName === 'LINK' || child.tagName === 'META') {
         continue;
@@ -469,21 +674,59 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
   };
 
   const root = options.scope ? document.querySelector(options.scope) || document.body : document.body;
-  
+
   if (root) {
     traverse(root, 0);
+  }
+
+  // Traverse Angular CDK overlay container (dropdowns, modals, tooltips)
+  // and other portal containers that render outside the main DOM tree.
+  if (!options.scope) {
+    const overlayContainers = document.querySelectorAll(
+      '.cdk-overlay-container, [id="portal-root"], [id="modal-root"], [class*="overlay-container"]'
+    );
+    overlayContainers.forEach(container => {
+      if (container !== root && container.children.length > 0) {
+        traverse(container, 0);
+      }
+    });
+  }
+
+  // ─── Post-filter: searchText ──────────────────────────────────────
+  let filteredTreeLines = treeLines;
+  let filteredRefs = jsonRefs;
+
+  if (providedOptions.searchText) {
+    const needle = providedOptions.searchText.toLowerCase();
+
+    // Keep only tree lines whose text content matches the search
+    filteredTreeLines = treeLines.filter(line => line.toLowerCase().includes(needle));
+
+    // Extract ref IDs from the matching lines (pattern: @eNN at start of trimmed line)
+    const matchedRefIds = new Set<string>();
+    for (const line of filteredTreeLines) {
+      const match = line.trimStart().match(/^@(e\d+)/);
+      if (match) matchedRefIds.add(match[1]);
+    }
+
+    // Filter refs to only matched ones and clean refMap
+    filteredRefs = {};
+    for (const [key, value] of Object.entries(jsonRefs)) {
+      if (matchedRefIds.has(key)) {
+        filteredRefs[key] = value;
+      } else {
+        refMap.delete(`@${key}`);
+      }
+    }
   }
 
   const result: SnapshotResult = {
     url: window.location.href,
     title: document.title,
     timestamp: Date.now(),
-    tree: treeLines.join('\n')
+    refs: filteredRefs,
+    tree: filteredTreeLines.join('\n')
   };
-
-  if (options.format === 'json') {
-    result.refs = jsonRefs;
-  }
 
   return result;
 }

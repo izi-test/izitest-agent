@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "browser-pilot": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/Library/Dev/browser-pilot/mcp-server/server.js"],
+      "env": {}
+    }
+  }
+}

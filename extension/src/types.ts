@@ -5,6 +5,7 @@ export type KeyboardModifier = 'ctrl' | 'shift' | 'alt' | 'meta';
 export interface NavigateParams {
   url: string;
   tabId?: number;
+  newWindow?: boolean;
 }
 
 export interface ClickParams {
@@ -87,11 +88,48 @@ export interface PageInfoParams {
 
 // ─── Command Results ────────────────────────────────────────────────
 
+export interface Locator {
+  type: 'text' | 'css' | 'testid' | 'placeholder' | 'label' | 'aria' | 'attribute' | 'xpath';
+  value: string;
+}
+
+export interface ListContext {
+  type: 'list' | 'box';
+  parentSelector: string;
+  itemXpath: string;
+  totalItems: number;
+  selectedIndex: number;
+  selectedText?: string;
+  selectionMode: 'by_index' | 'by_text';
+}
+
+export interface VariableInfo {
+  name: string;
+  type: 'text' | 'select' | 'list_item' | 'box_item';
+  defaultValue?: string;
+  listContext?: ListContext;
+}
+
+export interface WorkflowStep {
+  command: string;
+  intent?: string;
+  params: Record<string, any>;
+  locators?: Locator[];
+  variable?: VariableInfo;
+}
+
+export interface ReplaySequenceParams {
+  steps: WorkflowStep[];
+  startIndex: number;
+  newWindow?: boolean;
+}
+
 export interface RefNodeInfo {
   role: string;
   name: string;
   level?: number;
   selector?: string;
+  locators?: Locator[];
   rect?: { x: number; y: number; w: number; h: number };
 }
 

@@ -4,7 +4,7 @@
   "scripts": {
     "build": "npm run clean && npm run copy && node build.js",
     "watch": "npm run copy && node watch.js",
-    "copy": "mkdir -p dist && cp manifest.json popup.html dist/ && cp -R icons dist/",
+    "copy": "mkdir -p dist && cp manifest.json popup.html popup.js dist/ && cp -R icons dist/",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },

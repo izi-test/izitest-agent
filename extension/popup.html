@@ -1,61 +1,685 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta charset="UTF-8">
 <style>
+  :root {
+    --bg-primary: #0f0f14;
+    --bg-secondary: #1a1a24;
+    --bg-tertiary: #24243a;
+    --border: #2a2a40;
+    --text: #e4e4ef;
+    --text-muted: #8888a8;
+    --accent: #7c3aed;
+    --accent-hover: #6d28d9;
+    --accent-glow: rgba(124, 58, 237, 0.25);
+    --green: #10b981;
+    --green-bg: rgba(16, 185, 129, 0.12);
+    --red: #ef4444;
+    --red-bg: rgba(239, 68, 68, 0.12);
+    --orange: #f59e0b;
+    --orange-bg: rgba(245, 158, 11, 0.12);
+    --radius: 8px;
+    --font: 'Inter', -apple-system, system-ui, sans-serif;
+    --mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { width: 300px; padding: 16px; font-family: -apple-system, sans-serif; font-size: 13px; color: #1a1a1a; background: #fafafa; }
-  h1 { font-size: 16px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-  .status { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; margin-bottom: 12px; }
-  .status.connected { background: #ecfdf5; color: #065f46; }
-  .status.disconnected { background: #fef2f2; color: #991b1b; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; }
-  .dot.on { background: #10b981; }
-  .dot.off { background: #ef4444; }
-  label { display: block; font-weight: 500; margin-bottom: 4px; color: #555; }
-  input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
-  input:focus { outline: none; border-color: #7c3aed; }
-  button { width: 100%; padding: 8px; background: #7c3aed; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
-  button:hover { background: #6d28d9; }
-  .info { font-size: 11px; color: #888; margin-top: 8px; }
+
+  body {
+    width: 480px;
+    min-height: 200px;
+    font-family: var(--font);
+    font-size: 12px;
+    color: var(--text);
+    background: var(--bg-primary);
+    overflow-x: hidden;
+  }
+
+  /* ─── Header ─── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header h1 {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+
+  .version-badge {
+    font-size: 9px;
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border-radius: 10px;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .connection-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+  }
+
+  .connection-pill.connected {
+    background: var(--green-bg);
+    color: var(--green);
+  }
+
+  .connection-pill.disconnected {
+    background: var(--red-bg);
+    color: var(--red);
+  }
+
+  .connection-pill .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .connection-pill.connected .dot { background: var(--green); }
+  .connection-pill.disconnected .dot { background: var(--red); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ─── Tabs ─── */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+  }
+
+  .tab-btn {
+    flex: 1;
+    padding: 10px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .tab-btn:hover { color: var(--text); background: var(--bg-tertiary); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: rgba(124, 58, 237, 0.06);
+  }
+
+  .tab-panel { display: none; padding: 14px 16px; }
+  .tab-panel.active { display: block; }
+
+  /* ─── Connection Panel ─── */
+  .field-group {
+    margin-bottom: 12px;
+  }
+
+  .field-group label {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+  }
+
+  .field-group input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    transition: border-color 0.2s;
+  }
+
+  .field-group input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+
+  .btn-primary {
+    width: 100%;
+    padding: 9px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+
+  /* ─── Debug Panel ─── */
+  .debug-section {
+    margin-bottom: 14px;
+  }
+
+  .debug-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .debug-section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Options Grid */
+  .options-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .option-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+
+  .option-item:hover {
+    border-color: var(--accent);
+    background: var(--bg-tertiary);
+  }
+
+  .option-item input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+  }
+
+  .option-item span {
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  /* Purpose Filter */
+  .purpose-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+
+  .purpose-btn {
+    flex: 1;
+    padding: 7px 6px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+  }
+
+  .purpose-btn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .purpose-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+
+  /* Action Buttons */
+  .action-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+
+  .btn-action {
+    flex: 1;
+    padding: 9px 8px;
+    border: none;
+    border-radius: var(--radius);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+  }
+
+  .btn-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+  }
+
+  .btn-action:hover:not(:disabled) { transform: translateY(-1px); }
+  .btn-action:active:not(:disabled) { transform: translateY(0); }
+
+  .btn-snapshot {
+    background: linear-gradient(135deg, #7c3aed, #6366f1);
+    color: #fff;
+  }
+
+  .btn-screenshot {
+    background: linear-gradient(135deg, #059669, #10b981);
+    color: #fff;
+  }
+
+  .btn-annotate {
+    background: linear-gradient(135deg, #d97706, #f59e0b);
+    color: #fff;
+  }
+
+  .btn-clear {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  /* Stats Row */
+  .stats-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .stat-card {
+    flex: 1;
+    padding: 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--accent);
+    font-family: var(--mono);
+    line-height: 1;
+  }
+
+  .stat-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-top: 3px;
+  }
+
+  /* Output Area */
+  .output-container {
+    position: relative;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .output-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .output-header span {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .btn-copy {
+    padding: 3px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-copy:hover { border-color: var(--accent); color: var(--text); }
+
+  #outputArea {
+    width: 100%;
+    min-height: 120px;
+    max-height: 350px;
+    padding: 10px;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.5;
+    border: none;
+    resize: vertical;
+    white-space: pre;
+    overflow: auto;
+  }
+
+  #outputArea:focus { outline: none; }
+
+  /* Screenshot Preview */
+  .screenshot-preview {
+    margin-top: 10px;
+    border: 2px solid var(--accent);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg-secondary);
+  }
+
+  .screenshot-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .screenshot-header span {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text);
+    text-transform: uppercase;
+  }
+
+  .screenshot-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .btn-mini {
+    padding: 2px 6px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-mini:hover { border-color: var(--accent); color: var(--text); }
+  .btn-mini.btn-danger:hover { border-color: var(--danger); color: var(--danger); }
+
+  .screenshot-preview img {
+    width: 100%;
+    height: auto;
+    display: block;
+    cursor: zoom-in;
+  }
+
+  /* Loading Spinner */
+  .spinner {
+    display: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading .spinner { display: inline-block; }
+
+  /* Time Badge */
+  .time-badge {
+    display: none;
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+  }
+
+  /* Scope field spanning full width */
+  .scope-row {
+    margin-bottom: 10px;
+  }
+
+  .scope-row input {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    transition: border-color 0.2s;
+  }
+
+  .scope-row input::placeholder { color: #555570; }
+  .scope-row input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+
+  .info-text {
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    padding: 8px 0;
+  }
 </style>
 </head>
 <body>
-  <h1>🎯 Browser Pilot</h1>
-  <div id="status" class="status disconnected">
-    <span id="dot" class="dot off"></span>
-    <span id="statusText">Disconnected</span>
+
+  <!-- ─── Header ─── -->
+  <div class="header">
+    <div class="header-left">
+      <h1>🎯 Browser Pilot</h1>
+      <span class="version-badge">v1.1</span>
+    </div>
+    <div id="connectionPill" class="connection-pill disconnected">
+      <span class="dot"></span>
+      <span id="connectionLabel">Offline</span>
+    </div>
   </div>
-  <label>Profile ID</label>
-  <input type="text" id="profileId" placeholder="my-profile-name">
-  <button id="saveBtn">Save & Reconnect</button>
-  <p class="info">This extension connects to the Browser Pilot bridge server for remote control via Claude MCP.</p>
 
-  <script>
-    const statusEl = document.getElementById('status');
-    const dotEl = document.getElementById('dot');
-    const statusText = document.getElementById('statusText');
-    const profileInput = document.getElementById('profileId');
-    const saveBtn = document.getElementById('saveBtn');
+  <!-- ─── Tabs ─── -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="debug">🔬 Debug</button>
+    <button class="tab-btn" data-tab="connection">⚡ Connection</button>
+  </div>
 
-    chrome.runtime.sendMessage({ type: 'getStatus' }, (resp) => {
-      if (resp?.connected) {
-        statusEl.className = 'status connected';
-        dotEl.className = 'dot on';
-        statusText.textContent = 'Connected';
-      }
-      if (resp?.profileId) {
-        profileInput.value = resp.profileId;
-      }
-    });
+  <!-- ═══ Debug Panel ═══ -->
+  <div id="panel-debug" class="tab-panel active">
 
-    saveBtn.addEventListener('click', () => {
-      const pid = profileInput.value.trim();
-      if (!pid) return;
-      chrome.runtime.sendMessage({ type: 'setProfileId', profileId: pid }, () => {
-        chrome.runtime.sendMessage({ type: 'reconnect' });
-        statusText.textContent = 'Reconnecting...';
-      });
-    });
-  </script>
+    <!-- Purpose Filter -->
+    <div class="debug-section">
+      <div class="debug-section-title">Purpose Filter</div>
+      <div class="purpose-row">
+        <button class="purpose-btn active" data-purpose="read">📖 Read (all)</button>
+        <button class="purpose-btn" data-purpose="fill">✏️ Fill</button>
+        <button class="purpose-btn" data-purpose="click">👆 Click</button>
+      </div>
+    </div>
+
+    <!-- Snapshot Options -->
+    <div class="debug-section">
+      <div class="debug-section-title">Snapshot Options</div>
+      <div class="options-grid">
+        <label class="option-item">
+          <input type="checkbox" id="optInteractive">
+          <span>Interactive Only</span>
+        </label>
+        <label class="option-item">
+          <input type="checkbox" id="optCompact">
+          <span>Compact</span>
+        </label>
+        <label class="option-item">
+          <input type="checkbox" id="optRects">
+          <span>Include Rects</span>
+        </label>
+        <label class="option-item">
+          <input type="checkbox" id="optHidden">
+          <span>Include Hidden</span>
+        </label>
+      </div>
+
+      <div class="scope-row">
+        <input type="text" id="optScope" placeholder="CSS scope selector (e.g. #main, .form-container)">
+      </div>
+
+      <div class="scope-row">
+        <input type="text" id="optSearchText" placeholder="&#x1F50D; Search text filter (e.g. login, search, submit)">
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="debug-section">
+      <div class="debug-section-title">Actions</div>
+      <div class="action-row">
+        <button class="btn-action btn-snapshot" id="btnSnapshot">
+          <span class="spinner"></span>
+          📸 Snapshot
+        </button>
+        <button class="btn-action btn-screenshot" id="btnScreenshot">
+          <span class="spinner"></span>
+          🖼️ Screenshot
+        </button>
+      </div>
+      <div class="action-row">
+        <button class="btn-action btn-annotate" id="btnAnnotate">
+          🎯 Annotate
+        </button>
+        <button class="btn-action btn-clear" id="btnClearAnnot">
+          ✖ Clear
+        </button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row" id="statsRow" style="display: none;">
+      <div class="stat-card">
+        <div class="stat-value" id="statRefs">0</div>
+        <div class="stat-label">Elements</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statLines">0</div>
+        <div class="stat-label">Lines</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statSize">0</div>
+        <div class="stat-label">Chars</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statTime">0</div>
+        <div class="stat-label">ms</div>
+      </div>
+    </div>
+
+    <!-- Output -->
+    <div class="output-container" id="outputContainer" style="display: none;">
+      <div class="output-header">
+        <span id="outputLabel">Output</span>
+        <button class="btn-copy" id="btnCopy">📋 Copy</button>
+      </div>
+      <textarea id="outputArea" readonly></textarea>
+    </div>
+
+    <!-- Screenshot Preview -->
+    <div class="screenshot-preview" id="screenshotPreview" style="display: none;">
+      <div class="screenshot-header">
+        <span>Screenshot Preview</span>
+        <div class="screenshot-actions">
+          <button class="btn-mini" id="btnDownloadScreenshot">💾 Save</button>
+          <button class="btn-mini btn-danger" id="btnCloseScreenshot">✖</button>
+        </div>
+      </div>
+      <img id="screenshotImg" alt="Screenshot">
+    </div>
+  </div>
+
+  <!-- ═══ Connection Panel ═══ -->
+  <div id="panel-connection" class="tab-panel">
+    <div class="field-group">
+      <label>Profile ID</label>
+      <input type="text" id="profileId" placeholder="my-profile-name">
+    </div>
+    <button class="btn-primary" id="saveBtn">Save & Reconnect</button>
+    <p class="info-text">
+      This extension connects to the Browser Pilot bridge server for remote control via MCP.
+      The profile ID identifies this browser instance to the AI agent.
+    </p>
+  </div>
+
+<script src="popup.js"></script>
 </body>
 </html>
+

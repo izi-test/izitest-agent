@@ -6,442 +6,183 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { WebSocketServer } from 'ws';
-import { z } from 'zod';
-import { createRequire } from 'module';
-import { execSync } from 'child_process';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { createServer } from 'http';
+import { readFile, stat } from 'fs/promises';
+import { join, extname } from 'path';
+import { fileURLToPath } from 'url';
+
+import { log } from './lib/logger.js';
+import { startWebSocketServer, getProfiles, sendCommand, closeWebSocket } from './lib/websocket.js';
+import { saveActionToHistory, getLastRefMap, setLastRefMap } from './lib/workflows.js';
+import { registerBrowserTools } from './lib/tools/browser.js';
+import { registerWorkflowTools } from './lib/tools/workflow.js';
+import { initDatabase } from './lib/db.js';
+import { apiRouter } from './lib/api.js';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC_DIR = join(__dirname, 'public');
+const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
+
+// ─── Config ─────────────────────────────────────────────────────────
 
 const WS_PORT = process.env.WS_PORT ? parseInt(process.env.WS_PORT) : 3456;
+const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
+const USE_STDIO = process.argv.includes('--stdio');
 
-// ─── WebSocket Bridge ───────────────────────────────────────────────
+// ─── Initialize Database & Start WebSocket Bridge ───────────────────
 
-const profiles = new Map(); // profileId → ws
-const pendingCommands = new Map(); // commandId → { resolve, reject, timeout }
-let commandCounter = 0;
+await initDatabase();
+startWebSocketServer(WS_PORT);
 
-let wss;
+// ─── MCP Server Factory ─────────────────────────────────────────────
 
-function startWebSocketServer() {
-  wss = new WebSocketServer({ port: WS_PORT, host: '127.0.0.1' });
-
-  wss.on('listening', () => {
-    log(`WebSocket bridge listening on port ${WS_PORT}`);
+function createMcpServer() {
+  const server = new McpServer({
+    name: 'browser-pilot',
+    version: '1.0.0',
   });
 
-  wss.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      log(`Port ${WS_PORT} is in use. Attempting to kill zombie process...`);
-      try {
-        // Find PID holding the port and kill it
-        execSync(`lsof -ti:${WS_PORT} | xargs kill -9`);
-        log(`Successfully killed zombie process on port ${WS_PORT}. Restarting server...`);
-        setTimeout(startWebSocketServer, 500);
-      } catch (killErr) {
-        log(`Failed to kill process on port ${WS_PORT}. Is it available? ${killErr.message}`);
-        process.exit(1);
-      }
-    } else {
-      log(`WebSocket error: ${err.message}`);
-    }
-  });
+  const deps = {
+    sendCommand,
+    getProfiles,
+    saveActionToHistory,
+    getLastRefMap,
+    setLastRefMap,
+  };
 
-  wss.on('connection', (ws) => {
-  let registeredProfileId = null;
+  registerBrowserTools(server, deps);
+  registerWorkflowTools(server, deps);
 
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-
-      if (msg.type === 'register') {
-        registeredProfileId = msg.profileId;
-        profiles.set(msg.profileId, ws);
-        log(`Profile registered: ${msg.profileId}`);
-      }
-
-      if (msg.type === 'result') {
-        const pending = pendingCommands.get(msg.id);
-        if (pending) {
-          clearTimeout(pending.timeout);
-          pendingCommands.delete(msg.id);
-          if (msg.error) {
-            log(`[IN]  ❌ Error for ${msg.id}: ${msg.error}`);
-            pending.reject(new Error(msg.error));
-          } else {
-            const resStr = JSON.stringify(msg.result);
-            log(`[IN]  ✅ Success for ${msg.id}. Output: ${resStr ? resStr.substring(0, 100) + (resStr.length > 100 ? '...' : '') : 'none'}`);
-            pending.resolve(msg.result);
-          }
-        }
-      }
-    } catch (err) {
-      log(`WS parse error: ${err.message}`);
-    }
-  });
-
-  ws.on('close', () => {
-    if (registeredProfileId) {
-      profiles.delete(registeredProfileId);
-      log(`Profile disconnected: ${registeredProfileId}`);
-    }
-  });
-});
+  return server;
 }
 
-startWebSocketServer();
+// ─── Start MCP Server (dual-mode: SSE HTTP or stdio) ───────────────
 
-// Wait for at least one browser profile to connect (up to waitMs)
-function waitForProfile(profileId, waitMs = 8000) {
-  return new Promise((resolve) => {
-    const getWs = () => profileId ? profiles.get(profileId) : profiles.values().next().value;
-    const ws = getWs();
-    if (ws && ws.readyState === 1) return resolve(ws);
+if (USE_STDIO) {
+  const server = createMcpServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  log('MCP server running on stdio');
+} else {
+  const activeSessions = new Map();
 
-    const start = Date.now();
-    const interval = setInterval(() => {
-      const ws = getWs();
-      if (ws && ws.readyState === 1) {
-        clearInterval(interval);
-        resolve(ws);
-      } else if (Date.now() - start >= waitMs) {
-        clearInterval(interval);
-        resolve(null);
-      }
-    }, 250);
-  });
-}
+  const httpServer = createServer(async (req, res) => {
+    const url = new URL(req.url, `http://127.0.0.1:${MCP_PORT}`);
 
-function sendCommand(profileId, command, params, timeoutMs = 30000) {
-  return new Promise(async (resolve, reject) => {
-    const ws = await waitForProfile(profileId);
-    if (!ws) {
-      reject(new Error(
-        profileId
-          ? `Profile "${profileId}" not connected. Connected profiles: ${[...profiles.keys()].join(', ') || 'none'}`
-          : 'No browser profiles connected. Make sure Chrome is open with the Browser Pilot extension.'
-      ));
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
       return;
     }
 
-    const id = `cmd-${++commandCounter}`;
-    const timeout = setTimeout(() => {
-      pendingCommands.delete(id);
-      reject(new Error(`Command timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    // ── API routes ──
+    if (url.pathname.startsWith('/api/')) {
+      await apiRouter(req, res, url);
+      return;
+    }
 
-    pendingCommands.set(id, { resolve, reject, timeout });
-    
-    log(`[OUT] ➡️ ${command}`);
-    log(`  Params: ${JSON.stringify(params).substring(0, 500)}`);
-    
-    ws.send(JSON.stringify({ type: 'command', id, command, params }));
+    // ── Static files (frontend) ──
+    if (req.method === 'GET' && !['/health', '/sse', '/messages'].includes(url.pathname)) {
+      let fileName = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+      let filePath = join(PUBLIC_DIR, fileName);
+      
+      try {
+        await stat(filePath);
+      } catch {
+        // Fallback for SPA routing
+        fileName = 'index.html';
+        filePath = join(PUBLIC_DIR, fileName);
+      }
+
+      try {
+        const content = await readFile(filePath);
+        const ext = extname(fileName);
+        const mimeTypes = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
+        res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' });
+        res.end(content);
+      } catch {
+        // Fallback if index.html itself is missing
+        res.writeHead(404);
+        res.end('Not found');
+      }
+      return;
+    }
+
+    if (url.pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        profiles: [...getProfiles().keys()],
+        uptime: process.uptime()
+      }));
+      return;
+    }
+
+    if (url.pathname === '/sse') {
+      log(`New SSE connection from ${req.socket.remoteAddress}`);
+      const sessionServer = createMcpServer();
+      const transport = new SSEServerTransport('/messages', res);
+      activeSessions.set(transport.sessionId, transport);
+
+      transport.onclose = () => {
+        log(`SSE session closed: ${transport.sessionId}`);
+        activeSessions.delete(transport.sessionId);
+      };
+
+      await sessionServer.connect(transport);
+      return;
+    }
+
+    if (url.pathname === '/messages') {
+      const sessionId = url.searchParams.get('sessionId');
+      const transport = activeSessions.get(sessionId);
+
+      if (!transport) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unknown or expired session' }));
+        return;
+      }
+
+      let body = '';
+      for await (const chunk of req) body += chunk;
+
+      try {
+        await transport.handlePostMessage(req, res, body);
+      } catch (err) {
+        log(`Message handling error: ${err.message}`);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      }
+      return;
+    }
+
+    res.writeHead(404);
+    res.end('Not found');
+  });
+
+  httpServer.listen(MCP_PORT, '127.0.0.1', () => {
+    log(`MCP SSE server listening on http://127.0.0.1:${MCP_PORT}`);
+    log(`  SSE endpoint:     http://127.0.0.1:${MCP_PORT}/sse`);
+    log(`  Message endpoint: http://127.0.0.1:${MCP_PORT}/messages`);
+    log(`  Health check:     http://127.0.0.1:${MCP_PORT}/health`);
   });
 }
-
-function log(msg) {
-  process.stderr.write(`[BrowserPilot] ${msg}\n`);
-}
-
-
-
-// ─── MCP Server ─────────────────────────────────────────────────────
-
-const server = new McpServer({
-  name: 'browser-pilot',
-  version: '1.0.0',
-});
-
-// --- Tool: list_profiles ---
-server.tool(
-  'list_profiles',
-  'List all connected browser profiles',
-  {},
-  async () => {
-    const list = [...profiles.keys()];
-    return {
-      content: [{
-        type: 'text',
-        text: list.length
-          ? `Connected profiles: ${list.join(', ')}`
-          : 'No profiles connected. Make sure Chrome is open with the Browser Pilot extension installed.'
-      }]
-    };
-  }
-);
-
-// --- Tool: navigate ---
-server.tool(
-  'navigate',
-  'Navigate to a URL in the browser. Opens a new tab or updates an existing one.',
-  {
-    url: z.string().describe('The URL to navigate to'),
-    profile: z.string().optional().describe('Profile ID (uses first available if omitted)'),
-    tabId: z.number().optional().describe('Tab ID to navigate in (creates new tab if omitted)')
-  },
-  async ({ url, profile, tabId }) => {
-    const result = await sendCommand(profile, 'navigate', { url, tabId });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: click ---
-server.tool(
-  'click',
-  'Click an element on the page by CSS selector or visible text content.',
-  {
-    profile: z.string().optional(),
-    selector: z.string().optional().describe('CSS selector of the element to click'),
-    text: z.string().optional().describe('Visible text content to find and click'),
-    ref: z.string().optional().describe('Reference from a previous snapshot to click (e.g. @e5)'),
-    tabId: z.number().optional()
-  },
-  async ({ profile, selector, text, ref, tabId }) => {
-    const result = await sendCommand(profile, 'click', { selector, text, ref, tabId });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: fill ---
-server.tool(
-  'fill',
-  'Fill a form field (input, textarea, select) with a value.',
-  {
-    selector: z.string().optional().describe('CSS selector of the input field'),
-    value: z.string().describe('Value to fill in'),
-    profile: z.string().optional(),
-    tabId: z.number().optional(),
-    ref: z.string().optional().describe('Reference from a previous snapshot to fill (e.g. @e5)'),
-    clear: z.boolean().optional().describe('Clear the field before filling (default: true)')
-  },
-  async ({ selector, value, profile, tabId, ref, clear }) => {
-    const result = await sendCommand(profile, 'fill', { selector, value, tabId, ref, clear });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: extract ---
-server.tool(
-  'extract',
-  'Extract text, attributes, or HTML from elements on the page.',
-  {
-    selector: z.string().describe('CSS selector of the element(s) to extract from'),
-    profile: z.string().optional(),
-    tabId: z.number().optional(),
-    attribute: z.string().optional().describe('Specific attribute to extract (e.g. "href", "src")'),
-    multiple: z.boolean().optional().describe('Extract from all matching elements (default: false)')
-  },
-  async ({ selector, profile, tabId, attribute, multiple }) => {
-    const result = await sendCommand(profile, 'extract', { selector, tabId, attribute, multiple });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: screenshot ---
-server.tool(
-  'screenshot',
-  'Take a screenshot of the currently visible browser tab. By default (annotate: true), it automatically generates a fresh DOM snapshot, draws red bounding boxes with Ref IDs (@eX) over interactive elements, takes the photo, and returns BOTH the image and the semantic DOM text mapping. This is the ultimate tool for visual page understanding and is highly recommended.',
-  {
-    profile: z.string().optional(),
-    tabId: z.number().optional(),
-    annotate: z.boolean().optional().default(true).describe('Generate a fresh snapshot, draw bounding boxes on the UI, and return the DOM mapping text alongside the image.')
-  },
-  async ({ profile, tabId, annotate }) => {
-    let mappingText = "";
-    
-    // 1. If annotate is true, force a fresh DOM snapshot in Chrome to map @eX tags
-    if (annotate) {
-      const snapResult = await sendCommand(profile, 'snapshot', { 
-        tabId, interactiveOnly: true, format: 'text' 
-      });
-      mappingText = snapResult?.tree || "";
-    }
-
-    // 2. Take the screenshot (the extension natively draws the boxes based on the snap map)
-    const result = await sendCommand(profile, 'screenshot', { tabId, annotate });
-    
-    if (result.dataUrl) {
-      const base64 = result.dataUrl.replace(/^data:image\/png;base64,/, '');
-      const content = [];
-      
-      content.push({
-        type: 'image',
-        data: base64,
-        mimeType: 'image/png'
-      });
-
-      if (mappingText) {
-        content.push({
-          type: 'text',
-          text: `\n### DOM Snapshot Mapping ###\nHere is the mapping for the @eX references shown in the screenshot. Use the exact @eX ID when interacting:\n\n${mappingText}`
-        });
-      } else {
-        content.push({
-          type: 'text',
-          text: 'Screenshot captured without DOM mapping.'
-        });
-      }
-      
-      return { content };
-    }
-    return { content: [{ type: 'text', text: 'Screenshot failed' }] };
-  }
-);
-
-// --- Tool: get_tabs ---
-server.tool(
-  'get_tabs',
-  'List all open tabs in the browser.',
-  {
-    profile: z.string().optional()
-  },
-  async ({ profile }) => {
-    const result = await sendCommand(profile, 'get_tabs', {});
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: get_page_info ---
-server.tool(
-  'get_page_info',
-  'Get detailed information about the current page: title, URL, number of forms, links, inputs, buttons.',
-  {
-    profile: z.string().optional(),
-    tabId: z.number().optional()
-  },
-  async ({ profile, tabId }) => {
-    const result = await sendCommand(profile, 'get_page_info', { tabId });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: scroll ---
-server.tool(
-  'scroll',
-  'Scroll the page up/down or to a specific element.',
-  {
-    profile: z.string().optional(),
-    tabId: z.number().optional(),
-    direction: z.enum(['up', 'down']).optional(),
-    amount: z.union([z.number(), z.string().transform(Number)]).optional().describe('Pixels to scroll (default: 500)'),
-    selector: z.string().optional().describe('CSS selector to scroll to')
-  },
-  async ({ profile, tabId, direction, amount, selector }) => {
-    const result = await sendCommand(profile, 'scroll', { direction, amount, selector, tabId });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: wait ---
-server.tool(
-  'wait',
-  'Wait for a specified time or until an element appears on the page.',
-  {
-    profile: z.string().optional(),
-    tabId: z.number().optional(),
-    ms: z.number().optional().describe('Milliseconds to wait'),
-    selector: z.string().optional().describe('Wait until this CSS selector appears (max 10s)')
-  },
-  async ({ profile, tabId, ms, selector }) => {
-    const result = await sendCommand(profile, 'wait', { ms, selector, tabId });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: execute_js ---
-server.tool(
-  'execute_js',
-  'Execute arbitrary JavaScript code in the active tab. Use for advanced interactions.',
-  {
-    code: z.string().describe('JavaScript code to execute in the page context'),
-    profile: z.string().optional(),
-    tabId: z.number().optional()
-  },
-  async ({ code, profile, tabId }) => {
-    const result = await sendCommand(profile, 'execute_js', { code, tabId });
-    const textResponse = result !== undefined ? JSON.stringify(result, null, 2) : "Execution successful (no return value)";
-    return { content: [{ type: 'text', text: textResponse }] };
-  }
-);
-
-// --- Tool: keyboard ---
-server.tool(
-  'keyboard',
-  'Send a keyboard event (key press) to the active element.',
-  {
-    key: z.string().describe('Key to press (e.g. "Enter", "Tab", "Escape", "a")'),
-    modifiers: z.array(z.enum(['ctrl', 'shift', 'alt', 'meta'])).optional(),
-    profile: z.string().optional(),
-    tabId: z.number().optional()
-  },
-  async ({ key, modifiers, profile, tabId }) => {
-    const result = await sendCommand(profile, 'keyboard', { key, modifiers, tabId });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: get_cookies ---
-server.tool(
-  'get_cookies',
-  'Get cookies for a URL or domain. Useful to check authentication state.',
-  {
-    url: z.string().optional(),
-    domain: z.string().optional(),
-    profile: z.string().optional()
-  },
-  async ({ url, domain, profile }) => {
-    const result = await sendCommand(profile, 'get_cookies', { url, domain });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) || "null" }] };
-  }
-);
-
-// --- Tool: snapshot ---
-server.tool(
-  'snapshot',
-  'Take a snapshot of the page building an accessibility tree. Returns a structured tree with unique Refs (@eX) that can be used in click/fill commands. Use this to understand what is on the page before interacting.',
-  {
-    profile: z.string().optional(),
-    tabId: z.number().optional(),
-    interactiveOnly: z.boolean().optional().describe('Only include interactive elements (links, buttons, inputs) in the snapshot'),
-    compact: z.boolean().optional().describe('Compact generic wrappers to reduce the size of the snapshot'),
-    maxDepth: z.number().optional().describe('Maximum depth of the DOM tree (default: 50)'),
-    includeHidden: z.boolean().optional().describe('Include visually hidden elements (default: false)'),
-    includeRects: z.boolean().optional().describe('Include bounding box coordinates [x, y, width x height] in the text snapshot')
-  },
-  async ({ profile, tabId, interactiveOnly, compact, maxDepth, includeHidden, includeRects }) => {
-    const result = await sendCommand(profile, 'snapshot', { 
-      tabId, interactiveOnly, compact, maxDepth, includeHidden, includeRects, format: 'text' 
-    });
-    
-    if (!result || !result.tree) {
-      return { content: [{ type: 'text', text: 'Snapshot failed — no elements found' }] };
-    }
-
-    const output = [
-      `Page: ${result.title}`,
-      `URL: ${result.url}`,
-      `Timestamp: ${new Date(result.timestamp).toISOString()}`,
-      '',
-      result.tree
-    ];
-
-    return { content: [{ type: 'text', text: output.join('\n') }] };
-  }
-);
-
-// ─── Start MCP Server ──────────────────────────────────────────────
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
-log('MCP server running on stdio');
 
 // ─── Graceful Shutdown ──────────────────────────────────────────────
 
 function cleanup() {
   log('Shutting down server...');
-  if (wss) wss.close();
-  server.close();
+  closeWebSocket();
   process.exit(0);
 }
 
 process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
-process.stdin.on('close', cleanup);
+if (USE_STDIO) process.stdin.on('close', cleanup);

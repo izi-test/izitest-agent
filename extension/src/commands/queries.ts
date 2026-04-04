@@ -2,7 +2,7 @@
 // These use chrome.scripting.executeScript (not CDP)
 // because they only need DOM read access
 
-import { resolveTabId, delay, ensureContentScript } from '../helpers';
+import { resolveTabId, delay, ensureContentScript, captureTabScreenshot } from '../helpers';
 import type {
   SnapshotParams, ExtractParams, PageInfoParams,
   ScreenshotParams, ExecuteJsParams, WaitParams,
@@ -91,6 +91,31 @@ export async function cmdGetPageInfo({ tabId }: PageInfoParams) {
 
 // ─── Screenshot ─────────────────────────────────────────────────────
 
+const CONSOLE_PREVIEW_WIDTH_PX  = 600;
+const CONSOLE_PREVIEW_HEIGHT_PX = 340;
+
+function logScreenshotPreview(dataUrl: string): void {
+  // Render image inline in DevTools using CSS background-image trick
+  console.log(
+    '%c                                                                              ',
+    [
+      `background-image: url('${dataUrl}')`,
+      'background-size: contain',
+      'background-repeat: no-repeat',
+      'background-position: left center',
+      `padding: ${CONSOLE_PREVIEW_HEIGHT_PX / 2}px ${CONSOLE_PREVIEW_WIDTH_PX / 2}px`,
+      'border: 2px solid #7c3aed',
+      'border-radius: 6px',
+    ].join('; ')
+  );
+  // Clickable data URL — open in new tab to view full size
+  console.log(
+    '%c🖼️ Screenshot — click URL to open full size  %c' + dataUrl,
+    'color: #7c3aed; font-weight: bold;',
+    'color: #10b981; text-decoration: underline;'
+  );
+}
+
 export async function cmdScreenshot({ tabId, annotate }: ScreenshotParams) {
   const resolvedTabId = await resolveTabId(tabId);
   
@@ -102,16 +127,15 @@ export async function cmdScreenshot({ tabId, annotate }: ScreenshotParams) {
     await delay(300);
   }
 
-  const dataUrl = await chrome.tabs.captureVisibleTab({
-    format: 'png',
-    quality: 90
-  });
+  const dataUrl = await captureTabScreenshot(resolvedTabId, { format: 'png', quality: 90 });
 
   if (annotate) {
     await new Promise((resolve) => {
       chrome.tabs.sendMessage(resolvedTabId, { type: 'clear_annotations' }, resolve);
     });
   }
+
+  logScreenshotPreview(dataUrl);
 
   return { dataUrl, tabId: resolvedTabId };
 }

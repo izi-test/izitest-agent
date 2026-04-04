@@ -6,10 +6,15 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start:stdio": "node server.js --stdio",
+    "dev": "node --watch server.js",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "ws": "^8.18.0"
+    "pg": "^8.20.0",
+    "ws": "^8.18.0",
+    "zod": "^3.25.76"
   }
 }
