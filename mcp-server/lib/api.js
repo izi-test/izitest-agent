@@ -2,12 +2,16 @@
 
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
+import { writeFileSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { pool } from './db.js';
 import { log } from './logger.js';
 import { executeWorkflow } from './workflows.js';
 import { sendCommand } from './websocket.js';
 
 const execFileAsync = promisify(execFile);
+const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -411,13 +415,30 @@ export async function apiRouter(req, res, url) {
       // Build args based on provider
       const args = [];
       if (agentConfig.cli?.provider === 'claude') {
-        args.push('-p', body.prompt, '--output-format', 'stream-json', '-y');
+        args.push('-p', body.prompt, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
       } else if (agentConfig.cli?.provider === 'copilot') {
         args.push('-p', body.prompt, '--allow-all', '--allow-all-tools', '-s', '--no-ask-user');
       } else if (agentConfig.cli?.provider === 'gemini') {
         args.push('-p', body.prompt, '-y');
       } else {
         args.push('-p', body.prompt);
+      }
+
+      // Create a temp MCP config that connects to the ALREADY-RUNNING server via SSE
+      // instead of letting the spawned agent discover .mcp.json and spawn a 2nd stdio server
+      // (which would fight for the same WebSocket port and crash the parent).
+      let tmpMcpConfig = null;
+      if (agentConfig.cli?.provider === 'claude') {
+        tmpMcpConfig = join(tmpdir(), `bp-mcp-${Date.now()}.json`);
+        writeFileSync(tmpMcpConfig, JSON.stringify({
+          mcpServers: {
+            'browser-pilot': {
+              type: 'sse',
+              url: `http://127.0.0.1:${MCP_PORT}/sse`
+            }
+          }
+        }));
+        args.push('--mcp-config', tmpMcpConfig, '--strict-mcp-config');
       }
 
       // Setup SSE
@@ -433,38 +454,43 @@ export async function apiRouter(req, res, url) {
 
       const child = spawn(baseCmd, args, {
         env: { ...process.env, PATH: process.env.PATH },
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true
       });
 
       let outputBuffer = '';
-      let toolCallBuffer = '';
+      let lineBuffer = '';
+      const isClaudeProvider = agentConfig.cli?.provider === 'claude';
 
-      // Parse agent output for tool calls (works for Claude stream-json and copilot formats)
-      const extractToolCalls = (text) => {
-        toolCallBuffer += text;
-        // Claude stream-json: look for tool_use events
-        const lines = toolCallBuffer.split('\n');
-        toolCallBuffer = lines.pop() || ''; // keep incomplete last line
+      // Parse Claude stream-json and emit only human-readable SSE events
+      const processStreamJson = (raw) => {
+        lineBuffer += raw;
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() || '';
+
         for (const line of lines) {
-          try {
-            const parsed = JSON.parse(line);
-            // Claude stream-json format
-            if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'tool_use') {
-              log(`Agent tool call: ${parsed.content_block.name}(${JSON.stringify(parsed.content_block.input || {}).substring(0, 500)})`);
+          if (!line.trim()) continue;
+          let parsed;
+          try { parsed = JSON.parse(line); } catch { continue; }
+
+          // Assistant text message
+          if (parsed.type === 'assistant' && parsed.message?.content) {
+            for (const block of parsed.message.content) {
+              if (block.type === 'text' && block.text) {
+                res.write(`data: ${JSON.stringify({ type: 'chunk', text: block.text })}\n\n`);
+              }
+              if (block.type === 'tool_use') {
+                res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: block.name, input: block.input })}\n\n`);
+                log(`Agent tool call: ${block.name}(${JSON.stringify(block.input || {}).substring(0, 500)})`);
+              }
             }
-            if (parsed.type === 'result' && parsed.subtype === 'tool_use') {
-              log(`Agent tool call: ${parsed.tool_name || 'unknown'}(${JSON.stringify(parsed.input || {}).substring(0, 500)})`);
-            }
-            // Generic: look for tool_name/tool fields
-            if (parsed.tool_name || parsed.tool) {
-              log(`Agent tool call detected: ${parsed.tool_name || parsed.tool}(${JSON.stringify(parsed.input || parsed.args || {}).substring(0, 500)})`);
-            }
-          } catch {
-            // Not JSON, check for common patterns in text output
-            const toolMatch = line.match(/(?:calling|using|tool[_\s]?(?:use|call))[:\s]+(\w+)/i);
-            if (toolMatch) {
-              log(`Agent tool mention: ${toolMatch[1]} — ${line.substring(0, 300)}`);
-            }
+            continue;
+          }
+
+          // Tool result
+          if (parsed.type === 'result' && parsed.result) {
+            res.write(`data: ${JSON.stringify({ type: 'chunk', text: parsed.result })}\n\n`);
+            continue;
           }
         }
       };
@@ -472,14 +498,16 @@ export async function apiRouter(req, res, url) {
       child.stdout.on('data', (data) => {
         const text = data.toString();
         outputBuffer += text;
-        extractToolCalls(text);
-        res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
+        if (isClaudeProvider) {
+          processStreamJson(text);
+        } else {
+          res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
+        }
       });
 
       child.stderr.on('data', (data) => {
         const text = data.toString();
         log(`Agent stderr: ${text.substring(0, 500)}`);
-        res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
       });
 
       child.on('error', (err) => {
@@ -488,9 +516,16 @@ export async function apiRouter(req, res, url) {
         res.end();
       });
 
+      const cleanupTmpConfig = () => {
+        if (tmpMcpConfig) {
+          try { unlinkSync(tmpMcpConfig); } catch {}
+          tmpMcpConfig = null;
+        }
+      };
+
       child.on('close', (code) => {
+        cleanupTmpConfig();
         log(`Agent process exited with code ${code} (output: ${outputBuffer.length} chars)`);
-        // Log a summary of agent actions for debugging
         const fixCalls = outputBuffer.match(/fix_workflow_step/g);
         const replayCalls = outputBuffer.match(/replay_workflow/g);
         const navigateCalls = outputBuffer.match(/\bnavigate\b/g);
@@ -499,12 +534,13 @@ export async function apiRouter(req, res, url) {
         res.end();
       });
 
-      // If client disconnects, kill the agent process
+      // If client disconnects, kill the agent process group
       req.on('close', () => {
         if (!child.killed) {
-          child.kill('SIGTERM');
-          log('Agent process killed (client disconnected)');
+          try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+          log('Agent process group killed (client disconnected)');
         }
+        cleanupTmpConfig();
       });
 
       return;

@@ -12,6 +12,88 @@ import {
 } from '../workflows.js';
 
 
+// ─── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Derive a meaningful variable name from step locators (label, placeholder, aria).
+ * Returns null if no meaningful name can be extracted.
+ */
+function deriveVarNameFromLocators(step) {
+  const locators = step.locators || [];
+  const labelTypes = ['label', 'placeholder', 'aria'];
+  for (const type of labelTypes) {
+    const loc = locators.find(l => l.type === type && l.value);
+    if (loc) {
+      const name = loc.value
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // strip accents
+        .replace(/[^a-z0-9\s]/g, '')                      // keep alphanum + spaces
+        .trim()
+        .replace(/\s+/g, '_')                              // spaces → underscores
+        .substring(0, 30);
+      if (name && name.length >= 2) return name;
+    }
+  }
+  return null;
+}
+
+/**
+ * Ensure a variable name is unique within the used set.
+ * Appends _2, _3, etc. on collision.
+ */
+function uniqueVarName(baseName, usedNames) {
+  if (!usedNames.has(baseName)) {
+    usedNames.add(baseName);
+    return baseName;
+  }
+  let suffix = 2;
+  while (usedNames.has(`${baseName}_${suffix}`)) suffix++;
+  const unique = `${baseName}_${suffix}`;
+  usedNames.add(unique);
+  return unique;
+}
+
+/**
+ * Remove recovery/parasitic steps that result from error recovery during recording.
+ * Detected patterns:
+ *  - navigate to same URL as a previous navigate → remove the duplicate + surrounding waits
+ *  - Trailing wait steps at the very end (often artifacts)
+ */
+function cleanRecoverySteps(steps) {
+  const cleaned = [...steps];
+
+  // Pass 1: Remove duplicate navigate sequences (wait? → navigate(same URL) → wait?)
+  const navigateUrls = new Map(); // url → first step index
+  const toRemove = new Set();
+
+  for (let i = 0; i < cleaned.length; i++) {
+    if (cleaned[i].command === 'navigate' && cleaned[i].params.url) {
+      const url = cleaned[i].params.url;
+      if (navigateUrls.has(url)) {
+        // Duplicate navigate — mark it and surrounding waits for removal
+        toRemove.add(i);
+        if (i > 0 && cleaned[i - 1].command === 'wait') toRemove.add(i - 1);
+        if (i + 1 < cleaned.length && cleaned[i + 1].command === 'wait') toRemove.add(i + 1);
+      } else {
+        navigateUrls.set(url, i);
+      }
+    }
+  }
+
+  // Pass 2: Remove trailing wait steps (common recording artifact)
+  let last = cleaned.length - 1;
+  while (last >= 0 && cleaned[last].command === 'wait' && !toRemove.has(last)) {
+    toRemove.add(last);
+    last--;
+  }
+
+  if (toRemove.size === 0) return cleaned;
+
+  const result = cleaned.filter((_, idx) => !toRemove.has(idx));
+  log(`Cleaned ${toRemove.size} parasitic step(s) (${cleaned.length} → ${result.length})`);
+  return result;
+}
+
 export function registerWorkflowTools(server, { sendCommand }) {
 
   // --- Tool: start_recording ---
@@ -79,17 +161,25 @@ export function registerWorkflowTools(server, { sendCommand }) {
         return { content: [{ type: 'text', text: 'Recording cancelled — no steps were recorded.' }] };
       }
 
+      // ─── Step cleanup: remove parasitic recovery steps ────────────
+      recording.steps = cleanRecoverySteps(recording.steps);
+
       log(`Batch variable detection for ${recording.steps.length} steps...`);
       const lastRefMap = getLastRefMap();
+      const usedVarNames = new Set();
 
       // ─── Batch variable detection ─────────────────────────────────
       for (let i = 0; i < recording.steps.length; i++) {
         const step = recording.steps[i];
-        if (step.variable) continue; // already variabilized
+        if (step.variable) {
+          usedVarNames.add(step.variable.name);
+          continue; // already variabilized
+        }
 
-        // Auto-variabilize FILL steps
+        // Auto-variabilize FILL steps (smart naming from locators)
         if (step.command === 'fill' && step.params.value) {
-          const varName = 'input_' + (i + 1);
+          const baseName = deriveVarNameFromLocators(step) || ('input_' + (i + 1));
+          const varName = uniqueVarName(baseName, usedVarNames);
           const originalValue = step.params.value;
           step.params.value = `{{${varName}}}`;
           step.variable = { name: varName, type: 'text', defaultValue: originalValue };
@@ -97,7 +187,7 @@ export function registerWorkflowTools(server, { sendCommand }) {
           continue;
         }
 
-        // Auto-detect CLICK on list/box items
+        // Auto-detect CLICK on list/box items (with deduplication)
         if (step.command === 'click') {
           const cssLocator = (step.locators || []).find(l => l.type === 'css');
           const selector = step.params.selector || (cssLocator && cssLocator.value);
@@ -109,7 +199,7 @@ export function registerWorkflowTools(server, { sendCommand }) {
               if (listContext) {
                 const llmResult = await classifyWithLLM(listContext, step.intent);
                 if (llmResult.isList) {
-                  const varName = llmResult.variableName;
+                  const varName = uniqueVarName(llmResult.variableName, usedVarNames);
                   step.variable = {
                     name: varName,
                     type: listContext.type === 'box' ? 'box_item' : 'list_item',
@@ -140,7 +230,8 @@ export function registerWorkflowTools(server, { sendCommand }) {
         if (step.command === 'fill' && !step.variable) {
           const refKey = step.params.ref ? String(step.params.ref).replace('@', '') : null;
           if (refKey && lastRefMap[refKey] && lastRefMap[refKey].role === 'combobox') {
-            const varName = 'select_' + (i + 1);
+            const baseName = 'select_' + (i + 1);
+            const varName = uniqueVarName(baseName, usedVarNames);
             const originalValue = step.params.value;
             step.params.value = `{{${varName}}}`;
             step.variable = { name: varName, type: 'select', defaultValue: originalValue };

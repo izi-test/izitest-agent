@@ -2,15 +2,16 @@
 // Connects to the bridge server via WebSocket and executes browser commands
 // Actions use Chrome DevTools Protocol (CDP) for native input simulation
 
-import { updateBadge, resolveTabId, ensureContentScript, captureTabScreenshot } from './helpers';
-import { cmdNavigate, cmdClick, cmdFill, cmdKeyboard, cmdScroll, cmdReplaySequence } from './commands/actions';
+import { updateBadge, resolveTabId, ensureContentScript, captureTabScreenshot, delay } from './helpers';
+import { cmdNavigate, cmdClick, cmdFill, cmdKeyboard, cmdScroll } from './commands/actions';
+import { cmdReplaySequence } from './commands/replay';
 import {
   cmdSnapshot, cmdExtract, cmdGetPageInfo, cmdScreenshot,
   cmdGetTabs, cmdCloseTab, cmdWait, cmdExecuteJs, cmdGetCookies
 } from './commands/queries';
 
 // Importing puppeteer-client to register its lifecycle listeners
-import './puppeteer-client';
+import { detachBrowser } from './puppeteer-client';
 
 // ─── Content-Script Commands ────────────────────────────────────────
 
@@ -61,10 +62,47 @@ const COMMAND_HANDLERS: Record<string, CommandHandler> = {
   detect_list_context:(params) => cmdDetectListContext(params as unknown as { selector?: string; text?: string; tabId?: number }),
 };
 
+function isAboutBlankError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes('about:blank') && msg.includes('Cannot access contents');
+}
+
 async function executeCommand(command: string, params: Record<string, unknown>, onProgress?: (data: any) => void): Promise<unknown> {
   const handler = COMMAND_HANDLERS[command];
   if (!handler) throw new Error(`Unknown command: ${command}`);
-  return handler(params, onProgress);
+
+  try {
+    return await handler(params, onProgress);
+  } catch (error) {
+    if (!isAboutBlankError(error)) throw error;
+
+    // Tab got hijacked to about:blank (e.g., ad tracker iframe).
+    // Evict the stale Puppeteer connection and retry once.
+    const tabId = params.tabId as number | undefined;
+    if (tabId) {
+      console.warn(`[BrowserPilot] about:blank error on tab ${tabId}, evicting and retrying...`);
+      detachBrowser(tabId);
+      await delay(300);
+
+      // Verify the tab still has a real URL before retrying
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab.url && tab.url.startsWith('about:blank')) {
+          throw new Error(
+            `Tab ${tabId} is stuck on about:blank (likely hijacked by an ad/tracker). ` +
+            `Navigate to the desired URL again to recover.`
+          );
+        }
+      } catch (tabErr) {
+        if (tabErr instanceof Error && tabErr.message.includes('stuck on about:blank')) throw tabErr;
+        // Tab might have been removed — let the retry fail naturally
+      }
+
+      return handler(params, onProgress);
+    }
+
+    throw error;
+  }
 }
 
 // ─── WebSocket Connection ───────────────────────────────────────────
