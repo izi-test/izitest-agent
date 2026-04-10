@@ -3,7 +3,7 @@
 // Actions use Chrome DevTools Protocol (CDP) for native input simulation
 
 import { updateBadge, resolveTabId, ensureContentScript, captureTabScreenshot, delay } from './helpers';
-import { cmdNavigate, cmdClick, cmdFill, cmdKeyboard, cmdScroll } from './commands/actions';
+import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdKeyboard, cmdScroll } from './commands/actions';
 import { cmdReplaySequence } from './commands/replay';
 import {
   cmdSnapshot, cmdExtract, cmdGetPageInfo, cmdScreenshot,
@@ -47,6 +47,7 @@ const COMMAND_HANDLERS: Record<string, CommandHandler> = {
   navigate:     (params) => cmdNavigate(params as unknown as Parameters<typeof cmdNavigate>[0]),
   click:        (params) => cmdClick(params as unknown as Parameters<typeof cmdClick>[0]),
   fill:         (params) => cmdFill(params as unknown as Parameters<typeof cmdFill>[0]),
+  select:       (params) => cmdSelect(params as unknown as Parameters<typeof cmdSelect>[0]),
   keyboard:     (params) => cmdKeyboard(params as unknown as Parameters<typeof cmdKeyboard>[0]),
   scroll:       (params) => cmdScroll(params as unknown as Parameters<typeof cmdScroll>[0]),
   snapshot:     (params) => cmdSnapshot(params as unknown as Parameters<typeof cmdSnapshot>[0]),
@@ -139,7 +140,7 @@ function connect(): void {
         
         const captureDebugScreenshot = async (isError: boolean) => {
           try {
-            if (!['screenshot', 'snapshot', 'get_tabs'].includes(message.command)) {
+            if (!['screenshot', 'snapshot', 'get_tabs', 'execute_js'].includes(message.command)) {
               const debugTabId = message.params?.tabId as number | undefined;
               const resolvedDebugTabId = await resolveTabId(debugTabId);
               const dataUrl = await captureTabScreenshot(resolvedDebugTabId, { format: 'jpeg', quality: 60 });
@@ -179,6 +180,24 @@ function connect(): void {
         } catch (error) {
           await captureDebugScreenshot(true);
           throw error;
+        }
+      } else if (message.type === 'set_overlay_state') {
+        const state = message.state;
+        // In some cases we want to update state but not popup if it wasn't there
+        // Actually, if we pass mode: 'success' or 'failed', we DO want to update existing overlay, but actually we WANT to show it if it wasn't there.
+        // Wait, mode: 'success'/'failed' without updateOnly should use 'update_overlay' instead of 'show_overlay'?
+        // 'show_overlay' will re-create it if it doesn't exist, which is fine!
+        const msgType = state === null ? 'hide_overlay' : (state.updateOnly ? 'update_overlay' : 'show_overlay');
+        
+        const targetTabId = message.tabId;
+        if (targetTabId) {
+          chrome.tabs.sendMessage(targetTabId, { type: msgType, state }).catch(() => {});
+        } else {
+          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0]?.id) {
+              chrome.tabs.sendMessage(tabs[0].id, { type: msgType, state }).catch(() => {});
+            }
+          });
         }
       }
     } catch (error) {
@@ -239,6 +258,25 @@ chrome.runtime.onMessage.addListener((
     executeCommand(command, params)
       .then((result) => sendResponse({ success: true, result }))
       .catch((error) => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
+  }
+
+  if (message.type === 'stop_automation') {
+    if (message.mode === 'recording') {
+      if (websocket?.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify({ type: 'stop_recording_signal' }));
+      }
+    } else if (message.mode === 'playing') {
+      import('./commands/replay').then(({ abortSequence }) => {
+        abortSequence();
+      });
+    }
+    // Also broadcast hide_overlay to all tabs as a fallback
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.id) chrome.tabs.sendMessage(tab.id, { type: 'hide_overlay' }).catch(() => {});
+      }
+    });
+    sendResponse({ ok: true });
   }
 
   return true;

@@ -2,7 +2,7 @@
 import { getPage } from '../puppeteer-client';
 import { resolveTabId, waitForTabLoad, delay, ensureContentScript, SCROLL_SETTLE_DELAY_MS } from '../helpers';
 import { CMD_KEY, MODIFIER_MAP, focusViaLocator, clearAndType } from './page-helpers';
-import type { NavigateParams, ClickParams, FillParams, KeyboardParams, ScrollParams } from '../types';
+import type { NavigateParams, ClickParams, FillParams, SelectParams, KeyboardParams, ScrollParams } from '../types';
 
 // ─── Ref resolution (content script element map) ────────────────────
 
@@ -26,20 +26,30 @@ export async function resolveElementRef(tabId: number, ref: string): Promise<Res
 
 // ─── Commands ────────────────────────────────────────────────────────
 
-export async function cmdNavigate({ url, tabId, newWindow }: NavigateParams) {
+export async function cmdNavigate({ url, tabId, newWindow, viewportWidth, viewportHeight }: NavigateParams) {
   let targetTabId: number;
 
   if (tabId) {
     targetTabId = tabId;
   } else if (newWindow) {
-    const newWin = await chrome.windows.create({ url: 'about:blank' });
+    // Chrome window chrome (title bar, borders) adds ~80px height and ~0-16px width
+    const windowOpts: chrome.windows.CreateData = { url: 'about:blank' };
+    if (viewportWidth) windowOpts.width = viewportWidth + 16;
+    if (viewportHeight) windowOpts.height = viewportHeight + 88;
+    const newWin = await chrome.windows.create(windowOpts);
     targetTabId = newWin.tabs![0].id!;
   } else {
-    const newTab = await chrome.tabs.create({ url: 'about:blank' });
-    targetTabId = newTab.id!;
+    // Use the current active tab instead of creating a new one
+    targetTabId = await resolveTabId();
   }
 
   const page = await getPage(targetTabId);
+
+  // Set precise viewport dimensions if specified
+  if (viewportWidth && viewportHeight) {
+    await page.setViewport({ width: viewportWidth, height: viewportHeight });
+  }
+
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await waitForTabLoad(targetTabId);
 
@@ -145,6 +155,95 @@ export async function cmdFill({ selector, value, tabId, clear, ref }: FillParams
   await clearAndType(page, value, shouldClear);
 
   return { success: true, selector };
+}
+
+export async function cmdSelect({ selector, value, tabId, ref, matchBy }: SelectParams) {
+  const resolvedTabId = await resolveTabId(tabId);
+  const page = await getPage(resolvedTabId);
+  const match = matchBy || 'text';
+
+  // Resolve the <select> element
+  let targetSelector: string;
+  if (ref) {
+    const element = await resolveElementRef(resolvedTabId, ref);
+    // Click to focus the select, then use JS to find its selector
+    await page.mouse.click(element.x, element.y);
+    await delay(50);
+    // Build a unique selector from the ref's resolved coordinates
+    targetSelector = await page.evaluate(
+      (x, y) => {
+        const el = document.elementFromPoint(x, y);
+        if (!el) return '';
+        const select = el.closest('select') || (el.tagName === 'SELECT' ? el : null);
+        if (!select) return '';
+        if (select.id) return '#' + select.id;
+        const parts: string[] = [];
+        let cur = select as Element | null;
+        while (cur && cur !== document.body) {
+          let seg = cur.tagName.toLowerCase();
+          if (cur.id) { parts.unshift('#' + cur.id); break; }
+          const p = cur.parentElement;
+          if (p) {
+            const tag = cur.tagName;
+            const siblings = Array.from(p.children).filter((c: Element) => c.tagName === tag);
+            if (siblings.length > 1) seg += ':nth-of-type(' + (siblings.indexOf(cur) + 1) + ')';
+          }
+          parts.unshift(seg);
+          cur = p;
+        }
+        return parts.join(' > ');
+      },
+      element.x, element.y
+    ) as string;
+    if (!targetSelector) throw new Error(`Could not resolve ref ${ref} to a <select> element`);
+  } else if (selector) {
+    targetSelector = selector;
+  } else {
+    throw new Error('Provide selector or ref to select');
+  }
+
+  // Use page.evaluate to set the value (works for both value and text matching)
+  const result = await page.evaluate((sel: string, val: string, by: string) => {
+    const select = document.querySelector(sel) as HTMLSelectElement | null;
+    if (!select) return { success: false, error: `Select element not found: ${sel}` };
+    if (select.tagName !== 'SELECT') return { success: false, error: `Element is not a <select>: ${select.tagName}` };
+
+    let matched = false;
+    for (const option of select.options) {
+      if (by === 'value' ? option.value === val : option.text.trim() === val || option.textContent?.trim() === val) {
+        select.value = option.value;
+        matched = true;
+        break;
+      }
+    }
+
+    // Fallback: partial text match
+    if (!matched && by === 'text') {
+      const lower = val.toLowerCase();
+      for (const option of select.options) {
+        if (option.text.trim().toLowerCase().includes(lower) || option.textContent?.trim().toLowerCase().includes(lower)) {
+          select.value = option.value;
+          matched = true;
+          break;
+        }
+      }
+    }
+
+    if (!matched) {
+      const available = Array.from(select.options).map(o => `"${o.text.trim()}" (value="${o.value}")`).join(', ');
+      return { success: false, error: `No option matching "${val}" (by ${by}). Available: ${available}` };
+    }
+
+    // Dispatch change event so frameworks (React, Vue, Angular) pick it up
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const selectedOption = select.options[select.selectedIndex];
+    return { success: true, selectedValue: selectedOption.value, selectedText: selectedOption.text.trim() };
+  }, targetSelector, value, match);
+
+  if (!result.success) throw new Error(result.error);
+  return { success: true, selector: targetSelector, selectedValue: result.selectedValue, selectedText: result.selectedText };
 }
 
 export async function cmdKeyboard({ key, modifiers, tabId }: KeyboardParams) {

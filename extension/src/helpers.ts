@@ -2,6 +2,11 @@
 
 const TAB_LOAD_TIMEOUT_MS = 15000;
 export const SCROLL_SETTLE_DELAY_MS = 150;
+const SCREENSHOT_MIN_INTERVAL_MS = 1200;
+const SCREENSHOT_RETRY_DELAYS_MS = [800, 1500, 2200];
+
+let lastScreenshotCaptureAt = 0;
+let screenshotCaptureQueue: Promise<void> = Promise.resolve();
 
 export async function getActiveTabId(): Promise<number> {
   // Strategy 1: active tab in the last focused window (ideal case)
@@ -49,26 +54,59 @@ export async function getWindowIdForTab(tabId: number): Promise<number> {
   return tab.windowId;
 }
 
+function isCaptureQuotaError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND');
+}
+
+async function waitForScreenshotSlot(): Promise<void> {
+  const now = Date.now();
+  const waitMs = Math.max(0, SCREENSHOT_MIN_INTERVAL_MS - (now - lastScreenshotCaptureAt));
+  if (waitMs > 0) {
+    await delay(waitMs);
+  }
+}
+
 /**
  * Capture a screenshot of a specific tab's window, regardless of focus.
  * Temporarily focuses the target window/tab if needed, captures, then restores.
  */
 export async function captureTabScreenshot(tabId: number, options: { format?: 'png' | 'jpeg'; quality?: number } = {}): Promise<string> {
-  const tab = await chrome.tabs.get(tabId);
-  const windowId = tab.windowId;
+  const runCapture = async (): Promise<string> => {
+    const tab = await chrome.tabs.get(tabId);
+    const windowId = tab.windowId;
 
-  // Ensure the target tab is the active tab in its window
-  // (captureVisibleTab captures the active tab of the specified window)
-  if (!tab.active) {
-    await chrome.tabs.update(tabId, { active: true });
-    await delay(50); // brief settle for tab activation
-  }
+    // Ensure the target tab is the active tab in its window
+    // (captureVisibleTab captures the active tab of the specified window)
+    if (!tab.active) {
+      await chrome.tabs.update(tabId, { active: true });
+      await delay(50);
+    }
 
-  const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
-    format: options.format || 'png',
-    quality: options.quality || 90
-  });
-  return dataUrl;
+    await waitForScreenshotSlot();
+
+    for (let attempt = 0; attempt <= SCREENSHOT_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
+          format: options.format || 'png',
+          quality: options.quality || 90
+        });
+        lastScreenshotCaptureAt = Date.now();
+        return dataUrl;
+      } catch (error) {
+        if (!isCaptureQuotaError(error) || attempt === SCREENSHOT_RETRY_DELAYS_MS.length) {
+          throw error;
+        }
+        await delay(SCREENSHOT_RETRY_DELAYS_MS[attempt]);
+      }
+    }
+
+    throw new Error('Screenshot capture failed unexpectedly');
+  };
+
+  const captureTask = screenshotCaptureQueue.then(runCapture);
+  screenshotCaptureQueue = captureTask.then(() => undefined, () => undefined);
+  return captureTask;
 }
 
 export function updateBadge(text: string, color: string): void {

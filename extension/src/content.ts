@@ -16,9 +16,9 @@ import FindSimilarElements from './utils/FindSimilarElements';
         parts.unshift(`#${CSS.escape(current.id)}`);
         break;
       }
-      const parent = current.parentElement;
+      const parent: Element | null = current.parentElement;
       if (parent) {
-        const siblings = Array.from(parent.children).filter(c => c.tagName === current!.tagName);
+        const siblings = Array.from(parent.children).filter((c: Element) => c.tagName === current!.tagName);
         if (siblings.length > 1) {
           const idx = siblings.indexOf(current) + 1;
           seg += `:nth-of-type(${idx})`;
@@ -79,6 +79,19 @@ import FindSimilarElements from './utils/FindSimilarElements';
       } catch (error) {
         sendResponse({ success: false, error: String(error) });
       }
+    }
+
+    if (message.type === 'show_overlay') {
+      import('./dom/overlay').then(({ showOverlay }) => showOverlay(message.state as any));
+      sendResponse({ success: true });
+    }
+    if (message.type === 'update_overlay') {
+      import('./dom/overlay').then(({ updateOverlay }) => updateOverlay(message.state as any));
+      sendResponse({ success: true });
+    }
+    if (message.type === 'hide_overlay') {
+      import('./dom/overlay').then(({ hideOverlay }) => hideOverlay());
+      sendResponse({ success: true });
     }
 
     if (message.type === 'detect_list_context') {

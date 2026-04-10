@@ -44,7 +44,7 @@ Ajoute dans `~/Library/Application Support/Claude/claude_desktop_config.json` :
   "mcpServers": {
     "browser-pilot": {
       "command": "node",
-      "args": ["/chemin/absolu/vers/browser-pilot/mcp-server/server.js"]
+      "args": ["/chemin/absolu/vers/browser-pilot/mcp-server/server.js", "--stdio"]
     }
   }
 }
@@ -53,7 +53,7 @@ Ajoute dans `~/Library/Application Support/Claude/claude_desktop_config.json` :
 #### Option B : Claude Code
 
 ```bash
-claude mcp add browser-pilot node /chemin/absolu/vers/browser-pilot/mcp-server/server.js
+claude mcp add browser-pilot node /chemin/absolu/vers/browser-pilot/mcp-server/server.js --stdio
 ```
 
 ### 4. Lancement

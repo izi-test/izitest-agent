@@ -154,3 +154,10 @@ export function sendCommand(profileId, command, params, timeoutMs = 30000, onPro
     })();
   });
 }
+
+export function pushOverlayState(profileId, state, tabId = null) {
+  const ws = getProfiles().get(profileId) || getProfiles().values().next().value;
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'set_overlay_state', state, tabId }));
+  }
+}

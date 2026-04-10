@@ -10,9 +10,9 @@ export {
 export { classifyWithLLM, detectListContext } from './classify.js';
 
 export {
-  loadWorkflow, saveWorkflow,
-  updateWorkflowStep,
-  deleteWorkflow, listWorkflows
-} from './workflow-store.js';
+  loadTest, saveTest,
+  updateTestStep,
+  deleteTest, listTests
+} from './test-store.js';
 
-export { executeWorkflow } from './workflow-execute.js';
+export { executeTest, evaluateAssertion } from './test-execute.js';

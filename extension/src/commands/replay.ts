@@ -4,7 +4,7 @@ import { resolveTabId, delay } from '../helpers';
 import { clickViaLocator, clickToggleViaHandle, focusViaLocator, clearAndType, isStaleContextError } from './page-helpers';
 import { findElementWithLocators, type ElementCondition } from './locators';
 import { resolveVariableElement, type ReplayStep } from './variable-resolver';
-import { cmdNavigate, cmdClick, cmdFill, cmdKeyboard, cmdScroll } from './actions';
+import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdKeyboard, cmdScroll } from './actions';
 import { cmdExecuteJs, cmdWait } from './queries';
 import type { ReplaySequenceParams, Locator } from '../types';
 import type { Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
@@ -17,6 +17,7 @@ const COMMAND_DISPATCH: Record<string, (params: any) => Promise<any>> = {
   keyboard: cmdKeyboard,
   click: cmdClick,
   fill: cmdFill,
+  select: cmdSelect,
   scroll: cmdScroll,
   execute_js: cmdExecuteJs,
   wait: cmdWait,
@@ -30,14 +31,34 @@ function makeStepResult(
   return { step, command, intent, status, startedAt, finishedAt, durationMs: finishedAt - startedAt, ...extra };
 }
 
+export let isAbortRequested = false;
+export function abortSequence() {
+  isAbortRequested = true;
+}
+
 export async function cmdReplaySequence(
-  { steps, startIndex, newWindow }: ReplaySequenceParams,
+  { steps, startIndex, newWindow, tabId, viewportWidth, viewportHeight }: ReplaySequenceParams,
   onProgress?: (data: any) => void
 ) {
+  isAbortRequested = false;
   const results: any[] = [];
-  let currentTabId: number | undefined = undefined;
+  let currentTabId: number | undefined = tabId ?? undefined;
   const totalSteps = steps.length;
   const executionStartedAt = Date.now();
+
+  // When a tabId is provided (e.g. debug step-by-step mode), ensure the target
+  // tab is focused before executing. The user may have clicked Resume/Step in
+  // the Browser Pilot UI, shifting focus away from the test target window.
+  if (currentTabId) {
+    try {
+      const tab = await chrome.tabs.get(currentTabId);
+      await chrome.tabs.update(currentTabId, { active: true });
+      await chrome.windows.update(tab.windowId, { focused: true });
+      await delay(100);
+    } catch (focusErr) {
+      console.warn(`⚠️ Could not refocus tab ${currentTabId}: ${focusErr instanceof Error ? focusErr.message : String(focusErr)}`);
+    }
+  }
 
   console.log(`\n🎬 ════════════════════════════════════════════════════`);
   console.log(`🎬 REPLAY SEQUENCE STARTED — ${totalSteps} steps (starting at #${startIndex + 1})`);
@@ -54,16 +75,35 @@ export async function cmdReplaySequence(
     const baseParams = { ...step.params };
     const stepStartedAt = Date.now();
 
+    if (isAbortRequested) {
+      executionError = 'Sequence aborted artificially by user via Stop button.';
+      break;
+    }
+
     console.log(`\n▶ Step ${i + 1}/${totalSteps}: [${step.command}] ${step.intent || step.command}`);
     console.log(`  Params: ${JSON.stringify(baseParams)}`);
 
     onProgress?.({ type: 'step_start', step: i + 1, command: step.command, intent: step.intent });
+    
+    if (currentTabId) {
+      chrome.tabs.sendMessage(currentTabId, {
+        type: 'update_overlay',
+        state: { mode: 'playing', step: i + 1, totalSteps, stepName: step.intent || step.command }
+      }).catch(() => {});
+    }
 
     if (currentTabId) {
       baseParams.tabId = currentTabId;
     } else {
       delete baseParams.tabId;
-      if (newWindow) baseParams.newWindow = true;
+      if (newWindow) {
+        baseParams.newWindow = true;
+      }
+    }
+
+    if (i === startIndex) {
+      if (viewportWidth) baseParams.viewportWidth = viewportWidth;
+      if (viewportHeight) baseParams.viewportHeight = viewportHeight;
     }
 
     try {
@@ -85,7 +125,7 @@ export async function cmdReplaySequence(
             await varResult.handle.dispose();
             console.log(`  ✅ Step ${i + 1} completed via variable resolve (${varResult.description})`);
             const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt,
-              { resolvedVia: 'variable', detail: varResult.description });
+              { resolvedVia: 'variable', detail: varResult.description, tabId: currentTabId });
             results.push(stepResult);
             onProgress?.({ type: 'step_complete', stepResult });
             resolvedViaVariable = true;
@@ -106,7 +146,7 @@ export async function cmdReplaySequence(
       }
 
       // ─── Locator-based element commands ─────────────────────
-      const elementCommands = ['click', 'fill', 'scroll'];
+      const elementCommands = ['click', 'fill', 'select', 'scroll'];
       const hasLocators = step.locators && step.locators.length > 0 && elementCommands.includes(step.command);
 
       if (hasLocators) {
@@ -116,8 +156,9 @@ export async function cmdReplaySequence(
         currentTabId = resolvedTab;
 
         const elementCondition: ElementCondition =
-          step.command === 'click' ? 'visible' :
-          step.command === 'fill'  ? 'enabled' :
+          step.command === 'click'  ? 'visible' :
+          step.command === 'fill'   ? 'enabled' :
+          step.command === 'select' ? 'enabled' :
           'any';
 
         const executeWithLocators = async (page: Page) => {
@@ -156,6 +197,19 @@ export async function cmdReplaySequence(
               await focusViaLocator(page, locatorUsed, locatorValue);
               await delay(50);
               await clearAndType(page, String(baseParams.value), baseParams.clear ?? true);
+            } else if (step.command === 'select') {
+              console.log(`  📋 Selecting option: "${baseParams.value}"`);
+              await handle.dispose().catch(() => {});
+              // Use the locator to find the select's CSS selector and call cmdSelect
+              const selectSelector = ['css', 'testid', 'attribute'].includes(locatorUsed)
+                ? locatorValue
+                : baseParams.selector;
+              await cmdSelect({
+                selector: selectSelector,
+                value: String(baseParams.value),
+                tabId: currentTabId,
+                matchBy: baseParams.matchBy || 'text'
+              });
             } else if (step.command === 'scroll') {
               console.log(`  📜 Scrolling to element...`);
               await page.evaluate((el: Element) => el.scrollIntoView({ behavior: 'instant', block: 'center' }), handle);
@@ -185,7 +239,7 @@ export async function cmdReplaySequence(
 
         console.log(`  ✅ Step ${i + 1} completed successfully (via ${locatorUsed})`);
         const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt,
-          { locator: locatorUsed });
+          { locator: locatorUsed, tabId: currentTabId });
         results.push(stepResult);
         onProgress?.({ type: 'step_complete', stepResult });
       } else {
@@ -198,7 +252,7 @@ export async function cmdReplaySequence(
         if (res && res.tabId) currentTabId = res.tabId;
 
         console.log(`  ✅ Step ${i + 1} completed successfully`);
-        const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt);
+        const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt, { tabId: currentTabId });
         results.push(stepResult);
         onProgress?.({ type: 'step_complete', stepResult });
       }
@@ -208,7 +262,7 @@ export async function cmdReplaySequence(
       console.error(`  🚨 Step ${i + 1} FAILED: ${errorMessage}`);
 
       const failedResult = makeStepResult(i + 1, step.command, step.intent, 'failed', stepStartedAt,
-        { error: errorMessage });
+        { error: errorMessage, tabId: currentTabId });
       results.push(failedResult);
       onProgress?.({ type: 'step_complete', stepResult: failedResult });
 

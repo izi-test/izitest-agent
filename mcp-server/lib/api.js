@@ -1,14 +1,15 @@
-// REST API routes for workflow & step CRUD
+// REST API routes for test & step CRUD
 
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { pool } from './db.js';
+import { db, parseJson } from './db.js';
 import { log } from './logger.js';
-import { executeWorkflow } from './workflows.js';
+import { executeTest } from './tests.js';
 import { sendCommand } from './websocket.js';
+import { DebugController, activeDebugControllers } from './debug-controller.js';
 
 const execFileAsync = promisify(execFile);
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
@@ -27,7 +28,6 @@ async function readBody(req) {
 }
 
 function matchRoute(pathname, pattern) {
-  // pattern like /api/workflows/:name/steps/:stepOrder
   const patternParts = pattern.split('/');
   const pathParts = pathname.split('/');
   if (patternParts.length !== pathParts.length) return null;
@@ -43,6 +43,21 @@ function matchRoute(pathname, pattern) {
   return params;
 }
 
+/** Parse JSON TEXT columns in a row object. */
+function parseRow(row, ...jsonCols) {
+  if (!row) return row;
+  const out = { ...row };
+  for (const col of jsonCols) {
+    if (out[col] !== undefined) out[col] = parseJson(out[col]);
+  }
+  return out;
+}
+
+/** Parse JSON TEXT columns in an array of rows. */
+function parseRows(rows, ...jsonCols) {
+  return rows.map(r => parseRow(r, ...jsonCols));
+}
+
 // ─── Router ────────────────────────────────────────────────────────
 
 export async function apiRouter(req, res, url) {
@@ -50,83 +65,89 @@ export async function apiRouter(req, res, url) {
   const path = url.pathname;
 
   try {
-    // ── GET /api/workflows ──
-    if (method === 'GET' && path === '/api/workflows') {
-      const result = await pool.query(`
-        SELECT w.id, w.name, w.description, w.variables, w.created_at, w.updated_at,
-               COUNT(ws.id)::int AS step_count
-        FROM workflows w
-        LEFT JOIN workflow_steps ws ON ws.workflow_id = w.id
-        GROUP BY w.id
-        ORDER BY w.updated_at DESC
-      `);
-      return json(res, 200, { workflows: result.rows });
+    // ── GET /api/tests ──
+    if (method === 'GET' && path === '/api/tests') {
+      const projectId = url.searchParams.get('project_id');
+      let query = `
+        SELECT t.id, t.name, t.description, t.variables, t.viewport, t.project_id, t.created_at, t.updated_at,
+               COUNT(ts.id) AS step_count
+        FROM tests t
+        LEFT JOIN test_steps ts ON ts.test_id = t.id
+      `;
+      const params = [];
+      if (projectId !== null) {
+        query += ' WHERE t.project_id = ?';
+        params.push(projectId === 'null' ? null : projectId);
+      }
+      query += ' GROUP BY t.id ORDER BY t.updated_at DESC';
+      const rows = db.prepare(query).all(...params);
+      return json(res, 200, { tests: parseRows(rows, 'variables', 'viewport') });
     }
 
-    // ── GET /api/workflows/:name ──
-    let params = matchRoute(path, '/api/workflows/:name');
+    // ── GET /api/tests/:name ──
+    let params = matchRoute(path, '/api/tests/:name');
     if (method === 'GET' && params) {
-      const wf = await pool.query('SELECT * FROM workflows WHERE name = $1', [params.name]);
-      if (wf.rows.length === 0) return json(res, 404, { error: 'Workflow not found' });
+      const test = db.prepare('SELECT * FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
 
-      const steps = await pool.query(
-        'SELECT * FROM workflow_steps WHERE workflow_id = $1 ORDER BY step_order',
-        [wf.rows[0].id]
-      );
+      const steps = db.prepare(
+        'SELECT * FROM test_steps WHERE test_id = ? ORDER BY step_order'
+      ).all(test.id);
       return json(res, 200, {
-        workflow: { ...wf.rows[0], steps: steps.rows }
+        test: {
+          ...parseRow(test, 'variables', 'viewport'),
+          steps: parseRows(steps, 'params', 'locators', 'variable', 'assertion')
+        }
       });
     }
 
-    // ── POST /api/workflows ──
-    if (method === 'POST' && path === '/api/workflows') {
+    // ── POST /api/tests ──
+    if (method === 'POST' && path === '/api/tests') {
       const body = await readBody(req);
       if (!body.name) return json(res, 400, { error: 'name is required' });
 
-      const result = await pool.query(
-        `INSERT INTO workflows (name, description) VALUES ($1, $2) RETURNING id, name`,
-        [body.name, body.description || '']
-      );
-      return json(res, 201, result.rows[0]);
+      const result = db.prepare(
+        `INSERT INTO tests (name, description) VALUES (?, ?) RETURNING id, name`
+      ).get(body.name, body.description || '');
+      return json(res, 201, result);
     }
 
-    // ── PUT /api/workflows/:name ──
-    params = matchRoute(path, '/api/workflows/:name');
+    // ── PUT /api/tests/:name ──
+    params = matchRoute(path, '/api/tests/:name');
     if (method === 'PUT' && params) {
       const body = await readBody(req);
       const sets = [];
       const vals = [];
-      let idx = 1;
 
-      if (body.name !== undefined) { sets.push(`name = $${idx++}`); vals.push(body.name); }
-      if (body.description !== undefined) { sets.push(`description = $${idx++}`); vals.push(body.description); }
-      if (body.variables !== undefined) { sets.push(`variables = $${idx++}`); vals.push(JSON.stringify(body.variables)); }
+      if (body.name !== undefined) { sets.push('name = ?'); vals.push(body.name); }
+      if (body.description !== undefined) { sets.push('description = ?'); vals.push(body.description); }
+      if (body.variables !== undefined) { sets.push('variables = ?'); vals.push(JSON.stringify(body.variables)); }
+      if (body.viewport !== undefined) { sets.push('viewport = ?'); vals.push(body.viewport ? JSON.stringify(body.viewport) : null); }
       if (sets.length === 0) return json(res, 400, { error: 'Nothing to update' });
 
-      sets.push(`updated_at = NOW()`);
+      sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')");
       vals.push(params.name);
 
-      const result = await pool.query(
-        `UPDATE workflows SET ${sets.join(', ')} WHERE name = $${idx} RETURNING *`,
-        vals
-      );
-      if (result.rowCount === 0) return json(res, 404, { error: 'Workflow not found' });
-      return json(res, 200, result.rows[0]);
+      const result = db.prepare(
+        `UPDATE tests SET ${sets.join(', ')} WHERE name = ? RETURNING *`
+      ).get(...vals);
+      if (!result) return json(res, 404, { error: 'Test not found' });
+      return json(res, 200, parseRow(result, 'variables', 'viewport'));
     }
 
-    // ── DELETE /api/workflows/:name ──
-    params = matchRoute(path, '/api/workflows/:name');
+    // ── DELETE /api/tests/:name ──
+    params = matchRoute(path, '/api/tests/:name');
     if (method === 'DELETE' && params) {
-      const result = await pool.query('DELETE FROM workflows WHERE name = $1 RETURNING id', [params.name]);
-      if (result.rowCount === 0) return json(res, 404, { error: 'Workflow not found' });
+      const result = db.prepare('DELETE FROM tests WHERE name = ?').run(params.name);
+      if (result.changes === 0) return json(res, 404, { error: 'Test not found' });
       return json(res, 200, { success: true });
     }
 
-    // ── POST /api/workflows/:name/execute (Streaming SSE) ──
-    params = matchRoute(path, '/api/workflows/:name/execute');
+    // ── POST /api/tests/:name/execute (Streaming SSE) ──
+    params = matchRoute(path, '/api/tests/:name/execute');
     if (method === 'POST' && params) {
       const body = await readBody(req);
-      
+
       // Setup SSE headers for chunked transfer
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -139,210 +160,382 @@ export async function apiRouter(req, res, url) {
         res.write(`data: ${JSON.stringify(data)}\n\n`);
       };
 
+      // Create debug controller if debug mode requested
+      let debugController = null;
+      if (body.debug) {
+        const breakpoints = Array.isArray(body.breakpoints) ? body.breakpoints : [];
+        debugController = new DebugController(breakpoints, 'step');
+      }
+
+      // Abort debug session if client disconnects
+      req.on('close', () => {
+        if (debugController && !debugController.isAborted) {
+          debugController.abort();
+        }
+      });
+
       try {
-        const resObj = await executeWorkflow(params.name, body.variables, body.substitutions, body.start_step, body.new_window, sendCommand, 'manual', onProgress);
+        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, body.new_window, sendCommand, 'manual', onProgress, debugController);
         res.write(`data: ${JSON.stringify({ type: 'execution_completed', result: resObj })}\n\n`);
       } catch (err) {
-        res.write(`data: ${JSON.stringify({ type: 'execution_error', error: err.message, executionId: err.executionId })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          type: 'execution_error',
+          error: err.message,
+          executionId: err.executionId,
+          status: err.status || 'failed',
+          durationMs: err.durationMs ?? null,
+          totalSteps: err.totalSteps ?? null,
+          completedSteps: err.completedSteps ?? null,
+          failedStep: err.failedStep ?? null,
+          assertionsTotal: err.assertionsTotal ?? null,
+          assertionsPassed: err.assertionsPassed ?? null,
+          assertionsFailed: err.assertionsFailed ?? null,
+        })}\n\n`);
       } finally {
         res.end();
       }
       return;
     }
 
-    // ── GET /api/workflows/:name/executions ──
-    params = matchRoute(path, '/api/workflows/:name/executions');
+    // ── POST /api/debug/:executionId/:action ──
+    params = matchRoute(path, '/api/debug/:executionId/:action');
+    if (method === 'POST' && params) {
+      const executionId = parseInt(params.executionId);
+      const action = params.action;
+      const controller = activeDebugControllers.get(executionId);
+
+      if (!controller) {
+        return json(res, 404, { error: `No active debug session for execution #${executionId}` });
+      }
+
+      switch (action) {
+        case 'resume':
+          controller.resume();
+          return json(res, 200, { success: true, action: 'resume' });
+
+        case 'step':
+          controller.stepOver();
+          return json(res, 200, { success: true, action: 'step' });
+
+        case 'continue':
+          controller.continueAll();
+          return json(res, 200, { success: true, action: 'continue' });
+
+        case 'toggle-breakpoint': {
+          const body = await readBody(req);
+          if (!body.step || typeof body.step !== 'number') {
+            return json(res, 400, { error: 'step (number) is required' });
+          }
+          const isSet = controller.toggleBreakpoint(body.step);
+          return json(res, 200, { success: true, step: body.step, isSet, breakpoints: controller.breakpoints });
+        }
+
+        case 'abort':
+          controller.abort();
+          return json(res, 200, { success: true, action: 'abort' });
+
+        default:
+          return json(res, 400, { error: `Unknown debug action: ${action}. Valid: resume, step, continue, toggle-breakpoint, abort` });
+      }
+    }
+
+    // ── GET /api/tests/:name/executions ──
+    params = matchRoute(path, '/api/tests/:name/executions');
     if (method === 'GET' && params) {
       const page = parseInt(url.searchParams.get('page') || '0');
       const pageSize = Math.min(parseInt(url.searchParams.get('limit') || '20'), 50);
       const offset = page * pageSize;
 
-      const wf = await pool.query('SELECT id FROM workflows WHERE name = $1', [params.name]);
-      if (wf.rows.length === 0) return json(res, 404, { error: 'Workflow not found' });
+      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
 
-      const result = await pool.query(
+      const rows = db.prepare(
         `SELECT id, status, started_at, finished_at, duration_ms, total_steps, completed_steps,
-                failed_step, error, new_window, trigger
-         FROM workflow_executions
-         WHERE workflow_id = $1
+                failed_step, error, new_window, trigger, assertions_total, assertions_passed, assertions_failed
+         FROM test_executions
+         WHERE test_id = ?
          ORDER BY started_at DESC
-         LIMIT $2 OFFSET $3`,
-        [wf.rows[0].id, pageSize, offset]
-      );
+         LIMIT ? OFFSET ?`
+      ).all(test.id, pageSize, offset);
 
-      const countResult = await pool.query(
-        'SELECT COUNT(*)::int AS total FROM workflow_executions WHERE workflow_id = $1',
-        [wf.rows[0].id]
-      );
+      const countRow = db.prepare(
+        'SELECT COUNT(*) AS total FROM test_executions WHERE test_id = ?'
+      ).get(test.id);
 
-      return json(res, 200, { executions: result.rows, total: countResult.rows[0].total, page, pageSize });
+      return json(res, 200, { executions: rows, total: countRow.total, page, pageSize });
     }
 
     // ── GET /api/executions/:id ──
     params = matchRoute(path, '/api/executions/:id');
     if (method === 'GET' && params) {
       const execId = parseInt(params.id);
-      const exec = await pool.query('SELECT * FROM workflow_executions WHERE id = $1', [execId]);
-      if (exec.rows.length === 0) return json(res, 404, { error: 'Execution not found' });
+      const exec = db.prepare('SELECT * FROM test_executions WHERE id = ?').get(execId);
+      if (!exec) return json(res, 404, { error: 'Execution not found' });
 
-      const steps = await pool.query(
-        'SELECT * FROM execution_steps WHERE execution_id = $1 ORDER BY step_order',
-        [execId]
-      );
+      const steps = db.prepare(
+        'SELECT * FROM execution_steps WHERE execution_id = ? ORDER BY step_order'
+      ).all(execId);
 
-      return json(res, 200, { execution: { ...exec.rows[0], steps: steps.rows } });
+      return json(res, 200, {
+        execution: { ...parseRow(exec, 'variables'), steps: parseRows(steps, 'assertion_result') }
+      });
     }
 
-    // ── Steps routes: /api/workflows/:name/steps ──
+    // ── Steps routes: /api/tests/:name/steps ──
 
-    // POST /api/workflows/:name/steps — add step
-    params = matchRoute(path, '/api/workflows/:name/steps');
+    // POST /api/tests/:name/steps — add step
+    params = matchRoute(path, '/api/tests/:name/steps');
     if (method === 'POST' && params) {
       const body = await readBody(req);
-      const wf = await pool.query('SELECT id FROM workflows WHERE name = $1', [params.name]);
-      if (wf.rows.length === 0) return json(res, 404, { error: 'Workflow not found' });
+      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
 
-      const workflowId = wf.rows[0].id;
+      const testId = test.id;
 
       // Get max step_order
-      const maxRes = await pool.query(
-        'SELECT COALESCE(MAX(step_order), 0) AS max_order FROM workflow_steps WHERE workflow_id = $1',
-        [workflowId]
-      );
-      const nextOrder = body.step_order || (maxRes.rows[0].max_order + 1);
+      const maxRes = db.prepare(
+        'SELECT COALESCE(MAX(step_order), 0) AS max_order FROM test_steps WHERE test_id = ?'
+      ).get(testId);
+      const nextOrder = body.step_order || (maxRes.max_order + 1);
 
       // Shift existing steps if inserting in the middle
-      await pool.query(
-        'UPDATE workflow_steps SET step_order = step_order + 1 WHERE workflow_id = $1 AND step_order >= $2',
-        [workflowId, nextOrder]
+      db.prepare(
+        'UPDATE test_steps SET step_order = step_order + 1 WHERE test_id = ? AND step_order >= ?'
+      ).run(testId, nextOrder);
+
+      const result = db.prepare(
+        `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
+      ).get(
+        testId, nextOrder,
+        body.command || '',
+        JSON.stringify(body.params || {}),
+        body.locators ? JSON.stringify(body.locators) : null,
+        body.intent || null,
+        body.variable ? JSON.stringify(body.variable) : null,
+        body.assertion ? JSON.stringify(body.assertion) : null
       );
 
-      const result = await pool.query(
-        `INSERT INTO workflow_steps (workflow_id, step_order, command, params, locators, intent, variable)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, step_order`,
-        [
-          workflowId, nextOrder,
-          body.command || '',
-          JSON.stringify(body.params || {}),
-          body.locators ? JSON.stringify(body.locators) : null,
-          body.intent || null,
-          body.variable ? JSON.stringify(body.variable) : null
-        ]
-      );
-
-      await pool.query('UPDATE workflows SET updated_at = NOW() WHERE id = $1', [workflowId]);
-      return json(res, 201, result.rows[0]);
+      db.prepare("UPDATE tests SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(testId);
+      return json(res, 201, result);
     }
 
-    // PUT /api/workflows/:name/steps/:stepOrder — update step
-    params = matchRoute(path, '/api/workflows/:name/steps/:stepOrder');
+    // PUT /api/tests/:name/steps/:stepOrder — update step
+    params = matchRoute(path, '/api/tests/:name/steps/:stepOrder');
     if (method === 'PUT' && params) {
       const body = await readBody(req);
-      const wf = await pool.query('SELECT id FROM workflows WHERE name = $1', [params.name]);
-      if (wf.rows.length === 0) return json(res, 404, { error: 'Workflow not found' });
+      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
 
-      const result = await pool.query(
-        `UPDATE workflow_steps SET
-           command = COALESCE($1, command),
-           params = COALESCE($2, params),
-           locators = COALESCE($3, locators),
-           intent = COALESCE($4, intent),
-           variable = COALESCE($5, variable)
-         WHERE workflow_id = $6 AND step_order = $7
-         RETURNING *`,
-        [
-          body.command || null,
-          body.params ? JSON.stringify(body.params) : null,
-          body.locators ? JSON.stringify(body.locators) : null,
-          body.intent !== undefined ? body.intent : null,
-          body.variable ? JSON.stringify(body.variable) : null,
-          wf.rows[0].id,
-          parseInt(params.stepOrder)
-        ]
+      const result = db.prepare(
+        `UPDATE test_steps SET
+           command = COALESCE(?, command),
+           params = COALESCE(?, params),
+           locators = COALESCE(?, locators),
+           intent = COALESCE(?, intent),
+           variable = COALESCE(?, variable),
+           assertion = COALESCE(?, assertion)
+         WHERE test_id = ? AND step_order = ?
+         RETURNING *`
+      ).get(
+        body.command || null,
+        body.params ? JSON.stringify(body.params) : null,
+        body.locators ? JSON.stringify(body.locators) : null,
+        body.intent !== undefined ? body.intent : null,
+        body.variable ? JSON.stringify(body.variable) : null,
+        body.assertion ? JSON.stringify(body.assertion) : null,
+        test.id,
+        parseInt(params.stepOrder)
       );
 
-      if (result.rowCount === 0) return json(res, 404, { error: 'Step not found' });
-      await pool.query('UPDATE workflows SET updated_at = NOW() WHERE id = $1', [wf.rows[0].id]);
-      return json(res, 200, result.rows[0]);
+      if (!result) return json(res, 404, { error: 'Step not found' });
+      db.prepare("UPDATE tests SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(test.id);
+      return json(res, 200, parseRow(result, 'params', 'locators', 'variable', 'assertion'));
     }
 
-    // DELETE /api/workflows/:name/steps/:stepOrder — delete step & renumber
-    params = matchRoute(path, '/api/workflows/:name/steps/:stepOrder');
+    // DELETE /api/tests/:name/steps/:stepOrder — delete step & renumber
+    params = matchRoute(path, '/api/tests/:name/steps/:stepOrder');
     if (method === 'DELETE' && params) {
-      const wf = await pool.query('SELECT id FROM workflows WHERE name = $1', [params.name]);
-      if (wf.rows.length === 0) return json(res, 404, { error: 'Workflow not found' });
+      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
 
-      const workflowId = wf.rows[0].id;
+      const testId = test.id;
       const stepOrder = parseInt(params.stepOrder);
 
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        const del = await client.query(
-          'DELETE FROM workflow_steps WHERE workflow_id = $1 AND step_order = $2',
-          [workflowId, stepOrder]
-        );
-        if (del.rowCount === 0) {
-          await client.query('ROLLBACK');
-          return json(res, 404, { error: 'Step not found' });
-        }
-        await client.query(
-          'UPDATE workflow_steps SET step_order = step_order - 1 WHERE workflow_id = $1 AND step_order > $2',
-          [workflowId, stepOrder]
-        );
-        await client.query('UPDATE workflows SET updated_at = NOW() WHERE id = $1', [workflowId]);
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK');
-        throw err;
-      } finally {
-        client.release();
-      }
+      const deleteAndReorder = db.transaction(() => {
+        const del = db.prepare(
+          'DELETE FROM test_steps WHERE test_id = ? AND step_order = ?'
+        ).run(testId, stepOrder);
+        if (del.changes === 0) return false;
+
+        db.prepare(
+          'UPDATE test_steps SET step_order = step_order - 1 WHERE test_id = ? AND step_order > ?'
+        ).run(testId, stepOrder);
+        db.prepare("UPDATE tests SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(testId);
+        return true;
+      });
+
+      const deleted = deleteAndReorder();
+      if (!deleted) return json(res, 404, { error: 'Step not found' });
       return json(res, 200, { success: true });
     }
 
-    // ── PUT /api/workflows/:name/steps-reorder — reorder all steps ──
-    params = matchRoute(path, '/api/workflows/:name/steps-reorder');
+    // ── PUT /api/tests/:name/steps-reorder — reorder all steps ──
+    params = matchRoute(path, '/api/tests/:name/steps-reorder');
     if (method === 'PUT' && params) {
       const body = await readBody(req);
       if (!Array.isArray(body.orders)) return json(res, 400, { error: 'orders array required' });
 
-      const wf = await pool.query('SELECT id FROM workflows WHERE name = $1', [params.name]);
-      if (wf.rows.length === 0) return json(res, 404, { error: 'Workflow not found' });
+      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
 
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
+      const reorderTransaction = db.transaction(() => {
+        const setNeg = db.prepare(
+          'UPDATE test_steps SET step_order = ? WHERE id = ? AND test_id = ?'
+        );
         // Set all to negative to avoid unique constraint conflicts
         for (const { id, step_order } of body.orders) {
-          await client.query(
-            'UPDATE workflow_steps SET step_order = $1 WHERE id = $2 AND workflow_id = $3',
-            [-step_order, id, wf.rows[0].id]
-          );
+          setNeg.run(-step_order, id, test.id);
         }
         // Flip back to positive
-        await client.query(
-          'UPDATE workflow_steps SET step_order = -step_order WHERE workflow_id = $1 AND step_order < 0',
-          [wf.rows[0].id]
-        );
-        await client.query('UPDATE workflows SET updated_at = NOW() WHERE id = $1', [wf.rows[0].id]);
-        await client.query('COMMIT');
+        db.prepare(
+          'UPDATE test_steps SET step_order = -step_order WHERE test_id = ? AND step_order < 0'
+        ).run(test.id);
+        db.prepare("UPDATE tests SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(test.id);
+      });
+
+      reorderTransaction();
+      return json(res, 200, { success: true });
+    }
+
+    // ── PROJECTS ──
+
+    // GET /api/projects — list all projects with test count
+    if (method === 'GET' && path === '/api/projects') {
+      const rows = db.prepare(`
+        SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+               COUNT(t.id) AS test_count
+        FROM projects p
+        LEFT JOIN tests t ON t.project_id = p.id
+        GROUP BY p.id
+        ORDER BY p.updated_at DESC
+      `).all();
+      return json(res, 200, { projects: rows });
+    }
+
+    // GET /api/projects/:id — get project with its tests
+    params = matchRoute(path, '/api/projects/:id');
+    if (method === 'GET' && params) {
+      const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id);
+      if (!project) return json(res, 404, { error: 'Project not found' });
+
+      const tests = db.prepare(`
+        SELECT t.id, t.name, t.description, t.variables, t.viewport, t.created_at, t.updated_at,
+               COUNT(ts.id) AS step_count
+        FROM tests t
+        LEFT JOIN test_steps ts ON ts.test_id = t.id
+        WHERE t.project_id = ?
+        GROUP BY t.id
+        ORDER BY t.updated_at DESC
+      `).all(project.id);
+
+      return json(res, 200, {
+        project: {
+          ...project,
+          tests: parseRows(tests, 'variables', 'viewport')
+        }
+      });
+    }
+
+    // POST /api/projects — create new project
+    if (method === 'POST' && path === '/api/projects') {
+      const body = await readBody(req);
+      if (!body.name) return json(res, 400, { error: 'name is required' });
+
+      try {
+        const result = db.prepare(
+          `INSERT INTO projects (name, description) VALUES (?, ?) RETURNING id, name`
+        ).get(body.name, body.description || '');
+        return json(res, 201, result);
       } catch (err) {
-        await client.query('ROLLBACK');
+        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          return json(res, 409, { error: 'Project name already exists' });
+        }
         throw err;
-      } finally {
-        client.release();
       }
+    }
+
+    // PUT /api/projects/:id — update project
+    params = matchRoute(path, '/api/projects/:id');
+    if (method === 'PUT' && params) {
+      const body = await readBody(req);
+      const sets = [];
+      const vals = [];
+
+      if (body.name !== undefined) { sets.push('name = ?'); vals.push(body.name); }
+      if (body.description !== undefined) { sets.push('description = ?'); vals.push(body.description); }
+      if (sets.length === 0) return json(res, 400, { error: 'Nothing to update' });
+
+      sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')");
+      vals.push(params.id);
+
+      try {
+        const result = db.prepare(
+          `UPDATE projects SET ${sets.join(', ')} WHERE id = ? RETURNING *`
+        ).get(...vals);
+        if (!result) return json(res, 404, { error: 'Project not found' });
+        return json(res, 200, result);
+      } catch (err) {
+        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          return json(res, 409, { error: 'Project name already exists' });
+        }
+        throw err;
+      }
+    }
+
+    // DELETE /api/projects/:id — delete project (tests will have project_id set to NULL)
+    params = matchRoute(path, '/api/projects/:id');
+    if (method === 'DELETE' && params) {
+      const result = db.prepare('DELETE FROM projects WHERE id = ?').run(params.id);
+      if (result.changes === 0) return json(res, 404, { error: 'Project not found' });
+      return json(res, 200, { success: true });
+    }
+
+    // PUT /api/tests/:name/project — assign test to project
+    params = matchRoute(path, '/api/tests/:name/project');
+    if (method === 'PUT' && params) {
+      const body = await readBody(req);
+      const projectId = body.project_id;
+
+      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
+
+      if (projectId !== null && projectId !== undefined) {
+        const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+        if (!project) return json(res, 404, { error: 'Project not found' });
+      }
+
+      db.prepare(
+        'UPDATE tests SET project_id = ?, updated_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\', \'now\') WHERE id = ?'
+      ).run(projectId || null, test.id);
+
       return json(res, 200, { success: true });
     }
 
     // ── GET /api/settings/agent ──
     if (method === 'GET' && path === '/api/settings/agent') {
-      const result = await pool.query("SELECT value FROM settings WHERE key = 'agent'");
-      const value = result.rows.length > 0 ? result.rows[0].value : {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'agent'").get();
+      const defaults = {
         mode: 'cli',
-        cli: { provider: 'copilot', command: 'copilot' }
+        cli: { provider: 'copilot', command: 'copilot' },
+        api: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', apiKey: '' }
       };
+      const value = row ? { ...defaults, ...parseJson(row.value) } : defaults;
+      // Never send the full API key to the frontend — mask it
+      if (value.api?.apiKey) {
+        const key = value.api.apiKey;
+        value.api.apiKey = key.length > 8 ? key.slice(0, 4) + '•'.repeat(key.length - 8) + key.slice(-4) : '••••••••';
+      }
       return json(res, 200, { agent: value });
     }
 
@@ -351,13 +544,23 @@ export async function apiRouter(req, res, url) {
       const body = await readBody(req);
       if (!body.agent) return json(res, 400, { error: 'agent config is required' });
 
-      await pool.query(
-        `INSERT INTO settings (key, value, updated_at) VALUES ('agent', $1, NOW())
-         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
-        [JSON.stringify(body.agent)]
-      );
-      log(`Agent config updated: ${JSON.stringify(body.agent)}`);
-      return json(res, 200, { success: true, agent: body.agent });
+      const incoming = body.agent;
+
+      // If the API key contains mask characters (•), keep the existing key from the DB
+      if (incoming.api?.apiKey && incoming.api.apiKey.includes('•')) {
+        const existingRow = db.prepare("SELECT value FROM settings WHERE key = 'agent'").get();
+        if (existingRow) {
+          const existing = parseJson(existingRow.value);
+          incoming.api.apiKey = existing.api?.apiKey || '';
+        }
+      }
+
+      db.prepare(
+        `INSERT INTO settings (key, value, updated_at) VALUES ('agent', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
+      ).run(JSON.stringify(incoming));
+      log(`Agent config updated: mode=${incoming.mode}, api.provider=${incoming.api?.provider}, api.model=${incoming.api?.model}`);
+      return json(res, 200, { success: true, agent: incoming });
     }
 
     // ── POST /api/settings/agent/test ──
@@ -367,7 +570,6 @@ export async function apiRouter(req, res, url) {
       if (!command) return json(res, 400, { error: 'command is required' });
 
       try {
-        // Extract just the base command (first word) for version test
         const baseCmd = command.trim().split(/\s+/)[0];
         const { stdout, stderr } = await execFileAsync(baseCmd, ['--version'], {
           timeout: 10000,
@@ -378,7 +580,6 @@ export async function apiRouter(req, res, url) {
         log(`Agent test "${baseCmd} --version" => ${output}`);
         return json(res, 200, { success: true, output });
       } catch (err) {
-        // Try --help as fallback (some CLIs don't have --version)
         try {
           const baseCmd = command.trim().split(/\s+/)[0];
           const { stdout, stderr } = await execFileAsync(baseCmd, ['--help'], {
@@ -397,27 +598,125 @@ export async function apiRouter(req, res, url) {
       }
     }
 
-    // ── POST /api/agent/run — stream agent CLI execution via SSE ──
+    // ── GET /api/models — list OpenRouter models that support tool use ──
+    if (method === 'GET' && path === '/api/models') {
+      try {
+        const { OpenRouter } = await import('@openrouter/sdk');
+        const client = new OpenRouter();
+        const result = await client.models.list();
+        const models = result.data
+          .filter(m => m.supportedParameters?.includes('tools'))
+          .map(m => ({ id: m.id, name: m.name, context: m.contextLength, pricing: m.pricing }));
+        return json(res, 200, { models });
+      } catch (err) {
+        log(`Models list error: ${err.message}`);
+        return json(res, 500, { error: err.message });
+      }
+    }
+
+    // ── POST /api/settings/agent/test-api — validate an OpenRouter API key ──
+    if (method === 'POST' && path === '/api/settings/agent/test-api') {
+      const body = await readBody(req);
+      const { apiKey, model } = body;
+      if (!apiKey || !model) return json(res, 400, { error: 'apiKey and model are required' });
+
+      // Resolve actual API key: if masked, read from DB
+      let realKey = apiKey;
+      if (apiKey.includes('•')) {
+        const existingRow = db.prepare("SELECT value FROM settings WHERE key = 'agent'").get();
+        if (existingRow) {
+          const existing = parseJson(existingRow.value);
+          realKey = existing.api?.apiKey || '';
+        }
+      }
+      if (!realKey) return json(res, 200, { success: false, error: 'No API key configured' });
+
+      try {
+        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${realKey}`
+          },
+          body: JSON.stringify({ model, max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] }),
+          signal: AbortSignal.timeout(15000)
+        });
+        const data = await resp.json();
+
+        if (resp.ok) {
+          log(`API key test OK for ${model}`);
+          return json(res, 200, { success: true, output: `${model} — connected successfully` });
+        } else {
+          const errMsg = data.error?.message || data.error?.type || JSON.stringify(data).substring(0, 200);
+          log(`API key test FAILED for ${model}: ${errMsg}`);
+          return json(res, 200, { success: false, error: errMsg });
+        }
+      } catch (err) {
+        log(`API key test error: ${err.message}`);
+        return json(res, 200, { success: false, error: err.message });
+      }
+    }
+
+    // ── POST /api/agent/run — stream agent execution via SSE ──
     if (method === 'POST' && path === '/api/agent/run') {
       const body = await readBody(req);
       if (!body.prompt) return json(res, 400, { error: 'prompt is required' });
 
       // Load agent config
-      const settingsResult = await pool.query("SELECT value FROM settings WHERE key = 'agent'");
-      const agentConfig = settingsResult.rows.length > 0 ? settingsResult.rows[0].value : {
+      const settingsRow = db.prepare("SELECT value FROM settings WHERE key = 'agent'").get();
+      const agentConfig = settingsRow ? parseJson(settingsRow.value) : {
         mode: 'cli',
-        cli: { provider: 'claude', command: 'claude' }
+        cli: { provider: 'claude', command: 'claude' },
+        api: { model: 'anthropic/claude-haiku-4-5-20251001', apiKey: '' }
       };
 
+      // ── API mode: internal agent via Vercel AI SDK ──
+      if (agentConfig.mode === 'api') {
+        const apiConfig = agentConfig.api;
+        if (!apiConfig?.apiKey) return json(res, 400, { error: 'No API key configured. Go to Settings to add one.' });
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*'
+        });
+
+        log(`Agent run (API mode): ${apiConfig.model}`);
+        log(`Agent prompt:\n--- AGENT PROMPT START ---\n${body.prompt}\n--- AGENT PROMPT END ---`);
+
+        const abortController = new AbortController();
+        req.on('close', () => abortController.abort());
+
+        const { runAgent } = await import('./agent-executor.js');
+        await runAgent(
+          apiConfig,
+          body.prompt,
+          sendCommand,
+          (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); },
+          abortController.signal
+        );
+
+        if (!res.writableEnded) res.end();
+        return;
+      }
+
+      // ── CLI mode: spawn external agent process ──
       const command = agentConfig.cli?.command || 'claude';
       const baseCmd = command.trim().split(/\s+/)[0];
 
       // Build args based on provider
       const args = [];
       if (agentConfig.cli?.provider === 'claude') {
-        args.push('-p', body.prompt, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
+        const mcpToolNames = [
+          'list_profiles', 'navigate', 'click', 'fill', 'extract', 'screenshot',
+          'get_tabs', 'get_page_info', 'scroll', 'wait', 'execute_js', 'keyboard',
+          'get_cookies', 'snapshot', 'start_recording', 'record_step', 'stop_recording',
+          'list_tests', 'run_test', 'fix_test_step', 'delete_test', 'add_assertion'
+        ].map(t => `mcp__browser-pilot__${t}`).join(',');
+        args.push('-p', body.prompt, '--allowedTools', mcpToolNames, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
       } else if (agentConfig.cli?.provider === 'copilot') {
-        args.push('-p', body.prompt, '--allow-all', '--allow-all-tools', '-s', '--no-ask-user');
+        args.push('-p', body.prompt, '--allow-all', '--allow-all-tools');
       } else if (agentConfig.cli?.provider === 'gemini') {
         args.push('-p', body.prompt, '-y');
       } else {
@@ -425,8 +724,6 @@ export async function apiRouter(req, res, url) {
       }
 
       // Create a temp MCP config that connects to the ALREADY-RUNNING server via SSE
-      // instead of letting the spawned agent discover .mcp.json and spawn a 2nd stdio server
-      // (which would fight for the same WebSocket port and crash the parent).
       let tmpMcpConfig = null;
       if (agentConfig.cli?.provider === 'claude') {
         tmpMcpConfig = join(tmpdir(), `bp-mcp-${Date.now()}.json`);
@@ -526,10 +823,10 @@ export async function apiRouter(req, res, url) {
       child.on('close', (code) => {
         cleanupTmpConfig();
         log(`Agent process exited with code ${code} (output: ${outputBuffer.length} chars)`);
-        const fixCalls = outputBuffer.match(/fix_workflow_step/g);
-        const replayCalls = outputBuffer.match(/replay_workflow/g);
+        const fixCalls = outputBuffer.match(/fix_test_step/g);
+        const runCalls = outputBuffer.match(/run_test/g);
         const navigateCalls = outputBuffer.match(/\bnavigate\b/g);
-        log(`Agent summary: fix_workflow_step calls: ${fixCalls?.length || 0}, replay_workflow calls: ${replayCalls?.length || 0}, navigate mentions: ${navigateCalls?.length || 0}`);
+        log(`Agent summary: fix_test_step calls: ${fixCalls?.length || 0}, run_test calls: ${runCalls?.length || 0}, navigate mentions: ${navigateCalls?.length || 0}`);
         res.write(`data: ${JSON.stringify({ type: 'done', exitCode: code, output: outputBuffer })}\n\n`);
         res.end();
       });
@@ -550,7 +847,7 @@ export async function apiRouter(req, res, url) {
   } catch (err) {
     log(`API error: ${err.message}`);
     if (!res.headersSent) {
-      const status = err.code === '23505' ? 409 : 500;
+      const status = err.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 409 : 500;
       json(res, status, { error: err.message });
     }
   }

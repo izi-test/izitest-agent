@@ -9,19 +9,21 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { createServer } from 'http';
 import { readFile, stat } from 'fs/promises';
-import { join, extname } from 'path';
+import { join, extname, normalize } from 'path';
 import { fileURLToPath } from 'url';
 
 import { log } from './lib/logger.js';
 import { startWebSocketServer, getProfiles, sendCommand, closeWebSocket } from './lib/websocket.js';
-import { saveActionToHistory, getLastRefMap, setLastRefMap } from './lib/workflows.js';
+import { saveActionToHistory, getLastRefMap, setLastRefMap, getRecording } from './lib/tests.js';
 import { registerBrowserTools } from './lib/tools/browser.js';
-import { registerWorkflowTools } from './lib/tools/workflow.js';
+import { registerTestTools } from './lib/tools/test.js';
 import { initDatabase } from './lib/db.js';
 import { apiRouter } from './lib/api.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
+const ASSERTION_SCREENSHOTS_DIR = join(__dirname, 'data', 'assertion-screenshots');
+const BASELINES_DIR = join(__dirname, 'data', 'baselines');
 const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
 
 // ─── Config ─────────────────────────────────────────────────────────
@@ -32,7 +34,7 @@ const USE_STDIO = process.argv.includes('--stdio');
 
 // ─── Initialize Database & Start WebSocket Bridge ───────────────────
 
-await initDatabase();
+initDatabase();
 startWebSocketServer(WS_PORT);
 
 // ─── MCP Server Factory ─────────────────────────────────────────────
@@ -49,10 +51,11 @@ function createMcpServer() {
     saveActionToHistory,
     getLastRefMap,
     setLastRefMap,
+    getRecording,
   };
 
   registerBrowserTools(server, deps);
-  registerWorkflowTools(server, deps);
+  registerTestTools(server, deps);
 
   return server;
 }
@@ -86,11 +89,55 @@ if (USE_STDIO) {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname.startsWith('/assertion-screenshots/')) {
+      const relativePath = normalize(url.pathname.replace('/assertion-screenshots/', '')).replace(/^\/+/, '');
+      const filePath = join(ASSERTION_SCREENSHOTS_DIR, relativePath);
+
+      if (!filePath.startsWith(ASSERTION_SCREENSHOTS_DIR)) {
+        res.writeHead(400);
+        res.end('Invalid path');
+        return;
+      }
+
+      try {
+        const content = await readFile(filePath);
+        const ext = extname(filePath);
+        res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+        res.end(content);
+      } catch {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/data/baselines/')) {
+      const relativePath = normalize(url.pathname.replace('/data/baselines/', '')).replace(/^\/+/, '');
+      const filePath = join(BASELINES_DIR, relativePath);
+
+      if (!filePath.startsWith(BASELINES_DIR)) {
+        res.writeHead(400);
+        res.end('Invalid path');
+        return;
+      }
+
+      try {
+        const content = await readFile(filePath);
+        const ext = extname(filePath);
+        res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+        res.end(content);
+      } catch {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+      return;
+    }
+
     // ── Static files (frontend) ──
     if (req.method === 'GET' && !['/health', '/sse', '/messages'].includes(url.pathname)) {
       let fileName = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       let filePath = join(PUBLIC_DIR, fileName);
-      
+
       try {
         await stat(filePath);
       } catch {

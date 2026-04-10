@@ -1,20 +1,24 @@
 import { useEffect, useState } from 'react';
 import type { Step } from '../types';
-import { api } from '../api';
-import { useAppContext } from '../context/AppContext';
+import { useAppDispatch } from '../store/hooks';
+import { showToast } from '../store/slices/uiSlice';
+import { useAddStepMutation, useUpdateStepMutation } from '../store/services/testsApi';
 import { Button } from './Button';
 import { X, Save } from 'lucide-react';
 
 interface StepModalProps {
   isOpen: boolean;
-  workflowName: string;
+  testName: string;
   step: Step | null;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function StepModal({ isOpen, workflowName, step, onClose, onSaved }: StepModalProps) {
-  const { showToast } = useAppContext();
+export function StepModal({ isOpen, testName, step, onClose, onSaved }: StepModalProps) {
+  const dispatch = useAppDispatch();
+  const [addStep] = useAddStepMutation();
+  const [updateStep] = useUpdateStepMutation();
+
   const [command, setCommand] = useState('navigate');
   const [intent, setIntent] = useState('');
   const [params, setParams] = useState('');
@@ -25,11 +29,11 @@ export function StepModal({ isOpen, workflowName, step, onClose, onSaved }: Step
     if (isOpen) {
       setCommand(step?.command || 'navigate');
       setIntent(step?.intent || '');
-      
+
       const p = step ? (typeof step.params === 'string' ? step.params : JSON.stringify(step.params || {}, null, 2)) : '{}';
       const l = step?.locators ? (typeof step.locators === 'string' ? step.locators : JSON.stringify(step.locators, null, 2)) : '';
       const v = step?.variable ? (typeof step.variable === 'string' ? step.variable : JSON.stringify(step.variable, null, 2)) : '';
-      
+
       setParams(p);
       setLocators(l);
       setVariable(v);
@@ -42,29 +46,29 @@ export function StepModal({ isOpen, workflowName, step, onClose, onSaved }: Step
     let parsedParams, parsedLocators, parsedVariable;
     try {
       parsedParams = JSON.parse(params || '{}');
-    } catch { return showToast('Invalid JSON in Params', 'error'); }
+    } catch { return dispatch(showToast({ message: 'Invalid JSON in Params', type: 'error' })); }
 
     try {
       parsedLocators = locators.trim() ? JSON.parse(locators) : null;
-    } catch { return showToast('Invalid JSON in Locators', 'error'); }
+    } catch { return dispatch(showToast({ message: 'Invalid JSON in Locators', type: 'error' })); }
 
     try {
       parsedVariable = variable.trim() ? JSON.parse(variable) : null;
-    } catch { return showToast('Invalid JSON in Variable', 'error'); }
+    } catch { return dispatch(showToast({ message: 'Invalid JSON in Variable', type: 'error' })); }
 
     const body = { command, intent: intent || null, params: parsedParams, locators: parsedLocators, variable: parsedVariable };
 
     try {
       if (step) {
-        await api('PUT', `/api/workflows/${encodeURIComponent(workflowName)}/steps/${step.step_order}`, body);
-        showToast('Step updated');
+        await updateStep({ testName, stepOrder: step.step_order, body }).unwrap();
+        dispatch(showToast({ message: 'Step updated' }));
       } else {
-        await api('POST', `/api/workflows/${encodeURIComponent(workflowName)}/steps`, body);
-        showToast('Step added');
+        await addStep({ testName, body }).unwrap();
+        dispatch(showToast({ message: 'Step added' }));
       }
       onSaved();
     } catch (err: any) {
-      showToast(err.message, 'error');
+      dispatch(showToast({ message: err.message || 'Save failed', type: 'error' }));
     }
   };
 

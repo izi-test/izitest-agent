@@ -246,9 +246,21 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
 
   const isCustomElement = (tag: string): boolean => tag.includes('-');
 
+  // Returns true when the element AND all descendants are truly not rendered.
+  // Only display:none guarantees that children cannot be visible.
+  const isSubtreeHidden = (el: Element): boolean => {
+    const style = window.getComputedStyle(el);
+    return style.display === 'none';
+  };
+
+  // Returns true when the element itself appears visible.
+  // When false, the element node is skipped but children are still traversed
+  // because wrappers with aria-hidden, opacity:0, visibility:hidden, or zero
+  // dimensions can still contain visually-visible children (drawers, modals,
+  // CSS transitions, overflow:visible containers).
   const isVisible = (el: Element): boolean => {
     const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+    if (style.visibility === 'hidden' || style.opacity === '0') {
       return false;
     }
     const rect = el.getBoundingClientRect();
@@ -256,7 +268,6 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     if (rect.width === 0 || rect.height === 0) {
       if (style.display === 'contents') {
         // Elements with display: contents have a 0x0 rect, but render children normally.
-        // We must consider them visible so we can traverse their children.
       } else if (isCustomElement(tag) || el.shadowRoot) {
         // Custom elements (Angular, Web Components) may have 0x0 host dimensions
         // but render visible children — treat as visible to traverse them.
@@ -303,6 +314,7 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       case 'form': 
         if (el.hasAttribute('aria-label') || el.hasAttribute('aria-labelledby')) return tag === 'form' ? 'form' : 'region';
         return 'generic';
+      case 'p': return 'paragraph';
       case 'table': return 'table';
       case 'img': return el.hasAttribute('alt') ? 'img' : 'presentation';
       case 'dialog': return 'dialog';
@@ -323,15 +335,36 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     const ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel) return ariaLabel;
 
+    // Explicit label: <label for="id">
     if (el.id) {
       const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (label && label.textContent) return label.textContent.trim();
     }
 
+    // Implicit label: <label><input ...> text</label>
+    // W3C spec: an input nested inside a label inherits the label's text as its accessible name
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+      const parentLabel = el.closest('label');
+      if (parentLabel) {
+        // Collect text from the label excluding the input element itself
+        let labelText = '';
+        for (const child of parentLabel.childNodes) {
+          if (child === el) continue;
+          if (child.nodeType === Node.TEXT_NODE) {
+            labelText += child.textContent || '';
+          } else if (child.nodeType === Node.ELEMENT_NODE && child !== el) {
+            labelText += (child as Element).textContent || '';
+          }
+        }
+        labelText = labelText.replace(/\s+/g, ' ').trim();
+        if (labelText) return labelText;
+      }
+    }
+
     const htmlEl = el as HTMLElement;
     if (el.tagName === 'IMG') return (el as HTMLImageElement).alt || htmlEl.title || '';
     if (htmlEl.title) return htmlEl.title;
-    
+
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
       const placeholder = el.getAttribute('placeholder');
       if (placeholder) return placeholder;
@@ -515,7 +548,11 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
 
   const traverse = (el: Element, depth: number) => {
     if (depth > options.maxDepth!) return;
-    if (!options.includeHidden && !isVisible(el)) return;
+
+    if (!options.includeHidden) {
+      // display:none truly hides the entire subtree — skip completely
+      if (isSubtreeHidden(el)) return;
+    }
 
     const tag = el.tagName.toLowerCase();
     const role = getRole(el);
@@ -527,6 +564,13 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     }
 
     let skipNodeRender = false;
+
+    // Element-level visibility: don't render this node but still traverse children.
+    // Handles aria-hidden, opacity:0, visibility:hidden on wrapper elements
+    // whose children may still be visually visible (drawers, modals, transitions).
+    if (!options.includeHidden && !isVisible(el)) {
+      skipNodeRender = true;
+    }
 
     // Check if we should skip rendering this specific node (but still traverse children)
     if (options.interactiveOnly && !interactive) {
@@ -575,6 +619,9 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       let line = `${indent}${ref} [${role}]`;
       if (name) line += ` "${truncate(name)}"`;
 
+      // Active/focus state
+      if (document.activeElement === el) line += ` [active]`;
+
       // Specific attributes mapping
       if (role === 'heading') {
         const level = tag.replace('h', '');
@@ -590,12 +637,18 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       if (tag === 'input') {
         if (htmlEl.type) line += ` type="${htmlEl.type}"`;
         if (htmlEl.placeholder) line += ` placeholder="${truncate(htmlEl.placeholder)}"`;
+        // Show current value for text-like inputs and sliders
+        const inputType = (htmlEl.type || 'text').toLowerCase();
+        if (!['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden', 'file'].includes(inputType) && htmlEl.value) {
+          line += ` value="${truncate(htmlEl.value)}"`;
+        }
         if (htmlEl.required) line += ` [required]`;
         if (htmlEl.disabled) line += ` [disabled]`;
         if (htmlEl.readOnly) line += ` [readonly]`;
       }
       if (tag === 'textarea') {
         if (htmlEl.placeholder) line += ` placeholder="${truncate(htmlEl.placeholder)}"`;
+        if (htmlEl.value) line += ` value="${truncate(htmlEl.value)}"`;
       }
       
       if (role === 'checkbox' || role === 'radio') {
@@ -603,8 +656,8 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       }
       
       if (tag === 'select') {
-        const option = el.querySelector('option:checked');
-        if (option) line += ` value="${truncate(option.textContent || '')}"`;
+        const selectedOpt = el.querySelector('option:checked');
+        if (selectedOpt) line += ` value="${truncate(selectedOpt.textContent || '')}"`;
       }
       
       if (role === 'button' && (el as HTMLButtonElement).disabled) {
@@ -619,6 +672,12 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
         line += el.hasAttribute('open') ? ` [open]` : ` [closed]`;
       }
 
+      // cursor=pointer indicates clickable non-semantic elements (divs, spans with click handlers)
+      if (!interactive) {
+        const cursor = window.getComputedStyle(el).cursor;
+        if (cursor === 'pointer') line += ` [cursor=pointer]`;
+      }
+
       if (el.hasAttribute('aria-expanded')) {
         line += ` [expanded=${el.getAttribute('aria-expanded')}]`;
       }
@@ -629,12 +688,28 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
         line += ` [disabled=${el.getAttribute('aria-disabled')}]`;
       }
       
+      // Show data-testid in tree for easy identification
+      const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-cy');
+      if (testId) line += ` [testid="${testId}"]`;
+
       if (options.includeRects) {
         const rect = el.getBoundingClientRect();
         line += ` [${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)}x${Math.round(rect.height)}]`;
       }
 
       treeLines.push(line);
+
+      // Render <option> children for select/combobox/listbox so the AI knows available values
+      if (tag === 'select') {
+        const optIndent = '  '.repeat(skipNodeRender ? depth : depth + 1);
+        for (const opt of Array.from(el.querySelectorAll('option'))) {
+          const optText = truncate(opt.textContent || '');
+          let optLine = `${optIndent}[option] "${optText}"`;
+          if ((opt as HTMLOptionElement).selected) optLine += ` [selected]`;
+          if ((opt as HTMLOptionElement).disabled) optLine += ` [disabled]`;
+          treeLines.push(optLine);
+        }
+      }
 
       // Always build ref mapping (needed for workflow recording)
       const refInfo: RefNodeInfo = {

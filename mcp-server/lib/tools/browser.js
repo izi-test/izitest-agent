@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 
 
-export function registerBrowserTools(server, { sendCommand, getProfiles, saveActionToHistory, getLastRefMap, setLastRefMap }) {
+export function registerBrowserTools(server, { sendCommand, getProfiles, saveActionToHistory, getLastRefMap, setLastRefMap, getRecording }) {
 
   // --- Tool: list_profiles ---
   server.tool(
@@ -31,11 +31,19 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
     {
       url: z.string().describe('The URL to navigate to'),
       profile: z.string().optional().describe('Profile ID (uses first available if omitted)'),
-      tabId: z.number().optional().describe('Tab ID to navigate in (creates new tab if omitted)')
+      tabId: z.number().optional().describe('Tab ID to navigate in (creates new tab if omitted)'),
+      intent: z.string().optional().describe('Functional description of this step (e.g. "Open the project settings page"). Recorded as step intent during test recording.')
     },
-    async ({ url, profile, tabId }) => {
+    async ({ url, profile, tabId, intent }) => {
       const result = await sendCommand(profile, 'navigate', { url, tabId });
-      const actionId = saveActionToHistory('navigate', { url, tabId });
+      let screenshotBase64 = null;
+      if (getRecording()?.use_vrt) {
+        try {
+          const snap = await sendCommand(profile, 'screenshot', { tabId, annotate: false });
+          if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
+        } catch(e) {}
+      }
+      const actionId = saveActionToHistory('navigate', { url, tabId }, null, screenshotBase64, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
@@ -49,11 +57,19 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
       selector: z.string().optional().describe('CSS selector of the element to click'),
       text: z.string().optional().describe('Visible text content to find and click'),
       ref: z.string().optional().describe('Reference from a previous snapshot to click (e.g. @e5)'),
-      tabId: z.number().optional()
+      tabId: z.number().optional(),
+      intent: z.string().optional().describe('Functional description of this step (e.g. "Submit the login form"). Recorded as step intent during test recording.')
     },
-    async ({ profile, selector, text, ref, tabId }) => {
+    async ({ profile, selector, text, ref, tabId, intent }) => {
       const result = await sendCommand(profile, 'click', { selector, text, ref, tabId });
-      const actionId = saveActionToHistory('click', { selector, text, tabId }, ref);
+      let screenshotBase64 = null;
+      if (getRecording()?.use_vrt) {
+        try {
+          const snap = await sendCommand(profile, 'screenshot', { tabId, annotate: false });
+          if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
+        } catch(e) {}
+      }
+      const actionId = saveActionToHistory('click', { selector, text, tabId }, ref, screenshotBase64, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
@@ -61,18 +77,53 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
   // --- Tool: fill ---
   server.tool(
     'fill',
-    'Fill a form field (input, textarea, select) with a value.',
+    'Fill a text-based form field (input, textarea) with a value. For <select> dropdowns, use the "select" tool instead.',
     {
       selector: z.string().optional().describe('CSS selector of the input field'),
       value: z.string().describe('Value to fill in'),
       profile: z.string().optional(),
       tabId: z.number().optional(),
       ref: z.string().optional().describe('Reference from a previous snapshot to fill (e.g. @e5)'),
-      clear: z.boolean().optional().describe('Clear the field before filling (default: true)')
+      clear: z.boolean().optional().describe('Clear the field before filling (default: true)'),
+      intent: z.string().optional().describe('Functional description of this step (e.g. "Enter the project name"). Recorded as step intent during test recording.')
     },
-    async ({ selector, value, profile, tabId, ref, clear }) => {
+    async ({ selector, value, profile, tabId, ref, clear, intent }) => {
       const result = await sendCommand(profile, 'fill', { selector, value, tabId, ref, clear });
-      const actionId = saveActionToHistory('fill', { selector, value, tabId, clear }, ref);
+      let screenshotBase64 = null;
+      if (getRecording()?.use_vrt) {
+        try {
+          const snap = await sendCommand(profile, 'screenshot', { tabId, annotate: false });
+          if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
+        } catch(e) {}
+      }
+      const actionId = saveActionToHistory('fill', { selector, value, tabId, clear }, ref, screenshotBase64, intent);
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // --- Tool: select ---
+  server.tool(
+    'select',
+    'Select an option from a native <select> dropdown. Matches by visible text (default) or option value. Do NOT use "fill" or "click" for <select> elements — use this tool.',
+    {
+      selector: z.string().optional().describe('CSS selector of the <select> element'),
+      value: z.string().describe('The option to select: visible text (default) or option value'),
+      profile: z.string().optional(),
+      tabId: z.number().optional(),
+      ref: z.string().optional().describe('Reference from a previous snapshot (e.g. @e5)'),
+      matchBy: z.enum(['text', 'value']).optional().describe('Match option by visible "text" (default) or "value" attribute'),
+      intent: z.string().optional().describe('Functional description of this step. Recorded as step intent during test recording.')
+    },
+    async ({ selector, value, profile, tabId, ref, matchBy, intent }) => {
+      const result = await sendCommand(profile, 'select', { selector, value, tabId, ref, matchBy });
+      let screenshotBase64 = null;
+      if (getRecording()?.use_vrt) {
+        try {
+          const snap = await sendCommand(profile, 'screenshot', { tabId, annotate: false });
+          if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
+        } catch(e) {}
+      }
+      const actionId = saveActionToHistory('select', { selector, value, tabId, matchBy }, ref, screenshotBase64, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
@@ -98,17 +149,14 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
   server.tool(
     'screenshot',
     [
-      'Take an annotated screenshot of the page. Returns the image + DOM mapping with @eX refs for all visible interactive elements.',
+      'Take a visual screenshot of the page. Expensive (large base64 image). Use ONLY as a fallback.',
       '',
-      'ELEMENT DISCOVERY PROTOCOL -- Follow this order when looking for an element:',
-      '  STEP 1 (always start here): Call screenshot(). Captures ALL elements including hidden-but-visible ones (common in SPAs like Instagram/Twitter).',
-      '             -> If you see the element in the image or mapping: use its @eX ref directly.',
-      '  STEP 2 (fallback if not found): Call snapshot(includeHidden=true, purposeFilter=..., searchText=...).',
-      '             -> Use purposeFilter="fill" for inputs, "click" for buttons/links.',
-      '             -> Use searchText to narrow by element label/text.',
-      '             -> This surfaces off-screen, collapsed, or dynamically loaded elements.',
+      'WHEN TO USE:',
+      '  * ONLY after snapshot() failed 2+ times to find the element you need.',
+      '  * When you need to visually verify page state (e.g. layout, images, visual regression).',
+      '  * When snapshot returns confusing structure and you need visual context to understand the page.',
       '',
-      'Never call snapshot before trying screenshot first.'
+      'DO NOT use screenshot as your first discovery tool. Use snapshot() instead — it is faster, cheaper, and sufficient in most cases.',
     ].join('\n'),
     {
       profile: z.string().optional(),
@@ -126,7 +174,6 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
           tabId,
           interactiveOnly: true,
           compact: true,
-          includeHidden: true,
           format: 'text',
           ...(purposeFilter && purposeFilter !== 'read' ? { purposeFilter } : {}),
           ...(searchText ? { searchText } : {})
@@ -165,7 +212,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
               `\n### DOM Mapping${filterLabel}${searchLabel} — ${refCount} elements ###`,
               mappingText,
               truncationNote,
-              '\n--- ACTION REQUIRED: Do NOT describe the screenshot. Identify the element you need and proceed with your next action (click, fill, etc.) immediately. ---'
+              '\n--- Identify the element you need and proceed with your next action (click, fill, etc.) immediately. Next time, prefer snapshot() over screenshot() — it is faster and cheaper. ---'
             ].join('\n')
           });
         } else {
@@ -233,11 +280,12 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
       profile: z.string().optional(),
       tabId: z.number().optional(),
       ms: z.number().optional().describe('Milliseconds to wait'),
-      selector: z.string().optional().describe('Wait until this CSS selector appears (max 10s)')
+      selector: z.string().optional().describe('Wait until this CSS selector appears (max 10s)'),
+      intent: z.string().optional().describe('Functional description of this step. Recorded as step intent during test recording.')
     },
-    async ({ profile, tabId, ms, selector }) => {
+    async ({ profile, tabId, ms, selector, intent }) => {
       const result = await sendCommand(profile, 'wait', { ms, selector, tabId });
-      const actionId = saveActionToHistory('wait', { ms, selector, tabId });
+      const actionId = saveActionToHistory('wait', { ms, selector, tabId }, null, null, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
@@ -267,11 +315,19 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
       key: z.string().describe('Key to press (e.g. "Enter", "Tab", "Escape", "a")'),
       modifiers: z.array(z.enum(['ctrl', 'shift', 'alt', 'meta'])).optional(),
       profile: z.string().optional(),
-      tabId: z.number().optional()
+      tabId: z.number().optional(),
+      intent: z.string().optional().describe('Functional description of this step. Recorded as step intent during test recording.')
     },
-    async ({ key, modifiers, profile, tabId }) => {
+    async ({ key, modifiers, profile, tabId, intent }) => {
       const result = await sendCommand(profile, 'keyboard', { key, modifiers, tabId });
-      const actionId = saveActionToHistory('keyboard', { key, modifiers, tabId });
+      let screenshotBase64 = null;
+      if (getRecording()?.use_vrt) {
+        try {
+          const snap = await sendCommand(profile, 'screenshot', { tabId, annotate: false });
+          if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
+        } catch(e) {}
+      }
+      const actionId = saveActionToHistory('keyboard', { key, modifiers, tabId }, null, screenshotBase64, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
@@ -297,18 +353,32 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
     [
       'Take a snapshot of the page DOM as an accessibility tree with unique Refs (@eX) for use in click/fill commands.',
       '',
-      'WHEN TO USE THIS TOOL:',
-      '  * Use this as STEP 2 of the element discovery protocol, only AFTER screenshot() did not find the element.',
-      '  * Set includeHidden=true to surface off-screen, collapsed, or dynamically hidden elements.',
+      'ELEMENT DISCOVERY PROTOCOL — Follow this order when looking for an element:',
+      '  STEP 1 (always start here): Call snapshot() WITH a purposeFilter matching your intent.',
+      '             -> About to fill a form? Use purposeFilter="fill" (only inputs).',
+      '             -> About to click something? Use purposeFilter="click" (only buttons/links).',
+      '             -> Combine with searchText="label" to narrow further (e.g. searchText="email").',
+      '             -> If you find the element in the output: use its @eX ref directly.',
+      '  STEP 2 (if not found): Call snapshot() again with broader filters or searchText variations.',
+      '             -> Try without purposeFilter, or with different searchText.',
+      '             -> Try with includeHidden=true if the element might be in a hidden container.',
+      '  STEP 3 (last resort): Call screenshot() for visual context.',
+      '             -> ONLY if snapshot failed 2+ times to locate the element.',
+      '             -> The screenshot is expensive (large base64 image, high token cost).',
       '',
-      'IMPORTANT -- Always set purposeFilter to minimize output size:',
-      '  * purposeFilter="fill" -- Returns only input fields (textbox, combobox, checkbox, radio, select).',
-      '  * purposeFilter="click" -- Returns only clickable elements (button, link, tab, menu item).',
-      '  * purposeFilter="read" -- Returns everything (use only to understand full page structure).',
+      'FILTER STRATEGY (mandatory — always apply filters to keep output small):',
+      '  1. purposeFilter — ALWAYS set this based on your next action:',
+      '     * "fill"  — Only input fields (textbox, combobox, checkbox, radio, select). Use before filling.',
+      '     * "click" — Only clickable elements (button, link, tab, menu item). Use before clicking.',
+      '     * "read"  — Everything. Use ONLY to understand full page structure, never as a first call.',
+      '  2. searchText — Grep elements by label/text (case-insensitive). Example: searchText="connexion".',
+      '     Combine with purposeFilter for precise results (e.g. purposeFilter="fill", searchText="email").',
+      '  3. includeHidden — Set to true only if steps 1-2 returned no results.',
+      '     Surfaces elements inside containers with aria-hidden or opacity:0.',
+      '     ALWAYS combine with searchText or purposeFilter to avoid massive output.',
       '',
-      'Use searchText to grep elements by label/text. Example: searchText="connexion" returns only refs containing that word.',
-      '',
-      'compact is enabled by default. Output includes element count and size for efficiency tracking.'
+      'compact is enabled by default. Output includes element count and size for efficiency tracking.',
+      'IMPORTANT: Always start with snapshot, never with screenshot. Snapshot is fast and cheap.'
     ].join('\n'),
     {
       profile: z.string().optional(),
@@ -318,7 +388,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
       compact: z.boolean().optional().default(true).describe('Remove generic wrapper nodes (default: true)'),
       interactiveOnly: z.boolean().optional().describe('Only show interactive elements. Stricter than purposeFilter.'),
       maxDepth: z.number().optional().describe('Maximum DOM tree depth (default: 50)'),
-      includeHidden: z.boolean().optional().describe('Include visually hidden elements (default: false)'),
+      includeHidden: z.boolean().optional().describe('LAST RESORT. Include elements inside aria-hidden/opacity:0 containers (default: false). Always combine with searchText or purposeFilter.'),
       includeRects: z.boolean().optional().describe('Include bounding box [x,y,wxh] coordinates per element')
     },
     async ({ profile, tabId, interactiveOnly, compact, maxDepth, includeHidden, includeRects, purposeFilter, searchText }) => {

@@ -6,6 +6,8 @@ export interface NavigateParams {
   url: string;
   tabId?: number;
   newWindow?: boolean;
+  viewportWidth?: number;
+  viewportHeight?: number;
 }
 
 export interface ClickParams {
@@ -21,6 +23,14 @@ export interface FillParams {
   tabId?: number;
   clear?: boolean;
   ref?: string;
+}
+
+export interface SelectParams {
+  selector?: string;
+  value: string;
+  tabId?: number;
+  ref?: string;
+  matchBy?: 'value' | 'text';
 }
 
 export interface KeyboardParams {
@@ -122,6 +132,9 @@ export interface ReplaySequenceParams {
   steps: WorkflowStep[];
   startIndex: number;
   newWindow?: boolean;
+  tabId?: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
 }
 
 export interface RefNodeInfo {

@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "rebuild better-sqlite3",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"rebuild",
+				"better-sqlite3",
+				"--build-from-source"
+			],
+			"isBackground": false,
+			"group": "build"
+		}
+	]
+}
