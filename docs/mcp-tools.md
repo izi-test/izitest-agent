@@ -1,6 +1,6 @@
 # MCP Tools Reference 🛠️
 
-Browser Pilot exposes two main categories of tools via the Model Context Protocol (MCP): **Browser Interaction** and **Test Automation (Recording/Replay)**.
+IziTest Agent exposes two main categories of tools via the Model Context Protocol (MCP): **Browser Interaction** and **Test Automation (Recording/Replay)**.
 
 ## 1. Browser Interaction Tools
 
@@ -46,7 +46,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
 
 ### Variable Support
-When saving a test (via `stop_recording`), Browser Pilot automatically identifies variables (e.g., input values or list selections). You can override these during `run_test`:
+When saving a test (via `stop_recording`), IziTest Agent automatically identifies variables (e.g., input values or list selections). You can override these during `run_test`:
 
 ```javascript
 run_test("my_test", { variables: { "user_email": "new@example.com" } })

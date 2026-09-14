@@ -1,4 +1,4 @@
-# Browser Pilot 🎯
+# IziTest Agent 🎯
 
 **Contrôle ton navigateur Chrome via Claude en langage naturel.**
 Garde tes vraies sessions, cookies, fingerprint — zéro détection bot.
@@ -31,7 +31,7 @@ npm install
 2. Active le **Mode développeur** (toggle en haut à droite)
 3. Clique **Charger l'extension non empaquetée**
 4. Sélectionne le dossier `extension/`
-5. L'icône Browser Pilot apparaît dans la barre — clique dessus pour configurer le profile ID
+5. L'icône IziTest Agent apparaît dans la barre — clique dessus pour configurer le profile ID
 
 ### 3. Configuration Claude
 

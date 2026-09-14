@@ -2,10 +2,38 @@ export interface Project {
   id: number;
   name: string;
   description: string | null;
+  context: string;
+  project_type: 'frontend' | 'backend' | 'fullstack' | null;
+  base_url: string | null;
   created_at: string;
   updated_at: string;
   test_count?: number;
   tests?: Test[];
+}
+
+export interface Conversation {
+  id: number;
+  project_id: number;
+  title: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Message {
+  id: number;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  tool_calls?: any[];
+  tool_results?: any[];
+  created_at: string;
+}
+
+export interface ChatResponse {
+  conversation_id: number;
+  message: string;
+  tool_calls?: { name: string; args: any }[];
+  tool_results?: { name: string; result: any }[];
 }
 
 export interface Variable {

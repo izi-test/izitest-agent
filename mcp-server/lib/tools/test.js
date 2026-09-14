@@ -354,7 +354,7 @@ export function registerTestTools(server, { sendCommand }) {
       variables: z.record(z.string()).optional().describe('Template variables: replaces {{key}} placeholders in params. For list/box items, pass the index (e.g. "2") or text content to select.'),
       substitutions: z.record(z.string()).optional().describe('Find-and-replace in all step params. Keys are old values, values are new values. Example: { "Antony": "Marseille" } replaces all occurrences of "Antony" with "Marseille" in every step.'),
       start_step: z.number().optional().describe('Step number to start from (1-indexed). Use this to resume a test after fixing a prior failed step manually.'),
-      new_window: z.boolean().optional().describe('If true, runs the test in a completely new browser window instead of a new tab.'),
+      new_window: z.boolean().optional().default(true).describe('Runs the test in a new browser window. Defaults to true. Set to false to reuse the current tab.'),
       debug: z.boolean().optional().describe('Enable debug mode: execution pauses before each step (or at breakpoints). Use debug_action tool to resume/step/continue.'),
       breakpoints: z.array(z.number()).optional().describe('Step numbers (1-indexed) to pause at. Only used when debug=true. If empty, pauses at every step.')
     },

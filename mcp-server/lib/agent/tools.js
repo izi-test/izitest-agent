@@ -1,0 +1,279 @@
+// Shared agent tool definitions — used by both MCP (CLI) and API (chat) agents.
+// Each tool is a plain object: { name, description, parameters, handler }.
+//
+// `parameters` is a JSON Schema object (compatible with both Zod conversion for
+// MCP and Claude API tool_use input_schema).
+//
+// `handler(params)` returns { text } for simple results or { data } for structured.
+
+import { db, parseJson } from '../db.js';
+import { loadTest, saveTest, listTests } from '../test-store.js';
+import { parseFeatureToStepsWith } from '../gherkin/parse.js';
+import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
+import {
+  listStepDefinitions,
+  createStepDefinition,
+} from '../gherkin/step-definition-store.js';
+import { log } from '../logger.js';
+
+// ─── Tool catalogue ─────────────────────────────���──────────────────
+
+export const AGENT_TOOLS = [
+  {
+    name: 'get_project_context',
+    description: 'Get the full context of the current project: name, description, base URL, type, specs/context text, and existing step definitions.',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Project ID' },
+      },
+      required: ['project_id'],
+    },
+    handler({ project_id }) {
+      const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(project_id);
+      if (!project) return { error: 'Project not found' };
+
+      const definitions = listStepDefinitions(project_id);
+      const tests = db.prepare(
+        `SELECT t.name, t.description FROM tests t WHERE t.project_id = ?`
+      ).all(project_id);
+
+      return {
+        data: {
+          id: project.id,
+          name: project.name,
+          description: project.description,
+          context: project.context || '',
+          project_type: project.project_type,
+          base_url: project.base_url,
+          step_definitions: definitions.map(d => ({
+            id: d.id,
+            keyword: d.keyword,
+            pattern: d.pattern,
+            command: d.command,
+            is_default: d.is_default,
+            steps_template: d.steps_template,
+          })),
+          existing_tests: tests.map(t => t.name),
+        },
+      };
+    },
+  },
+
+  {
+    name: 'list_project_tests',
+    description: 'List all tests in a project with their steps and descriptions.',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Project ID' },
+      },
+      required: ['project_id'],
+    },
+    handler({ project_id }) {
+      const rows = db.prepare(
+        `SELECT t.name, t.description, t.variables,
+                COUNT(s.id) as step_count
+         FROM tests t
+         LEFT JOIN test_steps s ON s.test_id = t.id
+         WHERE t.project_id = ?
+         GROUP BY t.id
+         ORDER BY t.updated_at DESC`
+      ).all(project_id);
+
+      return {
+        data: rows.map(r => ({
+          name: r.name,
+          description: r.description,
+          variables: parseJson(r.variables) || {},
+          step_count: r.step_count,
+        })),
+      };
+    },
+  },
+
+  {
+    name: 'create_test_from_gherkin',
+    description: 'Create a new test by parsing a Gherkin feature document. The Gherkin is resolved against the project step definitions to produce executable test steps.',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Project ID' },
+        gherkin: { type: 'string', description: 'The full Gherkin .feature content to parse' },
+        test_name: { type: 'string', description: 'Name for the test' },
+        test_description: { type: 'string', description: 'Optional description' },
+      },
+      required: ['project_id', 'gherkin', 'test_name'],
+    },
+    handler({ project_id, gherkin, test_name, test_description }) {
+      const definitions = db.prepare(
+        'SELECT * FROM step_definitions WHERE project_id = ?'
+      ).all(project_id).map(r => ({
+        ...r,
+        params_template: parseJson(r.params_template) || {},
+        steps_template: parseJson(r.steps_template) || null,
+      }));
+
+      let steps;
+      try {
+        steps = parseFeatureToStepsWith(gherkin, definitions);
+      } catch (err) {
+        if (err.code === 'GHERKIN_UNRESOLVED') {
+          return { error: err.message, unresolved: err.errors };
+        }
+        return { error: err.message };
+      }
+
+      const testId = saveTest({
+        name: test_name,
+        description: test_description || '',
+        steps,
+      });
+
+      // Assign test to project
+      db.prepare('UPDATE tests SET project_id = ? WHERE id = ?').run(project_id, testId);
+
+      log(`[Agent Tool] Created test "${test_name}" (${steps.length} steps) in project ${project_id}`);
+      return {
+        data: {
+          test_id: testId,
+          test_name,
+          step_count: steps.length,
+          steps: steps.map(s => ({ command: s.command, intent: s.intent })),
+        },
+      };
+    },
+  },
+
+  {
+    name: 'create_step_definition',
+    description: 'Create a new step definition (single or composite) in the project. A composite step definition maps one Gherkin phrase to multiple test steps.',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Project ID' },
+        keyword: { type: 'string', enum: ['Given', 'When', 'Then'], description: 'Gherkin keyword' },
+        pattern: { type: 'string', description: 'Cucumber expression pattern, e.g. "I login with {string} and {string}"' },
+        command: { type: 'string', description: 'Browser-pilot command (for single step). Omit if steps_template is provided.' },
+        params_template: { type: 'object', description: 'Parameter template (for single step)' },
+        steps_template: {
+          type: 'array',
+          description: 'For composite definitions: array of sub-steps, each with command and params',
+          items: {
+            type: 'object',
+            properties: {
+              command: { type: 'string' },
+              params: { type: 'object' },
+            },
+            required: ['command', 'params'],
+          },
+        },
+      },
+      required: ['project_id', 'keyword', 'pattern'],
+    },
+    handler({ project_id, keyword, pattern, command, params_template, steps_template }) {
+      const isComposite = Array.isArray(steps_template) && steps_template.length > 0;
+      if (!command && !isComposite) {
+        return { error: 'Either command or steps_template is required' };
+      }
+
+      try {
+        const def = createStepDefinition(project_id, {
+          keyword,
+          pattern,
+          command: isComposite ? 'composite' : command,
+          params_template: params_template || {},
+          steps_template: isComposite ? steps_template : null,
+        });
+        log(`[Agent Tool] Created step definition "${pattern}" in project ${project_id}`);
+        return { data: def };
+      } catch (err) {
+        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          return { error: `Step definition with pattern "${pattern}" already exists` };
+        }
+        return { error: err.message };
+      }
+    },
+  },
+
+  {
+    name: 'get_test_as_gherkin',
+    description: 'Serialize an existing test to Gherkin format.',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Project ID' },
+        test_name: { type: 'string', description: 'Name of the test' },
+      },
+      required: ['project_id', 'test_name'],
+    },
+    handler({ project_id, test_name }) {
+      const test = loadTest(test_name);
+      if (!test) return { error: `Test "${test_name}" not found` };
+
+      const definitions = db.prepare(
+        'SELECT * FROM step_definitions WHERE project_id = ?'
+      ).all(project_id).map(r => ({
+        ...r,
+        params_template: parseJson(r.params_template) || {},
+        steps_template: parseJson(r.steps_template) || null,
+      }));
+
+      const feature = serializeTestToFeatureWith(test, definitions);
+      return { data: { feature } };
+    },
+  },
+
+  {
+    name: 'update_project_context',
+    description: 'Update the project context (specs, notes, URLs, type). This context is used to guide test creation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Project ID' },
+        context: { type: 'string', description: 'Free-text project context (specs, notes, URLs...)' },
+        project_type: { type: 'string', enum: ['frontend', 'backend', 'fullstack'], description: 'Type of project' },
+        base_url: { type: 'string', description: 'Base URL of the application' },
+      },
+      required: ['project_id'],
+    },
+    handler({ project_id, context, project_type, base_url }) {
+      const sets = [];
+      const vals = [];
+      if (context !== undefined) { sets.push('context = ?'); vals.push(context); }
+      if (project_type !== undefined) { sets.push('project_type = ?'); vals.push(project_type); }
+      if (base_url !== undefined) { sets.push('base_url = ?'); vals.push(base_url); }
+
+      if (sets.length === 0) return { error: 'Nothing to update' };
+
+      sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')");
+      vals.push(project_id);
+
+      const result = db.prepare(
+        `UPDATE projects SET ${sets.join(', ')} WHERE id = ? RETURNING *`
+      ).get(...vals);
+
+      if (!result) return { error: 'Project not found' };
+      log(`[Agent Tool] Updated context for project ${project_id}`);
+      return { data: { id: result.id, name: result.name, context: result.context, project_type: result.project_type, base_url: result.base_url } };
+    },
+  },
+];
+
+// ─── Helpers for adapters ──────────────────────────────────────────
+
+/** Build a tool map keyed by name for quick lookup. */
+export function getToolMap() {
+  const map = {};
+  for (const t of AGENT_TOOLS) map[t.name] = t;
+  return map;
+}
+
+/** Convert tools to Claude API format (for tool_use). */
+export function toClaudeTools() {
+  return AGENT_TOOLS.map(t => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters,
+  }));
+}

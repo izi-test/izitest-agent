@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Browser Pilot — MCP Server + WebSocket Bridge
+// IziTest Agent — MCP Server + WebSocket Bridge
 // Exposes browser control tools via MCP (stdio) for Claude
 // Connects to Chrome extensions via WebSocket
 
@@ -17,6 +17,7 @@ import { startWebSocketServer, getProfiles, sendCommand, closeWebSocket } from '
 import { saveActionToHistory, getLastRefMap, setLastRefMap, getRecording } from './lib/tests.js';
 import { registerBrowserTools } from './lib/tools/browser.js';
 import { registerTestTools } from './lib/tools/test.js';
+import { registerAgentTools } from './lib/agent/mcp-adapter.js';
 import { initDatabase } from './lib/db.js';
 import { apiRouter } from './lib/api.js';
 
@@ -56,6 +57,7 @@ function createMcpServer() {
 
   registerBrowserTools(server, deps);
   registerTestTools(server, deps);
+  registerAgentTools(server);
 
   return server;
 }

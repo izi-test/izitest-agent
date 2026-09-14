@@ -1,17 +1,39 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from './Button';
-import { X, Wand2, Loader2, Folder, Square } from 'lucide-react';
+import { X, Wand2, Loader2, Folder, Square, FileCode, Bot } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { useGetProjectsQuery, } from '../store/services/projectsApi';
-import { testsApi, useAssignToProjectMutation } from '../store/services/testsApi';
+import {
+  testsApi,
+  useAssignToProjectMutation,
+  useCreateTestMutation,
+  usePutTestFeatureMutation,
+} from '../store/services/testsApi';
+
+type CreateMode = 'ai' | 'gherkin';
 
 interface CreateTestModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onTestCreated: (testName: string, projectId: number | null) => void;
+  onTestCreated: (testName: string, projectId: number | null, mode?: CreateMode) => void;
 }
 
 type AgentStatus = 'idle' | 'running' | 'done' | 'error' | 'stopped';
+
+function defaultGherkinTemplate(name: string, description: string): string {
+  const descLines = description
+    .split('\n')
+    .map((l) => `  ${l}`)
+    .join('\n');
+  const header = description ? `Feature: ${name}\n${descLines}\n\n` : `Feature: ${name}\n\n`;
+  return (
+    header +
+    `  Scenario: ${name}\n` +
+    `    Given I am on "https://example.com"\n` +
+    `    When I click on "#submit"\n` +
+    `    Then I should see "Welcome"\n`
+  );
+}
 
 const VIEWPORT_PRESETS = [
   { label: 'Default', value: '' },
@@ -42,7 +64,10 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
 
   const { data: projects = [] } = useGetProjectsQuery(undefined, { skip: !isOpen });
   const [assignToProject] = useAssignToProjectMutation();
+  const [createTest] = useCreateTestMutation();
+  const [putTestFeature] = usePutTestFeatureMutation();
 
+  const [mode, setMode] = useState<CreateMode>('ai');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [useVrt, setUseVrt] = useState(false);
@@ -52,6 +77,9 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('idle');
   const [agentOutput, setAgentOutput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [gherkinDraft, setGherkinDraft] = useState('');
+  const [gherkinDraftDirty, setGherkinDraftDirty] = useState(false);
+  const [isCreatingGherkin, setIsCreatingGherkin] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -63,6 +91,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
 
   useEffect(() => {
     if (isOpen) {
+      setMode('ai');
       setName('');
       setDescription('');
       setUseVrt(false);
@@ -70,8 +99,17 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
       setAgentStatus('idle');
       setAgentOutput('');
       setError(null);
+      setGherkinDraft('');
+      setGherkinDraftDirty(false);
+      setIsCreatingGherkin(false);
     }
   }, [isOpen]);
+
+  // Keep the Gherkin draft in sync with name/description until the user edits it.
+  useEffect(() => {
+    if (mode !== 'gherkin' || gherkinDraftDirty) return;
+    setGherkinDraft(defaultGherkinTemplate(name.trim() || 'My test', description.trim()));
+  }, [mode, name, description, gherkinDraftDirty]);
 
   useEffect(() => {
     if (isOpen) {
@@ -195,10 +233,50 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
     }
   };
 
+  const handleCreateFromGherkin = async () => {
+    if (!name.trim()) {
+      setError('Test name is required');
+      return;
+    }
+    if (projectId == null) {
+      setError('A project is required to use Gherkin. Pick one below.');
+      return;
+    }
+    if (!gherkinDraft.trim()) {
+      setError('Gherkin content is empty');
+      return;
+    }
+
+    setError(null);
+    setIsCreatingGherkin(true);
+    try {
+      await createTest({
+        name: name.trim(),
+        description: description.trim() || undefined,
+      }).unwrap();
+
+      await assignToProject({ testName: name.trim(), projectId }).unwrap();
+      await putTestFeature({ testName: name.trim(), feature: gherkinDraft }).unwrap();
+
+      dispatch(testsApi.util.invalidateTags([{ type: 'TestList', id: 'LIST' }]));
+      onTestCreated(name.trim(), projectId, 'gherkin');
+    } catch (err) {
+      const body = (err as { data?: { error?: string; errors?: string[] } })?.data;
+      if (body?.errors?.length) {
+        setError(body.errors.join('\n'));
+      } else {
+        setError(body?.error || (err as Error).message || 'Failed to create test');
+      }
+    } finally {
+      setIsCreatingGherkin(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const isRunning = agentStatus === 'running';
   const showOutput = agentStatus !== 'idle';
+  const isBusy = isRunning || isCreatingGherkin;
 
   return (
     <div className="modal" onClick={handleClose}>
@@ -208,13 +286,44 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
         onClick={e => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h3>Create Test with AI</h3>
+          <h3>{mode === 'gherkin' ? 'Create Test from Gherkin' : 'Create Test with AI'}</h3>
           <button className="btn-close" onClick={handleClose}>
             <X size={18} />
           </button>
         </div>
 
         <div className="modal-body">
+          <div className="create-mode-toggle" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'ai'}
+              className={`create-mode-btn ${mode === 'ai' ? 'active' : ''}`}
+              onClick={() => !isBusy && setMode('ai')}
+              disabled={isBusy}
+            >
+              <Bot size={16} />
+              <div className="create-mode-btn__text">
+                <strong>AI Agent</strong>
+                <span>Describe and let the agent record it</span>
+              </div>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'gherkin'}
+              className={`create-mode-btn ${mode === 'gherkin' ? 'active' : ''}`}
+              onClick={() => !isBusy && setMode('gherkin')}
+              disabled={isBusy}
+            >
+              <FileCode size={16} />
+              <div className="create-mode-btn__text">
+                <strong>Gherkin</strong>
+                <span>Write the scenario yourself</span>
+              </div>
+            </button>
+          </div>
+
           <div className="field-group">
             <label>Test Name</label>
             <input
@@ -239,52 +348,56 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
             />
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
-            <label htmlFor="useVrtCheck" style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)' }}>
-              <input
-                type="checkbox"
-                id="useVrtCheck"
-                checked={useVrt}
-                onChange={e => setUseVrt(e.target.checked)}
-                disabled={isRunning}
-                style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
-              />
-              Enable Visual Regression Testing (VRT)
-            </label>
-          </div>
+          {mode === 'ai' && (
+            <>
+              <div style={{ marginBottom: '16px' }}>
+                <label htmlFor="useVrtCheck" style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)' }}>
+                  <input
+                    type="checkbox"
+                    id="useVrtCheck"
+                    checked={useVrt}
+                    onChange={e => setUseVrt(e.target.checked)}
+                    disabled={isRunning}
+                    style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
+                  />
+                  Enable Visual Regression Testing (VRT)
+                </label>
+              </div>
+
+              <div className="field-group">
+                <label>Window Resolution</label>
+                <select
+                  value={viewportToString(viewport)}
+                  onChange={(e) => setViewport(parseViewportString(e.target.value))}
+                  disabled={isRunning}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    background: 'var(--bg-tertiary)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)',
+                    fontSize: '13px',
+                    fontFamily: 'var(--font)',
+                    cursor: isRunning ? 'not-allowed' : 'pointer',
+                    opacity: isRunning ? 0.5 : 1
+                  }}
+                >
+                  {VIEWPORT_PRESETS.map(preset => (
+                    <option key={preset.value} value={preset.value}>{preset.label}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
 
           <div className="field-group">
-            <label>Window Resolution</label>
-            <select
-              value={viewportToString(viewport)}
-              onChange={(e) => setViewport(parseViewportString(e.target.value))}
-              disabled={isRunning}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                background: 'var(--bg-tertiary)',
-                color: 'var(--text)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                fontSize: '13px',
-                fontFamily: 'var(--font)',
-                cursor: isRunning ? 'not-allowed' : 'pointer',
-                opacity: isRunning ? 0.5 : 1
-              }}
-            >
-              {VIEWPORT_PRESETS.map(preset => (
-                <option key={preset.value} value={preset.value}>{preset.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field-group">
-            <label>Project (optional)</label>
+            <label>{mode === 'gherkin' ? 'Project (required)' : 'Project (optional)'}</label>
             <div style={{ position: 'relative' }}>
               <button
                 type="button"
-                onClick={() => !isRunning && setShowProjectDropdown(!showProjectDropdown)}
-                disabled={isRunning}
+                onClick={() => !isBusy && setShowProjectDropdown(!showProjectDropdown)}
+                disabled={isBusy}
                 style={{
                   width: '100%',
                   padding: '8px 12px',
@@ -357,11 +470,28 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
             </div>
           </div>
 
-          {error && (
-            <div className="create-wf-error">{error}</div>
+          {mode === 'gherkin' && (
+            <div className="field-group">
+              <label>Gherkin scenario</label>
+              <textarea
+                className="gherkin-textarea gherkin-textarea--modal"
+                value={gherkinDraft}
+                onChange={(e) => { setGherkinDraft(e.target.value); setGherkinDraftDirty(true); }}
+                spellCheck={false}
+                disabled={isBusy}
+                rows={12}
+              />
+              <p className="create-wf-hint">
+                Edit the template to match your scenario. It will be validated against the project's step definitions on save.
+              </p>
+            </div>
           )}
 
-          {showOutput && (
+          {error && (
+            <div className="create-wf-error" style={{ whiteSpace: 'pre-wrap' }}>{error}</div>
+          )}
+
+          {mode === 'ai' && showOutput && (
             <div className="create-wf-output-section">
               <div className="create-wf-output-header">
                 <span className="create-wf-output-label">
@@ -388,11 +518,11 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
               Stop Agent
             </Button>
           ) : (
-            <Button variant="cancel" onClick={handleClose}>
+            <Button variant="cancel" onClick={handleClose} disabled={isCreatingGherkin}>
               {agentStatus === 'done' || agentStatus === 'stopped' ? 'Close' : 'Cancel'}
             </Button>
           )}
-          {agentStatus !== 'done' && agentStatus !== 'stopped' && (
+          {mode === 'ai' && agentStatus !== 'done' && agentStatus !== 'stopped' && (
             <Button
               variant="primary"
               icon={isRunning ? Loader2 : Wand2}
@@ -400,6 +530,16 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
               disabled={isRunning || !name.trim() || !description.trim()}
             >
               {isRunning ? 'Generating...' : 'Generate Test'}
+            </Button>
+          )}
+          {mode === 'gherkin' && (
+            <Button
+              variant="primary"
+              icon={isCreatingGherkin ? Loader2 : FileCode}
+              onClick={handleCreateFromGherkin}
+              disabled={isCreatingGherkin || !name.trim() || projectId == null}
+            >
+              {isCreatingGherkin ? 'Creating...' : 'Create & Edit Gherkin'}
             </Button>
           )}
         </div>

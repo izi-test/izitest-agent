@@ -131,7 +131,7 @@ export function sendCommand(profileId, command, params, timeoutMs = 30000, onPro
           reject(new Error(
             profileId
               ? `Profile "${profileId}" not connected. Connected profiles: ${[...profiles.keys()].join(', ') || 'none'}`
-              : 'No browser profiles connected. Make sure Chrome is open with the Browser Pilot extension.'
+              : 'No browser profiles connected. Make sure Chrome is open with the IziTest Agent extension.'
           ));
           return;
         }

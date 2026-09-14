@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { showToast, navigateToList, setCurrentTestName } from '../store/slices/uiSlice';
+import { showToast } from '../store/slices/uiSlice';
 import {
   initTestDetail,
   setEditName,
@@ -25,6 +26,8 @@ import { ProjectAssign } from './ProjectSelector';
 import { Button } from './Button';
 import { ExecutionHistory } from './ExecutionHistory';
 import { LiveExecutionModal } from './LiveExecutionModal';
+import { GherkinEditor } from './GherkinEditor';
+import { CodePanel } from './CodePanel';
 import {
   ArrowLeft,
   Play,
@@ -38,7 +41,9 @@ import {
   Plus,
   Database,
   ShieldCheck,
-  Monitor
+  Monitor,
+  FileCode,
+  Code
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -72,6 +77,7 @@ function parseViewportString(value: string): { width: number; height: number } |
 
 export function TestDetail({ testName, onBack }: TestDetailProps) {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
 
   // Redux state
   const {
@@ -142,7 +148,7 @@ export function TestDetail({ testName, onBack }: TestDetailProps) {
       await updateTestMut({ originalName: testName, name: editName.trim(), description: editDescription.trim(), viewport }).unwrap();
       dispatch(showToast({ message: 'Test saved' }));
       if (editName.trim() !== testName) {
-        dispatch(setCurrentTestName(editName.trim()));
+        navigate(`/tests/${encodeURIComponent(editName.trim())}`, { replace: true });
       }
     } catch (err: any) {
       dispatch(showToast({ message: err.message || 'Save failed', type: 'error' }));
@@ -194,7 +200,7 @@ export function TestDetail({ testName, onBack }: TestDetailProps) {
           await deleteTestMut(test.name).unwrap();
           dispatch(showToast({ message: 'Test deleted' }));
           setConfirmData(null);
-          dispatch(navigateToList());
+          onBack();
         } catch (err: any) {
           dispatch(showToast({ message: err.message || 'Delete failed', type: 'error' }));
         }
@@ -392,6 +398,20 @@ CRITICAL RULES:
             <span className="tab-count">{steps.length}</span>
           </button>
           <button
+            className={`tab-btn ${activeTab === 'gherkin' ? 'active' : ''}`}
+            onClick={() => dispatch(setActiveTab('gherkin'))}
+          >
+            <FileCode size={18} className="tab-icon" />
+            Gherkin
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'code' ? 'active' : ''}`}
+            onClick={() => dispatch(setActiveTab('code'))}
+          >
+            <Code size={18} className="tab-icon" />
+            Code
+          </button>
+          <button
             className={`tab-btn ${activeTab === 'data' ? 'active' : ''}`}
             onClick={() => dispatch(setActiveTab('data'))}
           >
@@ -559,6 +579,10 @@ CRITICAL RULES:
             onSaved={() => { dispatch(closeAssertionModal()); refetch(); }}
           />
         </>
+      ) : activeTab === 'gherkin' ? (
+        <GherkinEditor testName={test.name} />
+      ) : activeTab === 'code' ? (
+        <CodePanel testName={test.name} />
       ) : (
         <div className="exec-history-section">
           <ExecutionHistory testName={test.name} refreshTrigger={refreshTrigger} />

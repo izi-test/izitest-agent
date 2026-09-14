@@ -1,6 +1,6 @@
 # Usage Guide 🕹️
 
-Une fois Browser Pilot configuré, vous pouvez interagir avec votre navigateur via Claude en utilisant le langage naturel ou les outils MCP directement.
+Une fois IziTest Agent configuré, vous pouvez interagir avec votre navigateur via Claude en utilisant le langage naturel ou les outils MCP directement.
 
 ---
 

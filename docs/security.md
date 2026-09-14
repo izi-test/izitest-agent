@@ -1,6 +1,6 @@
 # Security Considerations 🔒
 
-Browser Pilot is designed to run locally and give you full control over your browser data. However, since it allows an AI to control your real browser, several safety measures are in place.
+IziTest Agent is designed to run locally and give you full control over your browser data. However, since it allows an AI to control your real browser, several safety measures are in place.
 
 ## Data Privacy & Protection
 
@@ -8,7 +8,7 @@ Browser Pilot is designed to run locally and give you full control over your bro
 The WebSocket bridge and MCP server listen **exclusively** on `127.0.0.1` (localhost). No ports are exposed to the public internet by default. This ensures that only your local AI (Claude Desktop/Code) can communicate with your browser instances.
 
 ### 2. Cookie Masking
-When using the `get_cookies` tool, Browser Pilot **masks** sensitive cookie values. It only returns the first 50 characters of a cookie's value to the AI, preventing full session tokens from being sent to external LLM providers (Anthropic, OpenAI, etc.) while still allowing the AI to verify if a cookie exists.
+When using the `get_cookies` tool, IziTest Agent **masks** sensitive cookie values. It only returns the first 50 characters of a cookie's value to the AI, preventing full session tokens from being sent to external LLM providers (Anthropic, OpenAI, etc.) while still allowing the AI to verify if a cookie exists.
 
 ### 3. Execution Context
 JavaScript executed via the `execute_js` tool runs within the **Chrome extension's sandbox** or the **page context**. It does not have access to your local file system, environmental variables, or other sensitive system data outside the browser.
@@ -18,7 +18,7 @@ JavaScript executed via the `execute_js` tool runs within the **Chrome extension
 ## Best Practices for Users
 
 ### 1. Dedicated Profiles
-We strongly recommend using **separate Chrome profiles** for sensitive work (e.g., banking) and Browser Pilot automation. See our [Multi-Account Guide](file:///Library/Dev/browser-pilot/docs/multi-account.md) for more details.
+We strongly recommend using **separate Chrome profiles** for sensitive work (e.g., banking) and IziTest Agent automation. See our [Multi-Account Guide](file:///Library/Dev/browser-pilot/docs/multi-account.md) for more details.
 
 ### 2. Monitor AI Actions
 Always keep an eye on the browser window while an AI is performing tasks. Claude is generally very reliable, but browser automation can sometimes encounter unexpected edge cases on dynamic websites.
@@ -52,7 +52,7 @@ graph LR
 
 ## Data Storage
 
-Browser Pilot stores data locally in the following locations:
+IziTest Agent stores data locally in the following locations:
 
 ### Database
 - **Location** : `mcp-server/data/tests.db` (SQLite)

@@ -18,7 +18,7 @@ export function registerBrowserTools(server, { sendCommand, getProfiles, saveAct
           type: 'text',
           text: list.length
             ? `Connected profiles: ${list.join(', ')}`
-            : 'No profiles connected. Make sure Chrome is open with the Browser Pilot extension installed.'
+            : 'No profiles connected. Make sure Chrome is open with the IziTest Agent extension installed.'
         }]
       };
     }

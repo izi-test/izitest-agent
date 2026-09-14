@@ -2,7 +2,7 @@
 trigger: always_on
 ---
 
-# Browser Pilot - Workflow Recording
+# IziTest Agent - Workflow Recording
 
 When the user asks to "enregistrer", "record", or "sauvegarder" a workflow/parcours for browser automation, use the **browser-pilot** MCP tools in this order:
 

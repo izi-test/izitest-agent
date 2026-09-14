@@ -87,6 +87,20 @@ export function initDatabase() {
       value TEXT NOT NULL,
       updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
+
+    CREATE TABLE IF NOT EXISTS step_definitions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      keyword TEXT NOT NULL CHECK (keyword IN ('Given','When','Then')),
+      pattern TEXT NOT NULL,
+      command TEXT NOT NULL,
+      params_template TEXT NOT NULL DEFAULT '{}',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE(project_id, pattern)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_step_definitions_project ON step_definitions(project_id);
   `);
 
   // Migrations: add project_id column to tests if it doesn't exist
@@ -109,6 +123,82 @@ export function initDatabase() {
     }
   } catch (err) {
     log(`Migration warning (viewport): ${err.message}`);
+  }
+
+  // Migrations: add step_definition_id column to test_steps if it doesn't exist
+  try {
+    const hasStepDefId = db.prepare("PRAGMA table_info(test_steps)").all().some(col => col.name === 'step_definition_id');
+    if (!hasStepDefId) {
+      db.exec(`ALTER TABLE test_steps ADD COLUMN step_definition_id INTEGER REFERENCES step_definitions(id) ON DELETE SET NULL`);
+      log('Migration applied: added step_definition_id column to test_steps table');
+    }
+  } catch (err) {
+    log(`Migration warning (step_definition_id): ${err.message}`);
+  }
+
+  // Migrations: add steps_template column to step_definitions for composite (multi-step) definitions
+  try {
+    const hasStepsTemplate = db.prepare("PRAGMA table_info(step_definitions)").all().some(col => col.name === 'steps_template');
+    if (!hasStepsTemplate) {
+      db.exec(`ALTER TABLE step_definitions ADD COLUMN steps_template TEXT DEFAULT NULL`);
+      log('Migration applied: added steps_template column to step_definitions table');
+    }
+  } catch (err) {
+    log(`Migration warning (steps_template): ${err.message}`);
+  }
+
+  // Migrations: add context fields to projects
+  try {
+    const cols = db.prepare("PRAGMA table_info(projects)").all().map(c => c.name);
+    if (!cols.includes('context')) {
+      db.exec(`ALTER TABLE projects ADD COLUMN context TEXT DEFAULT ''`);
+      log('Migration applied: added context column to projects table');
+    }
+    if (!cols.includes('project_type')) {
+      db.exec(`ALTER TABLE projects ADD COLUMN project_type TEXT DEFAULT NULL`);
+      log('Migration applied: added project_type column to projects table');
+    }
+    if (!cols.includes('base_url')) {
+      db.exec(`ALTER TABLE projects ADD COLUMN base_url TEXT DEFAULT NULL`);
+      log('Migration applied: added base_url column to projects table');
+    }
+  } catch (err) {
+    log(`Migration warning (project context): ${err.message}`);
+  }
+
+  // Conversations / messages tables for agent chat
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title TEXT DEFAULT '',
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
+      content TEXT NOT NULL,
+      tool_calls TEXT,
+      tool_results TEXT,
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+  `);
+
+  // Migration: add cli_session_id to conversations (for CLI chat resumption)
+  try {
+    const convCols = db.prepare("PRAGMA table_info(conversations)").all().map(c => c.name);
+    if (!convCols.includes('cli_session_id')) {
+      db.exec(`ALTER TABLE conversations ADD COLUMN cli_session_id TEXT DEFAULT NULL`);
+      log('Migration applied: added cli_session_id column to conversations table');
+    }
+  } catch (err) {
+    log(`Migration warning (cli_session_id): ${err.message}`);
   }
 
   log('SQLite database initialized');

@@ -1,6 +1,6 @@
 # Architecture Details 🏗️
 
-Browser Pilot's architecture is built for stability and transparency. It avoids standard automation frameworks (Puppeteer, Selenium) to ensure 100% human-like behavior and fingerprinting.
+IziTest Agent's architecture is built for stability and transparency. It avoids standard automation frameworks (Puppeteer, Selenium) to ensure 100% human-like behavior and fingerprinting.
 
 ## The Connection Chain
 
@@ -52,7 +52,7 @@ Traditional automation is easy to flag:
 -   **CSS Media Queries**: Headless browsers often fail `@media (prefers-reduced-motion)` or have weird screen dimensions.
 -   **Extension Presence**: Some sites check for common extensions (AdBlock, etc.), which are usually missing in test environments.
 
-**Browser Pilot inherits everything from your real browsing environment.** If you can browse a site as a human without being blocked, Browser Pilot can too.
+**IziTest Agent inherits everything from your real browsing environment.** If you can browse a site as a human without being blocked, IziTest Agent can too.
 
 ---
 [< Previous: Multi-Account Management](file:///Library/Dev/browser-pilot/docs/multi-account.md) | [Next: Configuration >](file:///Library/Dev/browser-pilot/docs/configuration.md)

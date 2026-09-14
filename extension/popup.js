@@ -1,4 +1,4 @@
-// Browser Pilot — Popup Debug Panel
+// IziTest Agent — Popup Debug Panel
 
 // ─── Tab Navigation ───
 const tabButtons = document.querySelectorAll('.tab-btn');

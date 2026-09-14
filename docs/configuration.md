@@ -1,6 +1,6 @@
 # Configuration ⚙️
 
-Ce document décrit toutes les options de configuration disponibles pour Browser Pilot.
+Ce document décrit toutes les options de configuration disponibles pour IziTest Agent.
 
 ---
 
@@ -35,10 +35,10 @@ node mcp-server/server.js
 ```json
 {
   "mcpServers": {
-    "browser-pilot": {
+    "izitest-agent": {
       "command": "node",
       "args": [
-        "/CHEMIN/ABSOLU/vers/browser-pilot/mcp-server/server.js",
+        "/CHEMIN/ABSOLU/vers/izitest-agent/mcp-server/server.js",
         "--stdio"
       ]
     }
@@ -51,11 +51,11 @@ node mcp-server/server.js
 ```json
 {
   "mcpServers": {
-    "browser-pilot": {
+    "izitest-agent": {
       "command": "bash",
       "args": [
         "-c",
-        "export WS_PORT=3458 && export MCP_PORT=3459 && node /chemin/vers/browser-pilot/mcp-server/server.js --stdio"
+        "export WS_PORT=3458 && export MCP_PORT=3459 && node /chemin/vers/izitest-agent/mcp-server/server.js --stdio"
       ]
     }
   }
@@ -105,7 +105,7 @@ node server.js
 
 ### Paramètres du popup
 
-Cliquez sur l'icône Browser Pilot dans Chrome pour configurer :
+Cliquez sur l'icône IziTest Agent dans Chrome pour configurer :
 
 | Paramètre | Description |
 |-----------|-------------|
@@ -115,7 +115,7 @@ Cliquez sur l'icône Browser Pilot dans Chrome pour configurer :
 ### Modifier l'URL du serveur WebSocket
 
 Si vous avez changé `WS_PORT` :
-1. Cliquez sur l'icône Browser Pilot
+1. Cliquez sur l'icône IziTest Agent
 2. Modifiez l'URL : `ws://127.0.0.1:VOTRE_PORT`
 3. Cliquez sur "Reconnect"
 
@@ -126,7 +126,7 @@ Si vous avez changé `WS_PORT` :
 ### Structure
 
 ```
-browser-pilot/
+izitest-agent/
 ├── mcp-server/
 │   └── data/
 │       ├── tests.db              # Base de données SQLite
@@ -171,7 +171,7 @@ Les commandes du navigateur ont un timeout implicite de 10 secondes pour l'atten
 ### Ajouter le serveur MCP
 
 ```bash
-claude mcp add browser-pilot node /chemin/vers/browser-pilot/mcp-server/server.js --stdio
+claude mcp add izitest-agent node /chemin/vers/izitest-agent/mcp-server/server.js --stdio
 ```
 
 ### Voir les serveurs configurés
@@ -183,7 +183,7 @@ claude mcp list
 ### Supprimer le serveur
 
 ```bash
-claude mcp remove browser-pilot
+claude mcp remove izitest-agent
 ```
 
 ---

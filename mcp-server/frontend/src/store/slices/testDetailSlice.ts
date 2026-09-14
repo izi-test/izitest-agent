@@ -1,7 +1,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type { Step } from '../../types';
 
-type TabType = 'steps' | 'history' | 'data';
+type TabType = 'steps' | 'history' | 'data' | 'gherkin' | 'code';
 
 interface TestDetailState {
   editName: string;
@@ -34,7 +34,7 @@ const initialState: TestDetailState = {
   projectId: null,
   variableOverrides: {},
   activeTab: 'steps',
-  executeNewWindow: false,
+  executeNewWindow: true,
   useAgent: false,
   useDebug: false,
 

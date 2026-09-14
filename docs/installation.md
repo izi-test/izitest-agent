@@ -1,6 +1,6 @@
 # Installation Guide 🛠️
 
-Setting up Browser Pilot involves three main steps: the MCP server, the Chrome extension, and the AI agent (Claude) configuration.
+Setting up IziTest Agent involves three main steps: the MCP server, the Chrome extension, and the AI agent (Claude) configuration.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ node server.js
 2.  Enable **Developer Mode** (toggle in the top-right corner).
 3.  Click **Load unpacked**.
 4.  Select the `extension/` directory from the root of this project.
-5.  Click the Browser Pilot icon in your toolbar to ensure it's active.
+5.  Click the IziTest Agent icon in your toolbar to ensure it's active.
 6.  (Optional) Set a `Profile ID` in the extension popup to identify this instance.
 
 ---
@@ -49,9 +49,9 @@ Add the following to your configuration file:
 ```json
 {
   "mcpServers": {
-    "browser-pilot": {
+    "izitest-agent": {
       "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/browser-pilot/mcp-server/server.js", "--stdio"]
+      "args": ["/ABSOLUTE/PATH/TO/izitest-agent/mcp-server/server.js", "--stdio"]
     }
   }
 }
@@ -64,7 +64,7 @@ Add the following to your configuration file:
 Run the following command in your terminal:
 
 ```bash
-claude mcp add browser-pilot node /ABSOLUTE/PATH/TO/browser-pilot/mcp-server/server.js --stdio
+claude mcp add izitest-agent node /ABSOLUTE/PATH/TO/izitest-agent/mcp-server/server.js --stdio
 ```
 
 > **Note** : Claude Code détecte automatiquement le mode approprié, mais le flag `--stdio` est recommandé pour la cohérence.
@@ -73,7 +73,7 @@ claude mcp add browser-pilot node /ABSOLUTE/PATH/TO/browser-pilot/mcp-server/ser
 
 ## 4. Configuration des ports (optionnel)
 
-Par défaut, Browser Pilot utilise les ports suivants :
+Par défaut, IziTest Agent utilise les ports suivants :
 - **3456** : WebSocket (communication avec l'extension Chrome)
 - **3457** : Serveur MCP en mode SSE (Server-Sent Events)
 

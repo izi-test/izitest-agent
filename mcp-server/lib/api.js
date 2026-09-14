@@ -10,6 +10,21 @@ import { log } from './logger.js';
 import { executeTest } from './tests.js';
 import { sendCommand } from './websocket.js';
 import { DebugController, activeDebugControllers } from './debug-controller.js';
+import {
+  seedProjectStepDefinitions,
+  listStepDefinitions,
+  createStepDefinition,
+  updateStepDefinition,
+  deleteStepDefinition,
+} from './gherkin/step-definition-store.js';
+import { serializeTestToFeature } from './gherkin/serialize.js';
+import { parseFeatureToSteps } from './gherkin/parse.js';
+import { loadTest, saveTest } from './test-store.js';
+import { generatePlaywrightPlain } from './codegen/playwright-plain.js';
+import { generatePlaywrightCucumber } from './codegen/playwright-cucumber.js';
+import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
+
+const CODEGEN_FRAMEWORKS = ['playwright-plain', 'playwright-cucumber'];
 
 const execFileAsync = promisify(execFile);
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
@@ -135,6 +150,93 @@ export async function apiRouter(req, res, url) {
       return json(res, 200, parseRow(result, 'variables', 'viewport'));
     }
 
+    // ── GET /api/tests/:name/feature — serialize test_steps as Gherkin ──
+    params = matchRoute(path, '/api/tests/:name/feature');
+    if (method === 'GET' && params) {
+      const test = loadTest(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
+      const projectId = test.project_id;
+      if (!projectId) return json(res, 400, { error: 'Test is not assigned to a project; assign it first to use Gherkin' });
+      const feature = serializeTestToFeature(test, projectId);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end(feature);
+    }
+
+    // ── PUT /api/tests/:name/feature — parse Gherkin and replace test_steps ──
+    if (method === 'PUT' && params) {
+      const body = await readBody(req);
+      const featureText = body.feature;
+      if (typeof featureText !== 'string') return json(res, 400, { error: 'feature (string) is required' });
+
+      const existing = loadTest(params.name);
+      if (!existing) return json(res, 404, { error: 'Test not found' });
+      const projectId = existing.project_id;
+      if (!projectId) return json(res, 400, { error: 'Test is not assigned to a project; assign it first to use Gherkin' });
+
+      let steps;
+      try {
+        steps = parseFeatureToSteps(featureText, projectId);
+      } catch (err) {
+        if (err.code === 'GHERKIN_UNRESOLVED') {
+          return json(res, 422, { error: err.message, errors: err.errors });
+        }
+        return json(res, 400, { error: err.message });
+      }
+
+      saveTest({ ...existing, steps });
+      return json(res, 200, { success: true, step_count: steps.length });
+    }
+
+    // ── GET /api/tests/:name/codegen?framework=... ──
+    params = matchRoute(path, '/api/tests/:name/codegen');
+    if (method === 'GET' && params) {
+      const framework = url.searchParams.get('framework') || 'playwright-plain';
+      if (!CODEGEN_FRAMEWORKS.includes(framework)) {
+        return json(res, 400, {
+          error: `Unknown framework '${framework}'. Expected one of: ${CODEGEN_FRAMEWORKS.join(', ')}`,
+        });
+      }
+
+      const test = loadTest(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
+
+      try {
+        if (framework === 'playwright-plain') {
+          const slug = (test.name || 'test')
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '') || 'test';
+          const content = generatePlaywrightPlain(test);
+          return json(res, 200, {
+            framework,
+            files: [{ path: `tests/${slug}.spec.js`, content }],
+          });
+        }
+
+        // playwright-cucumber requires step definitions from the project.
+        const projectId = test.project_id;
+        if (!projectId) {
+          return json(res, 400, {
+            error: 'Test is not assigned to a project; assign it first to generate playwright-cucumber code',
+          });
+        }
+        const definitions = db
+          .prepare('SELECT * FROM step_definitions WHERE project_id = ?')
+          .all(projectId)
+          .map((r) => ({
+            ...r,
+            params_template: parseJson(r.params_template) || {},
+            steps_template: parseJson(r.steps_template) || null,
+          }));
+
+        const bundle = generatePlaywrightCucumber(test, definitions);
+        return json(res, 200, { framework, files: bundle.files });
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
+    }
+
     // ── DELETE /api/tests/:name ──
     params = matchRoute(path, '/api/tests/:name');
     if (method === 'DELETE' && params) {
@@ -175,7 +277,8 @@ export async function apiRouter(req, res, url) {
       });
 
       try {
-        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, body.new_window, sendCommand, 'manual', onProgress, debugController);
+        const newWindow = body.new_window !== undefined ? body.new_window : true;
+        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, sendCommand, 'manual', onProgress, debugController);
         res.write(`data: ${JSON.stringify({ type: 'execution_completed', result: resObj })}\n\n`);
       } catch (err) {
         res.write(`data: ${JSON.stringify({
@@ -454,8 +557,16 @@ export async function apiRouter(req, res, url) {
 
       try {
         const result = db.prepare(
-          `INSERT INTO projects (name, description) VALUES (?, ?) RETURNING id, name`
-        ).get(body.name, body.description || '');
+          `INSERT INTO projects (name, description, context, project_type, base_url)
+           VALUES (?, ?, ?, ?, ?) RETURNING *`
+        ).get(
+          body.name,
+          body.description || '',
+          body.context || '',
+          body.project_type || null,
+          body.base_url || null
+        );
+        seedProjectStepDefinitions(result.id);
         return json(res, 201, result);
       } catch (err) {
         if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
@@ -474,6 +585,9 @@ export async function apiRouter(req, res, url) {
 
       if (body.name !== undefined) { sets.push('name = ?'); vals.push(body.name); }
       if (body.description !== undefined) { sets.push('description = ?'); vals.push(body.description); }
+      if (body.context !== undefined) { sets.push('context = ?'); vals.push(body.context); }
+      if (body.project_type !== undefined) { sets.push('project_type = ?'); vals.push(body.project_type); }
+      if (body.base_url !== undefined) { sets.push('base_url = ?'); vals.push(body.base_url); }
       if (sets.length === 0) return json(res, 400, { error: 'Nothing to update' });
 
       sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')");
@@ -498,6 +612,76 @@ export async function apiRouter(req, res, url) {
     if (method === 'DELETE' && params) {
       const result = db.prepare('DELETE FROM projects WHERE id = ?').run(params.id);
       if (result.changes === 0) return json(res, 404, { error: 'Project not found' });
+      return json(res, 200, { success: true });
+    }
+
+    // ── GET /api/projects/:id/step-definitions ──
+    params = matchRoute(path, '/api/projects/:id/step-definitions');
+    if (method === 'GET' && params) {
+      const definitions = listStepDefinitions(parseInt(params.id, 10));
+      return json(res, 200, { definitions });
+    }
+
+    // ── POST /api/projects/:id/step-definitions ──
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      const isComposite = Array.isArray(body.steps_template) && body.steps_template.length > 0;
+      if (!body.keyword || !body.pattern || (!body.command && !isComposite)) {
+        return json(res, 400, { error: 'keyword, pattern and command (or steps_template) are required' });
+      }
+      if (!['Given', 'When', 'Then'].includes(body.keyword)) {
+        return json(res, 400, { error: 'keyword must be Given, When or Then' });
+      }
+      try {
+        const def = createStepDefinition(parseInt(params.id, 10), {
+          keyword: body.keyword,
+          pattern: body.pattern,
+          command: isComposite ? 'composite' : body.command,
+          params_template: body.params_template || {},
+          steps_template: isComposite ? body.steps_template : null,
+        });
+        return json(res, 201, def);
+      } catch (err) {
+        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          return json(res, 409, { error: 'A step definition with this pattern already exists in the project' });
+        }
+        throw err;
+      }
+    }
+
+    // ── PATCH /api/step-definitions/:id ──
+    params = matchRoute(path, '/api/step-definitions/:id');
+    if (method === 'PATCH' && params) {
+      const body = await readBody(req);
+      const isComposite = Array.isArray(body.steps_template) && body.steps_template.length > 0;
+      if (!body.keyword || !body.pattern || (!body.command && !isComposite)) {
+        return json(res, 400, { error: 'keyword, pattern and command (or steps_template) are required' });
+      }
+      if (!['Given', 'When', 'Then'].includes(body.keyword)) {
+        return json(res, 400, { error: 'keyword must be Given, When or Then' });
+      }
+      try {
+        const def = updateStepDefinition(parseInt(params.id, 10), {
+          keyword: body.keyword,
+          pattern: body.pattern,
+          command: isComposite ? 'composite' : body.command,
+          params_template: body.params_template || {},
+          steps_template: isComposite ? body.steps_template : null,
+        });
+        if (!def) return json(res, 404, { error: 'Step definition not found or is built-in' });
+        return json(res, 200, def);
+      } catch (err) {
+        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          return json(res, 409, { error: 'A step definition with this pattern already exists in the project' });
+        }
+        throw err;
+      }
+    }
+
+    // ── DELETE /api/step-definitions/:id ──
+    if (method === 'DELETE' && params) {
+      const ok = deleteStepDefinition(parseInt(params.id, 10));
+      if (!ok) return json(res, 404, { error: 'Step definition not found or is built-in' });
       return json(res, 200, { success: true });
     }
 
@@ -719,6 +903,8 @@ export async function apiRouter(req, res, url) {
         args.push('-p', body.prompt, '--allow-all', '--allow-all-tools');
       } else if (agentConfig.cli?.provider === 'gemini') {
         args.push('-p', body.prompt, '-y');
+      } else if (agentConfig.cli?.provider === 'opencode') {
+        args.push('run', body.prompt);
       } else {
         args.push('-p', body.prompt);
       }
@@ -841,6 +1027,137 @@ export async function apiRouter(req, res, url) {
       });
 
       return;
+    }
+
+    // ── POST /api/agent/chat — conversational agent for test creation ──
+    if (method === 'POST' && path === '/api/agent/chat') {
+      const body = await readBody(req);
+      const result = await handleAgentChat(req, res, body);
+      return json(res, result.status, result.body);
+    }
+
+    // ── GET /api/projects/:id/conversations — list conversations ──
+    params = matchRoute(path, '/api/projects/:id/conversations');
+    if (method === 'GET' && params) {
+      const conversations = listConversations(parseInt(params.id, 10));
+      return json(res, 200, { conversations });
+    }
+
+    // ── GET /api/conversations/:id — get conversation with messages ──
+    params = matchRoute(path, '/api/conversations/:id');
+    if (method === 'GET' && params) {
+      const conversation = getConversation(parseInt(params.id, 10));
+      if (!conversation) return json(res, 404, { error: 'Conversation not found' });
+      return json(res, 200, conversation);
+    }
+
+    // ── DELETE /api/conversations/:id — delete conversation ──
+    if (method === 'DELETE' && params) {
+      const ok = deleteConversation(parseInt(params.id, 10));
+      if (!ok) return json(res, 404, { error: 'Conversation not found' });
+      return json(res, 200, { success: true });
+    }
+
+    // ── GET /api/stats — aggregated dashboard statistics ──
+    if (method === 'GET' && path === '/api/stats') {
+      const projectId = url.searchParams.get('project_id');
+
+      // Build WHERE clause for project filtering
+      let testWhere = '';
+      let execWhere = '';
+      const queryParams = [];
+      if (projectId && projectId !== 'null') {
+        testWhere = ' WHERE t.project_id = ?';
+        execWhere = ' WHERE e.test_id IN (SELECT id FROM tests WHERE project_id = ?)';
+        queryParams.push(projectId);
+      }
+
+      // Test counts
+      const testCount = db.prepare(
+        `SELECT COUNT(*) AS total FROM tests t${testWhere}`
+      ).get(...queryParams);
+
+      // Execution summary
+      const execSummary = db.prepare(
+        `SELECT
+           COUNT(*) AS total_executions,
+           SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS passed,
+           SUM(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+           SUM(CASE WHEN e.status = 'running' THEN 1 ELSE 0 END) AS running,
+           ROUND(AVG(e.duration_ms)) AS avg_duration_ms,
+           SUM(e.assertions_total) AS assertions_total,
+           SUM(e.assertions_passed) AS assertions_passed,
+           SUM(e.assertions_failed) AS assertions_failed
+         FROM test_executions e${execWhere}`
+      ).get(...queryParams);
+
+      // Recent tests (last 10)
+      const recentTests = db.prepare(
+        `SELECT t.name, t.description, t.project_id, t.updated_at, COUNT(ts.id) AS step_count
+         FROM tests t
+         LEFT JOIN test_steps ts ON ts.test_id = t.id
+         ${testWhere}
+         GROUP BY t.id
+         ORDER BY t.updated_at DESC
+         LIMIT 10`
+      ).all(...queryParams);
+
+      // Recent executions (last 20)
+      const recentExecutions = db.prepare(
+        `SELECT e.id, e.test_name, e.status, e.started_at, e.finished_at, e.duration_ms,
+                e.total_steps, e.completed_steps, e.error,
+                e.assertions_total, e.assertions_passed, e.assertions_failed
+         FROM test_executions e${execWhere}
+         ORDER BY e.started_at DESC
+         LIMIT 20`
+      ).all(...queryParams);
+
+      // Execution trend — daily counts for last 30 days
+      const execTrend = db.prepare(
+        `SELECT
+           DATE(e.started_at) AS date,
+           COUNT(*) AS total,
+           SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS passed,
+           SUM(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS failed
+         FROM test_executions e${execWhere}
+         ${execWhere ? 'AND' : 'WHERE'} e.started_at >= DATE('now', '-30 days')
+         GROUP BY DATE(e.started_at)
+         ORDER BY date ASC`
+      ).all(...queryParams);
+
+      // Top flaky tests (tests with both pass and fail in last 30 days)
+      const flakyTests = db.prepare(
+        `SELECT e.test_name,
+                COUNT(*) AS total_runs,
+                SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS pass_count,
+                SUM(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS fail_count
+         FROM test_executions e${execWhere}
+         ${execWhere ? 'AND' : 'WHERE'} e.started_at >= DATE('now', '-30 days')
+         GROUP BY e.test_name
+         HAVING fail_count > 0 AND pass_count > 0
+         ORDER BY fail_count DESC
+         LIMIT 5`
+      ).all(...queryParams);
+
+      return json(res, 200, {
+        tests: {
+          total: testCount.total,
+          recent: recentTests,
+        },
+        executions: {
+          total: execSummary.total_executions || 0,
+          passed: execSummary.passed || 0,
+          failed: execSummary.failed || 0,
+          running: execSummary.running || 0,
+          avg_duration_ms: execSummary.avg_duration_ms || 0,
+          assertions_total: execSummary.assertions_total || 0,
+          assertions_passed: execSummary.assertions_passed || 0,
+          assertions_failed: execSummary.assertions_failed || 0,
+          recent: recentExecutions,
+          trend: execTrend,
+          flaky: flakyTests,
+        },
+      });
     }
 
     return json(res, 404, { error: 'API route not found' });

@@ -1,6 +1,6 @@
 # Troubleshooting 🔧
 
-Ce guide vous aide à résoudre les problèmes courants avec Browser Pilot.
+Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
 
 ---
 
@@ -18,7 +18,7 @@ Ce guide vous aide à résoudre les problèmes courants avec Browser Pilot.
    - Cliquez sur "Charger l'extension non empaquetée" et sélectionnez le dossier `extension/`
 
 2. **L'extension n'est pas connectée au serveur**
-   - Cliquez sur l'icône Browser Pilot dans la barre Chrome
+   - Cliquez sur l'icône IziTest Agent dans la barre Chrome
    - Vérifiez que le statut affiche "Connected" (vert)
    - Si "Disconnected", cliquez sur "Reconnect"
 
@@ -39,7 +39,7 @@ Ce guide vous aide à résoudre les problèmes courants avec Browser Pilot.
 
 ### "MCP server not found" / Claude ne voit pas les outils
 
-**Symptôme** : Les outils Browser Pilot n'apparaissent pas dans Claude.
+**Symptôme** : Les outils IziTest Agent n'apparaissent pas dans Claude.
 
 **Solutions** :
 
@@ -47,10 +47,10 @@ Ce guide vous aide à résoudre les problèmes courants avec Browser Pilot.
    ```json
    {
      "mcpServers": {
-       "browser-pilot": {
+       "izitest-agent": {
          "command": "node",
          "args": [
-           "/CHEMIN/ABSOLU/vers/browser-pilot/mcp-server/server.js",
+           "/CHEMIN/ABSOLU/vers/izitest-agent/mcp-server/server.js",
            "--stdio"
          ]
        }
@@ -63,7 +63,7 @@ Ce guide vous aide à résoudre les problèmes courants avec Browser Pilot.
 
 3. **Vérifiez les permissions** :
    ```bash
-   ls -la /chemin/vers/browser-pilot/mcp-server/server.js
+   ls -la /chemin/vers/izitest-agent/mcp-server/server.js
    ```
 
 4. **Testez le serveur manuellement** :
@@ -79,7 +79,7 @@ Ce guide vous aide à résoudre les problèmes courants avec Browser Pilot.
 
 **Vérifications** :
 
-1. **Le navigateur est-il ouvert ?** Browser Pilot contrôle une instance Chrome existante
+1. **Le navigateur est-il ouvert ?** IziTest Agent contrôle une instance Chrome existante
 2. **Le bon profil est-il sélectionné ?** Utilisez `list_profiles` pour vérifier
 3. **La page est-elle chargée ?** Attendez que la page charge avant d'interagir
 
@@ -102,7 +102,7 @@ Ce guide vous aide à résoudre les problèmes courants avec Browser Pilot.
    "Attends que .mon-element apparaisse"
    ```
 
-3. **Vérifiez les iframes** : Browser Pilot ne peut pas accéder aux éléments dans des iframes cross-origin
+3. **Vérifiez les iframes** : IziTest Agent ne peut pas accéder aux éléments dans des iframes cross-origin
 
 4. **Éléments dynamiques** : Utilisez `snapshot(includeHidden=true)` pour les menus déroulants, modals, etc.
 
@@ -206,7 +206,7 @@ Si tout semble bloqué :
 
 # 2. Tuez les processus en cours
 killall "Google Chrome"
-pkill -f "browser-pilot"
+pkill -f "izitest-agent"
 
 # 3. Vérifiez les ports
 lsof -i :3456,3457

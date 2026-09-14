@@ -161,8 +161,8 @@ async function executeStepsInDebugMode(
     const singleStepParams = {
       steps: [step],
       startIndex: 0,
-      newWindow: actionIndex === 0 ? newWindow : false,
-      ...(actionIndex === 0 && viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {}),
+      newWindow: actionIndex === startIndex ? newWindow : false,
+      ...(actionIndex === startIndex && viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {}),
     };
     if (lastTabId) {
       singleStepParams.tabId = lastTabId;

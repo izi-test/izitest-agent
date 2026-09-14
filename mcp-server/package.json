@@ -1,7 +1,7 @@
 {
   "name": "browser-pilot-mcp",
   "version": "1.0.0",
-  "description": "MCP server + WebSocket bridge for Browser Pilot",
+  "description": "MCP server + WebSocket bridge for IziTest Agent",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -13,6 +13,9 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.52",
+    "@cucumber/cucumber-expressions": "^19.0.0",
+    "@cucumber/gherkin": "^39.0.0",
+    "@cucumber/messages": "^32.2.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@openrouter/sdk": "^0.11.2",
     "ai": "^6.0.156",

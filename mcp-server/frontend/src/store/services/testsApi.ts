@@ -113,6 +113,32 @@ export const testsApi = createApi({
       }),
       invalidatesTags: [{ type: 'TestList', id: 'LIST' }],
     }),
+
+    getTestFeature: builder.query<string, string>({
+      query: (name) => ({
+        url: `api/tests/${encodeURIComponent(name)}/feature`,
+        responseHandler: (response) => response.text(),
+      }),
+      providesTags: (_result, _error, name) => [{ type: 'Test', id: name }],
+    }),
+
+    putTestFeature: builder.mutation<{ success: boolean; step_count: number }, { testName: string; feature: string }>({
+      query: ({ testName, feature }) => ({
+        url: `api/tests/${encodeURIComponent(testName)}/feature`,
+        method: 'PUT',
+        body: { feature },
+      }),
+      invalidatesTags: (_result, _error, { testName }) => [{ type: 'Test', id: testName }],
+    }),
+
+    getTestCodegen: builder.query<
+      { framework: string; files: { path: string; content: string }[] },
+      { testName: string; framework: 'playwright-plain' | 'playwright-cucumber' }
+    >({
+      query: ({ testName, framework }) =>
+        `api/tests/${encodeURIComponent(testName)}/codegen?framework=${framework}`,
+      providesTags: (_result, _error, { testName }) => [{ type: 'Test', id: testName }],
+    }),
   }),
 });
 
@@ -127,4 +153,7 @@ export const {
   useDeleteStepMutation,
   useReorderStepsMutation,
   useAssignToProjectMutation,
+  useGetTestFeatureQuery,
+  usePutTestFeatureMutation,
+  useGetTestCodegenQuery,
 } = testsApi;

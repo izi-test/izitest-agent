@@ -1,5 +1,5 @@
 #!/bin/bash
-# Browser Pilot — Launch Chrome with a named profile
+# IziTest Agent — Launch Chrome with a named profile
 # Usage: ./launch-profile.sh <profile-name>
 # Each profile gets its own user data directory = isolated cookies, sessions, history
 
@@ -21,7 +21,7 @@ fi
 echo "Launching Chrome profile: $PROFILE_NAME"
 echo "User data dir: $PROFILE_DIR"
 echo ""
-echo "IMPORTANT: Install the Browser Pilot extension in this profile:"
+echo "IMPORTANT: Install the IziTest Agent extension in this profile:"
 echo "  1. Go to chrome://extensions"
 echo "  2. Enable Developer Mode"
 echo "  3. Click 'Load unpacked'"

@@ -1,4 +1,4 @@
-// Browser Pilot — Content Script
+// IziTest Agent — Content Script
 // Injected into every page to enable deep DOM interaction
 
 import { buildSnapshot, resolveRef, drawAnnotations, clearAnnotations, SnapshotOptions } from './dom/snapshot';

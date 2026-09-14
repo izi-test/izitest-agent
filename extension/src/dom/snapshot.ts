@@ -177,7 +177,7 @@ export function drawAnnotations() {
 
   const banner = document.createElement('div');
   banner.className = 'bp-banner';
-  banner.textContent = `Browser Pilot: ${refMap.size} refs`;
+  banner.textContent = `IziTest Agent: ${refMap.size} refs`;
   shadow.appendChild(banner);
 
   document.documentElement.appendChild(host);
@@ -410,19 +410,196 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
   };
 
   const isDynamicId = (id: string): boolean => {
-    // React, Angular, Radix, Ember, etc. generated IDs
     if (/react-aria|radix-|ember|ng-|_r_|rc-|headlessui-/i.test(id)) return true;
-    // IDs with 4+ consecutive digits (likely auto-generated)
     if (/\d{4,}/.test(id)) return true;
-    // UUID-like patterns
     if (/^[a-f0-9-]{8,}$/i.test(id)) return true;
-    // Colon-separated IDs (e.g. :r1:, :r2a:)
     if (/^:.*:$/.test(id)) return true;
     return false;
   };
 
+  // ── Dynamic class detection ──────────────────────────────────────────
+  const isDynamicClass = (cls: string): boolean => {
+    // Tailwind/utility — these are fine, but single-char or hash-based are not
+    if (/^[a-z]{1,2}\d+$/i.test(cls)) return true;           // e.g. "a0", "b12"
+    if (/^_/.test(cls)) return true;                          // CSS modules: _1a2b3c
+    if (/^css-/.test(cls)) return true;                       // Emotion: css-1a2b3c
+    if (/^sc-/.test(cls)) return true;                        // styled-components
+    if (/^styles?_/.test(cls)) return true;                   // CSS modules variant
+    if (/[A-Za-z0-9]{6,}$/.test(cls) && /[_-]/.test(cls) && /\d/.test(cls)) return true; // hash suffix
+    if (/^[a-f0-9]{5,}$/i.test(cls)) return true;            // pure hex hashes
+    if (/^jsx-\d+$/.test(cls)) return true;                   // styled-jsx
+    if (/^go\d+$/.test(cls)) return true;                     // Goober
+    return false;
+  };
+
+  // ── Uniqueness helpers ───────────────────────────────────────────────
+  const isUniqueCSS = (selector: string): boolean => {
+    try {
+      return document.querySelectorAll(selector).length === 1;
+    } catch { return false; }
+  };
+
+  const isUniqueXPath = (xpath: string): boolean => {
+    try {
+      const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+      return result.snapshotLength === 1;
+    } catch { return false; }
+  };
+
+  // ── Robust CSS selector builder ──────────────────────────────────────
+  // Strategy order:
+  //   1. #stableId
+  //   2. [data-testid="..."]
+  //   3. tag[semantic-attr="value"] (name, placeholder, aria-label, alt, for, title, type+name)
+  //   4. tag.stableClass (single or pair of non-dynamic classes)
+  //   5. Shortest unique ancestor path (walk up, at each level try to anchor)
+  //   6. Structural fallback (full child-combinator path)
   const buildSelector = (el: Element): string => {
+    const tag = el.tagName.toLowerCase();
+
+    // 1. Stable ID
     if (el.id && !isDynamicId(el.id)) return `#${CSS.escape(el.id)}`;
+
+    // 2. data-testid / data-test-id / data-cy
+    for (const attr of ['data-testid', 'data-test-id', 'data-cy']) {
+      const val = el.getAttribute(attr);
+      if (val) {
+        const sel = `[${attr}="${CSS.escape(val)}"]`;
+        if (isUniqueCSS(sel)) return sel;
+      }
+    }
+
+    // 3. Semantic attribute selectors
+    const semanticAttrs: Array<[string, string | null]> = [
+      ['name', el.getAttribute('name')],
+      ['placeholder', el.getAttribute('placeholder')],
+      ['aria-label', el.getAttribute('aria-label')],
+      ['alt', el.getAttribute('alt')],
+      ['for', el.getAttribute('for')],
+      ['title', el.getAttribute('title')],
+      ['role', el.getAttribute('role')],
+      ['href', tag === 'a' ? el.getAttribute('href') : null],
+      ['type', tag === 'input' ? el.getAttribute('type') : null],
+    ];
+
+    for (const [attr, val] of semanticAttrs) {
+      if (!val) continue;
+      // For href, use startsWith match to handle long URLs
+      if (attr === 'href' && val.length > 60) {
+        const shortHref = CSS.escape(val.slice(0, 50));
+        const sel = `${tag}[href^="${shortHref}"]`;
+        if (isUniqueCSS(sel)) return sel;
+        continue;
+      }
+      const sel = `${tag}[${attr}="${CSS.escape(val)}"]`;
+      if (isUniqueCSS(sel)) return sel;
+    }
+
+    // For inputs: combine type + name for uniqueness
+    if (tag === 'input') {
+      const type = el.getAttribute('type');
+      const nameA = el.getAttribute('name');
+      if (type && nameA) {
+        const sel = `input[type="${CSS.escape(type)}"][name="${CSS.escape(nameA)}"]`;
+        if (isUniqueCSS(sel)) return sel;
+      }
+    }
+
+    // 4. Stable class-based selectors
+    const classes = Array.from(el.classList).filter(c => !isDynamicClass(c));
+    if (classes.length > 0) {
+      // Try single class first
+      for (const cls of classes) {
+        const sel = `${tag}.${CSS.escape(cls)}`;
+        if (isUniqueCSS(sel)) return sel;
+      }
+      // Try pairs of classes
+      if (classes.length >= 2) {
+        for (let i = 0; i < Math.min(classes.length, 4); i++) {
+          for (let j = i + 1; j < Math.min(classes.length, 5); j++) {
+            const sel = `${tag}.${CSS.escape(classes[i])}.${CSS.escape(classes[j])}`;
+            if (isUniqueCSS(sel)) return sel;
+          }
+        }
+      }
+    }
+
+    // 5. Shortest unique path: walk up the tree, at each ancestor try to build
+    //    a short selector that uniquely identifies the target
+    {
+      let target = el;
+      let childPart = tag;
+      // Disambiguate at target level with class or nth-of-type
+      const targetClasses = classes.length > 0 ? `.${CSS.escape(classes[0])}` : '';
+      if (targetClasses) {
+        const withClass = `${tag}${targetClasses}`;
+        if (isUniqueCSS(withClass)) return withClass;
+        childPart = withClass;
+      }
+
+      let current: Element | null = el.parentElement;
+      let depth = 0;
+      const MAX_CLIMB = 5;
+
+      while (current && current !== document.body && current !== document.documentElement && depth < MAX_CLIMB) {
+        depth++;
+        let anchorParts: string[] = [];
+        const pTag = current.tagName.toLowerCase();
+
+        // Try to anchor on ancestor's ID
+        if (current.id && !isDynamicId(current.id)) {
+          const sel = `#${CSS.escape(current.id)} ${childPart}`;
+          if (isUniqueCSS(sel)) return sel;
+          // Try with direct child combinator
+          if (depth === 1) {
+            const directSel = `#${CSS.escape(current.id)} > ${childPart}`;
+            if (isUniqueCSS(directSel)) return directSel;
+          }
+        }
+
+        // Try ancestor's data-testid
+        for (const attr of ['data-testid', 'data-test-id', 'data-cy']) {
+          const aVal = current.getAttribute(attr);
+          if (aVal) {
+            const sel = `[${attr}="${CSS.escape(aVal)}"] ${childPart}`;
+            if (isUniqueCSS(sel)) return sel;
+          }
+        }
+
+        // Try ancestor's semantic attributes
+        const anchorAttrs: Array<[string, string | null]> = [
+          ['aria-label', current.getAttribute('aria-label')],
+          ['name', current.getAttribute('name')],
+          ['role', current.getAttribute('role')],
+        ];
+        for (const [attr, val] of anchorAttrs) {
+          if (!val) continue;
+          const sel = `${pTag}[${attr}="${CSS.escape(val)}"] ${childPart}`;
+          if (isUniqueCSS(sel)) return sel;
+        }
+
+        // Try ancestor's stable classes
+        const pClasses = Array.from(current.classList).filter(c => !isDynamicClass(c));
+        for (const cls of pClasses.slice(0, 3)) {
+          const sel = `${pTag}.${CSS.escape(cls)} ${childPart}`;
+          if (isUniqueCSS(sel)) return sel;
+        }
+
+        // Build childPart for next iteration (prepend this ancestor's tag)
+        const siblings = Array.from(current.parentElement?.children || []).filter(e => e.tagName === current!.tagName);
+        let anchorTag = pTag;
+        if (pClasses.length > 0) {
+          anchorTag = `${pTag}.${CSS.escape(pClasses[0])}`;
+        } else if (siblings.length > 1) {
+          anchorTag = `${pTag}:nth-of-type(${siblings.indexOf(current) + 1})`;
+        }
+        childPart = `${anchorTag} > ${childPart}`;
+
+        current = current.parentElement;
+      }
+    }
+
+    // 6. Structural fallback (last resort — full path with nth-of-type)
     let current = el;
     const path: string[] = [];
     while (current && current !== document.body) {
@@ -443,16 +620,143 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     return path.join(' > ');
   };
 
+  // ── Robust XPath builder ─────────────────────────────────────────────
+  // Strategy order:
+  //   1. //*[@id="stableId"]
+  //   2. //tag[@data-testid="..."]
+  //   3. //tag[@semantic-attr="value"]
+  //   4. //tag[normalize-space()="short text"] (for buttons, links, labels)
+  //   5. Relative from nearest identifiable ancestor
+  //   6. Positional fallback
   const buildXPath = (el: Element): string => {
+    const tag = el.tagName.toLowerCase();
+
+    // 1. Stable ID
     if (el.id && !isDynamicId(el.id) && !el.id.includes('"') && !el.id.includes("'")) {
       return `//*[@id="${el.id}"]`;
     }
-    if (el.tagName.toLowerCase() === 'html') return '/html';
-    if (el.tagName.toLowerCase() === 'body') return '/html/body';
-    
+
+    if (tag === 'html') return '/html';
+    if (tag === 'body') return '/html/body';
+
+    // 2. data-testid
+    for (const attr of ['data-testid', 'data-test-id', 'data-cy']) {
+      const val = el.getAttribute(attr);
+      if (val && !val.includes('"')) {
+        const xp = `//${tag}[@${attr}="${val}"]`;
+        if (isUniqueXPath(xp)) return xp;
+      }
+    }
+
+    // 3. Semantic attribute XPath
+    const semanticAttrs: Array<[string, string | null]> = [
+      ['name', el.getAttribute('name')],
+      ['placeholder', el.getAttribute('placeholder')],
+      ['aria-label', el.getAttribute('aria-label')],
+      ['alt', el.getAttribute('alt')],
+      ['title', el.getAttribute('title')],
+      ['for', el.getAttribute('for')],
+    ];
+
+    for (const [attr, val] of semanticAttrs) {
+      if (!val || val.includes('"')) continue;
+      const xp = `//${tag}[@${attr}="${val}"]`;
+      if (isUniqueXPath(xp)) return xp;
+    }
+
+    // For inputs: combine type + name
+    if (tag === 'input') {
+      const type = el.getAttribute('type');
+      const nameA = el.getAttribute('name');
+      if (type && nameA && !type.includes('"') && !nameA.includes('"')) {
+        const xp = `//input[@type="${type}"][@name="${nameA}"]`;
+        if (isUniqueXPath(xp)) return xp;
+      }
+    }
+
+    // 4. Text-based XPath (only for short, stable text on interactive elements)
+    const interactiveTags = ['button', 'a', 'label', 'th', 'summary', 'legend'];
+    if (interactiveTags.includes(tag) || el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link') {
+      const text = el.textContent?.trim().replace(/\s+/g, ' ');
+      if (text && text.length > 0 && text.length < 60 && !text.includes('"')) {
+        // Exact text match
+        const xp = `//${tag}[normalize-space()="${text}"]`;
+        if (isUniqueXPath(xp)) return xp;
+        // Contains match for slightly longer text
+        if (text.length > 20) {
+          const shortText = text.slice(0, 25);
+          if (!shortText.includes('"')) {
+            const xpContains = `//${tag}[contains(normalize-space(),"${shortText}")]`;
+            if (isUniqueXPath(xpContains)) return xpContains;
+          }
+        }
+      }
+    }
+
+    // 5. Relative from nearest identifiable ancestor
+    let ancestor: Element | null = el.parentElement;
+    let relDepth = 0;
+    const MAX_ANCESTOR_CLIMB = 5;
+
+    while (ancestor && ancestor !== document.body && ancestor !== document.documentElement && relDepth < MAX_ANCESTOR_CLIMB) {
+      relDepth++;
+      let anchorXPath = '';
+      const aTag = ancestor.tagName.toLowerCase();
+
+      // Anchor on ID
+      if (ancestor.id && !isDynamicId(ancestor.id) && !ancestor.id.includes('"')) {
+        anchorXPath = `//*[@id="${ancestor.id}"]`;
+      }
+      // Anchor on data-testid
+      if (!anchorXPath) {
+        for (const attr of ['data-testid', 'data-test-id', 'data-cy']) {
+          const aVal = ancestor.getAttribute(attr);
+          if (aVal && !aVal.includes('"')) {
+            anchorXPath = `//${aTag}[@${attr}="${aVal}"]`;
+            break;
+          }
+        }
+      }
+      // Anchor on aria-label
+      if (!anchorXPath) {
+        const ariaL = ancestor.getAttribute('aria-label');
+        if (ariaL && !ariaL.includes('"')) {
+          anchorXPath = `//${aTag}[@aria-label="${ariaL}"]`;
+        }
+      }
+
+      if (anchorXPath && isUniqueXPath(anchorXPath)) {
+        // Try descendant axis with just the tag
+        let relXp = `${anchorXPath}//${tag}`;
+        if (isUniqueXPath(relXp)) return relXp;
+
+        // Try with an attribute on the target
+        for (const [attr, val] of semanticAttrs) {
+          if (!val || val.includes('"')) continue;
+          relXp = `${anchorXPath}//${tag}[@${attr}="${val}"]`;
+          if (isUniqueXPath(relXp)) return relXp;
+        }
+
+        // Try with position among same-tag descendants
+        const descendants = document.evaluate(
+          `${anchorXPath}//${tag}`, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+        );
+        for (let i = 0; i < descendants.snapshotLength; i++) {
+          if (descendants.snapshotItem(i) === el) {
+            relXp = `(${anchorXPath}//${tag})[${i + 1}]`;
+            if (isUniqueXPath(relXp)) return relXp;
+            break;
+          }
+        }
+      }
+
+      ancestor = ancestor.parentElement;
+    }
+
+    // 6. Positional fallback (full path)
     let current: Element | null = el;
     const path: string[] = [];
-    
+
     while (current && current !== document.body && current !== document.documentElement) {
       let part = current.tagName.toLowerCase();
       let index = 1;
@@ -461,11 +765,11 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
         if (sibling.tagName === current.tagName) index++;
         sibling = sibling.previousElementSibling;
       }
-      
+
       const hasSameTagSiblings = index > 1 || Array.from(current.parentElement?.children || []).some(
         e => e !== current && e.tagName === current!.tagName
       );
-      
+
       if (hasSameTagSiblings) {
         part += `[${index}]`;
       }
@@ -475,71 +779,76 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     return `/html/body/${path.join('/')}`;
   };
 
+  // ── Locator builder ──────────────────────────────────────────────────
   const buildLocators = (el: Element, name: string, role: string): Array<{type: string, value: string}> => {
     const locators: Array<{type: string, value: string}> = [];
     const tag = el.tagName.toLowerCase();
+    const seen = new Set<string>();
 
-    // 1. ARIA-based (accessible name)
-    // L'ancien système mettait tout sous "text", ici on le passe en "aria" (plus descriptif)
-    if (name && name.length > 0 && name.length < 100) {
-      locators.push({ type: 'aria', value: name });
-    }
-
-    // 2. Strict Text Content
-    // Utile pour p-text dans Puppeteer
-    const textContent = el.textContent?.trim();
-    if (textContent && textContent.length > 0 && textContent.length < 100) {
-      // On évite les doublons si textContent == name, sinon on l'ajoute comme locator de texte
-      if (textContent !== name) {
-        locators.push({ type: 'text', value: textContent });
-      } else if (!locators.some(l => l.type === 'text')) {
-        // Même si égal à name, on l'ajoute explicitement sous "text" pour que le replay Puppeteer ait le choix
-        locators.push({ type: 'text', value: textContent });
+    const addLocator = (type: string, value: string) => {
+      const key = `${type}::${value}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        locators.push({ type, value });
       }
-    }
+    };
 
-    // 3. data-testid (très stable, ajouté par les devs)
+    // 1. data-testid (most stable — developer-intentional)
     const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-cy');
     if (testId) {
-      locators.push({ type: 'testid', value: `[data-testid="${CSS.escape(testId)}"]` });
+      addLocator('testid', `[data-testid="${CSS.escape(testId)}"]`);
     }
 
-    // 4. Attributs Spécifiques (name, alt, placeholder)
+    // 2. Stable ID
+    if (el.id && !isDynamicId(el.id)) {
+      addLocator('css', `#${CSS.escape(el.id)}`);
+    }
+
+    // 3. ARIA / accessible name
+    if (name && name.length > 0 && name.length < 100) {
+      addLocator('aria', name);
+    }
+
+    // 4. Semantic attributes
     const nameAttr = el.getAttribute('name');
     if (nameAttr) {
-      locators.push({ type: 'attribute', value: `${tag}[name="${CSS.escape(nameAttr)}"]` });
-    }
-
-    const altAttr = el.getAttribute('alt');
-    if (altAttr) {
-      locators.push({ type: 'attribute', value: `${tag}[alt="${CSS.escape(altAttr)}"]` });
+      addLocator('attribute', `${tag}[name="${CSS.escape(nameAttr)}"]`);
     }
 
     const placeholder = el.getAttribute('placeholder');
     if (placeholder) {
-      locators.push({ type: 'placeholder', value: placeholder });
-      locators.push({ type: 'attribute', value: `${tag}[placeholder="${CSS.escape(placeholder)}"]` });
+      addLocator('placeholder', placeholder);
+      addLocator('attribute', `${tag}[placeholder="${CSS.escape(placeholder)}"]`);
     }
 
     const ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel) {
-      locators.push({ type: 'attribute', value: `${tag}[aria-label="${CSS.escape(ariaLabel)}"]` });
+      addLocator('attribute', `${tag}[aria-label="${CSS.escape(ariaLabel)}"]`);
     }
 
-    // 5. Stable ID selector
-    if (el.id && !isDynamicId(el.id)) {
-      locators.push({ type: 'css', value: `#${CSS.escape(el.id)}` });
+    const altAttr = el.getAttribute('alt');
+    if (altAttr) {
+      addLocator('attribute', `${tag}[alt="${CSS.escape(altAttr)}"]`);
     }
 
-    // 6. CSS selector (structurel)
+    const titleAttr = el.getAttribute('title');
+    if (titleAttr && titleAttr.length < 100) {
+      addLocator('attribute', `${tag}[title="${CSS.escape(titleAttr)}"]`);
+    }
+
+    // 5. Text content
+    const textContent = el.textContent?.trim().replace(/\s+/g, ' ');
+    if (textContent && textContent.length > 0 && textContent.length < 100) {
+      addLocator('text', textContent);
+    }
+
+    // 6. CSS selector (robust algorithm)
     const cssSelector = buildSelector(el);
-    if (!locators.some(l => l.type === 'css' && l.value === cssSelector)) {
-      locators.push({ type: 'css', value: cssSelector });
-    }
+    addLocator('css', cssSelector);
 
-    // 7. XPath
+    // 7. XPath (robust algorithm)
     const xpath = buildXPath(el);
-    locators.push({ type: 'xpath', value: xpath });
+    addLocator('xpath', xpath);
 
     return locators;
   };

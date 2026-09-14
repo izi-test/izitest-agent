@@ -1,6 +1,6 @@
 # Multi-Account Management 👥
 
-One of the core strengths of Browser Pilot is its ability to handle multiple Chrome profiles simultaneously. Each profile is completely isolated, with its own:
+One of the core strengths of IziTest Agent is its ability to handle multiple Chrome profiles simultaneously. Each profile is completely isolated, with its own:
 - **Cookies & Sessions** (stay logged into different accounts)
 - **Browser History**
 - **Extensions** (must be installed in each profile)
@@ -40,7 +40,7 @@ Claude will automatically include the `profile` parameter in MCP tool calls if y
 - `"Sur le profil youtube-work, va sur youtube.com/studio"`
 - `"Remplis le formulaire sur le profil youtube-personal"`
 
-If you don't specify a profile, Browser Pilot will default to the first one that connected to the bridge.
+If you don't specify a profile, IziTest Agent will default to the first one that connected to the bridge.
 
 ---
 

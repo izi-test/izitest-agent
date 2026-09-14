@@ -6,6 +6,8 @@ import { testsApi } from './services/testsApi';
 import { executionsApi } from './services/executionsApi';
 import { projectsApi } from './services/projectsApi';
 import { settingsApi } from './services/settingsApi';
+import { chatApi } from './services/chatApi';
+import { statsApi } from './services/statsApi';
 
 export const store = configureStore({
   reducer: {
@@ -16,13 +18,17 @@ export const store = configureStore({
     [executionsApi.reducerPath]: executionsApi.reducer,
     [projectsApi.reducerPath]: projectsApi.reducer,
     [settingsApi.reducerPath]: settingsApi.reducer,
+    [chatApi.reducerPath]: chatApi.reducer,
+    [statsApi.reducerPath]: statsApi.reducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware()
       .concat(testsApi.middleware)
       .concat(executionsApi.middleware)
       .concat(projectsApi.middleware)
-      .concat(settingsApi.middleware),
+      .concat(settingsApi.middleware)
+      .concat(chatApi.middleware)
+      .concat(statsApi.middleware),
 });
 
 export type RootState = ReturnType<typeof store.getState>;

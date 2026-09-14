@@ -17,12 +17,12 @@ export const projectsApi = createApi({
       providesTags: [{ type: 'ProjectList', id: 'LIST' }],
     }),
 
-    createProject: builder.mutation<{ id: number; name: string }, { name: string; description?: string }>({
+    createProject: builder.mutation<{ id: number; name: string }, { name: string; description?: string; context?: string; project_type?: string; base_url?: string }>({
       query: (body) => ({ url: 'api/projects', method: 'POST', body }),
       invalidatesTags: [{ type: 'ProjectList', id: 'LIST' }],
     }),
 
-    updateProject: builder.mutation<void, { id: number; name?: string; description?: string }>({
+    updateProject: builder.mutation<void, { id: number; name?: string; description?: string; context?: string; project_type?: string; base_url?: string }>({
       query: ({ id, ...body }) => ({
         url: `api/projects/${id}`,
         method: 'PUT',

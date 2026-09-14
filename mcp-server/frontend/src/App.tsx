@@ -1,20 +1,34 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from './store/hooks';
-import { setView, setSelectedProjectId, showToast, navigateToDetail, navigateToList } from './store/slices/uiSlice';
+import { showToast, setSelectedProjectId } from './store/slices/uiSlice';
+import { setActiveTab } from './store/slices/testDetailSlice';
 import { TestList } from './components/TestList';
 import { TestDetail } from './components/TestDetail';
 import { Settings } from './components/Settings';
 import { Toast } from './components/Toast';
 import { ConfirmModal } from './components/ConfirmModal';
 import { CreateTestModal } from './components/CreateTestModal';
-import { ProjectSelector } from './components/ProjectSelector';
+import { ProjectSwitcher, ProjectSelector } from './components/ProjectSelector';
+import { ChatPanel } from './components/ChatPanel';
+import { Dashboard } from './components/Dashboard';
 import { Button } from './components/Button';
-import { FlaskConical, Plus, Settings as SettingsIcon } from 'lucide-react';
+import { useGetTestsQuery } from './store/services/testsApi';
+import {
+  FlaskConical,
+  Plus,
+  MessageSquare,
+  Settings as SettingsIcon,
+  LayoutDashboard,
+  BarChart3,
+} from 'lucide-react';
 
-export default function App() {
+function AppLayout({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const dispatch = useAppDispatch();
-  const { view, currentTestName, selectedProjectId } = useAppSelector(state => state.ui);
-
+  const selectedProjectId = useAppSelector(state => state.ui.selectedProjectId);
+  const { data: tests = [] } = useGetTestsQuery(selectedProjectId);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [confirmData, setConfirmData] = useState<{isOpen: boolean, message: string, onConfirm: () => void} | null>(null);
@@ -23,30 +37,43 @@ export default function App() {
     setShowCreateModal(true);
   };
 
-  const handleTestCreated = (testName: string, projectId: number | null) => {
-    dispatch(showToast({ message: 'Test created by AI agent' }));
+  const handleTestCreated = (testName: string, _projectId: number | null, mode: 'ai' | 'gherkin' = 'ai') => {
+    dispatch(showToast({
+      message: mode === 'gherkin' ? 'Test created from Gherkin' : 'Test created by AI agent',
+    }));
     setShowCreateModal(false);
-    if (projectId !== undefined && projectId !== selectedProjectId) {
-      dispatch(setSelectedProjectId(projectId));
-    }
-    dispatch(navigateToDetail(testName));
+    dispatch(setActiveTab(mode === 'gherkin' ? 'gherkin' : 'steps'));
+    navigate(`/tests/${encodeURIComponent(testName)}`);
   };
 
+  const isChat = location.pathname === '/chat';
+  const isSettings = location.pathname === '/settings';
+  const showSidebar = !isChat && !isSettings;
 
+  const isDashboard = location.pathname === '/';
+  const isListActive = location.pathname === '/tests' || location.pathname.startsWith('/projects');
+  const isChatActive = location.pathname === '/chat';
 
   return (
     <>
       <header className="header">
         <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <FlaskConical size={28} color="var(--accent)" />
-          <h1>Browser Pilot</h1>
+          <h1>IziTest Agent</h1>
           <span className="version-badge">Tests</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Button variant="primary" icon={Plus} onClick={handleNewTest}>
             New Test
           </Button>
-          <button className="header-icon-btn" onClick={() => dispatch(setView('Settings'))} title="Settings">
+          <button
+            className={`header-icon-btn ${isChatActive ? 'active' : ''}`}
+            onClick={() => navigate(isChatActive ? '/tests' : '/chat')}
+            title="Chat with AI"
+          >
+            <MessageSquare size={20} />
+          </button>
+          <button className="header-icon-btn" onClick={() => navigate('/settings')} title="Settings">
             <SettingsIcon size={20} />
           </button>
         </div>
@@ -55,29 +82,41 @@ export default function App() {
       <Toast />
 
       <div className="app-layout">
-        {view === 'List' && (
+        {showSidebar && (
           <aside className="sidebar">
-            <ProjectSelector />
+            <div className="sidebar-top">
+              <ProjectSwitcher />
+            </div>
+
+            <nav className="sidebar-nav">
+              <div className="sidebar-nav__label">Menu</div>
+
+              <button
+                className={`sidebar-nav__item ${isDashboard ? 'active' : ''}`}
+                onClick={() => navigate('/')}
+              >
+                <BarChart3 size={18} />
+                <span>Dashboard</span>
+              </button>
+
+              <button
+                className={`sidebar-nav__item ${isListActive ? 'active' : ''}`}
+                onClick={() => navigate(selectedProjectId ? `/projects/${selectedProjectId}` : '/tests')}
+              >
+                <LayoutDashboard size={18} />
+                <span>Tests</span>
+                <span className="sidebar-nav__badge">{tests.length}</span>
+              </button>
+            </nav>
+
+            <div className="sidebar-bottom">
+              <ProjectSelector />
+            </div>
           </aside>
         )}
 
         <main className="main-content">
-          {view === 'List' && (
-            <TestList
-              onOpenDetail={(name) => dispatch(navigateToDetail(name))}
-            />
-          )}
-
-          {view === 'Detail' && currentTestName && (
-            <TestDetail
-              testName={currentTestName}
-              onBack={() => dispatch(navigateToList())}
-            />
-          )}
-
-          {view === 'Settings' && (
-            <Settings onBack={() => dispatch(setView('List'))} />
-          )}
+          {children}
         </main>
       </div>
 
@@ -97,4 +136,63 @@ export default function App() {
       />
     </>
   );
+}
+
+export default function App() {
+  return (
+    <AppLayout>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/tests" element={<TestListPage />} />
+        <Route path="/projects/:projectId" element={<TestListPage />} />
+        <Route path="/tests/:testName" element={<TestDetailPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AppLayout>
+  );
+}
+
+/* ── Route pages ── */
+
+function TestListPage() {
+  const navigate = useNavigate();
+  const dispatch = useAppDispatch();
+  const { projectId } = useParams();
+
+  // Sync URL project param with Redux state
+  useEffect(() => {
+    const numericProjectId = projectId ? Number(projectId) : null;
+    dispatch(setSelectedProjectId(numericProjectId));
+  }, [projectId, dispatch]);
+
+  return <TestList onOpenDetail={(name) => navigate(`/tests/${encodeURIComponent(name)}`)} />;
+}
+
+function TestDetailPage() {
+  const navigate = useNavigate();
+  const { testName } = useParams();
+  const selectedProjectId = useAppSelector(state => state.ui.selectedProjectId);
+
+  if (!testName) return <Navigate to="/" replace />;
+
+  const backPath = selectedProjectId ? `/projects/${selectedProjectId}` : '/tests';
+
+  return (
+    <TestDetail
+      testName={decodeURIComponent(testName)}
+      onBack={() => navigate(backPath)}
+    />
+  );
+}
+
+function SettingsPage() {
+  const navigate = useNavigate();
+  return <Settings onBack={() => navigate('/tests')} />;
+}
+
+function ChatPage() {
+  const navigate = useNavigate();
+  return <ChatPanel onBack={() => navigate('/tests')} />;
 }

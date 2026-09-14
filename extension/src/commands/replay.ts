@@ -48,7 +48,7 @@ export async function cmdReplaySequence(
 
   // When a tabId is provided (e.g. debug step-by-step mode), ensure the target
   // tab is focused before executing. The user may have clicked Resume/Step in
-  // the Browser Pilot UI, shifting focus away from the test target window.
+  // the IziTest Agent UI, shifting focus away from the test target window.
   if (currentTabId) {
     try {
       const tab = await chrome.tabs.get(currentTabId);

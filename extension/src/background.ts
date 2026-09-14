@@ -1,4 +1,4 @@
-// Browser Pilot — Background Service Worker
+// IziTest Agent — Background Service Worker
 // Connects to the bridge server via WebSocket and executes browser commands
 // Actions use Chrome DevTools Protocol (CDP) for native input simulation
 
