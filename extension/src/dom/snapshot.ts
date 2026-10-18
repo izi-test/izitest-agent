@@ -1,3 +1,5 @@
+import { describeBlocker, frameLevels, hitTestThroughFrames, type FrameLevel } from './hit-test';
+
 export type SnapshotPurpose = 'fill' | 'click' | 'read';
 
 export interface SnapshotOptions {
@@ -12,6 +14,21 @@ export interface SnapshotOptions {
   inlineFrames?: boolean;
   purposeFilter?: SnapshotPurpose;
   searchText?: string;
+  // Treat named cursor:pointer elements as interactive (div/li click handlers: autocomplete
+  // suggestions, custom dropdown options, SPA "buttons"). Only the OUTERMOST pointer element
+  // of a nested chain counts — cursor is inherited, so every descendant would match too.
+  pointerInteractive?: boolean;
+  // Also return a short digest of visible headings / alerts / dialogs (see SnapshotResult.digest).
+  textDigest?: boolean;
+  // Lowest ref number to hand out to an element that has none yet. A cross-origin iframe
+  // snapshots itself in its own frame, numbering after the page's refs so every @eN stays
+  // unique across the merged tree.
+  refStart?: number;
+  // The page frame: when this document has never been snapshotted (a new page), number from
+  // @e1 again instead of from refStart.
+  restartIfFresh?: boolean;
+  // Forget every ref of this frame first: the page around it has changed.
+  resetRefs?: boolean;
 }
 
 export interface Locator {
@@ -34,64 +51,318 @@ export interface SnapshotResult {
   timestamp: number;
   refs?: Record<string, RefNodeInfo>;
   tree: string;
+  viewport?: { w: number; h: number; scrollY: number; pageH: number };
+  /** The ref number after the last one handed out — where the next frame's numbering starts. */
+  nextRef?: number;
+  /** This document had no refs before this snapshot: every ref of an earlier page is void. */
+  freshRefs?: boolean;
+  // Visible headings, alerts, status messages and dialog titles — what the page SAYS,
+  // for callers that otherwise only see interactive elements.
+  digest?: string[];
 }
 
-// Global store for the current snapshot refs
+// ─── Refs ────────────────────────────────────────────────────────────
+//
+// An element keeps its ref for as long as it stays on the page: a second snapshot, with
+// another filter or none, names it with the same @eN. Refs used to be renumbered on every
+// snapshot, so a ref read before another snapshot silently pointed at nothing — or at a
+// different element. New elements get numbers above every number handed out so far, so a
+// number is never reused for something else while the page lives.
 declare global {
   interface Window {
     __browserPilotRefMap?: Map<string, Element>;
+    __browserPilotRefOf?: WeakMap<Element, string>;
+    /** Refs whose element has left the page: a click on one is told it is stale. */
+    __browserPilotRetiredRefs?: Set<string>;
+    __browserPilotNextRef?: number;
   }
 }
 
-function initRefMap() {
-  if (!window.__browserPilotRefMap) {
+/** Ready the ref registry for a snapshot. True when this document had none (a new page). */
+function prepareRefRegistry(reset: boolean): boolean {
+  const fresh = !window.__browserPilotRefMap || reset;
+  if (fresh) {
     window.__browserPilotRefMap = new Map();
-  } else {
-    window.__browserPilotRefMap.clear();
+    window.__browserPilotRefOf = new WeakMap();
+    window.__browserPilotRetiredRefs = new Set();
+    window.__browserPilotNextRef = 1;
+    return true;
   }
+  // Holding a removed element would keep its whole detached subtree alive.
+  for (const [ref, el] of window.__browserPilotRefMap!) {
+    if (!el.isConnected) {
+      window.__browserPilotRefMap!.delete(ref);
+      window.__browserPilotRetiredRefs!.add(ref);
+    }
+  }
+  return false;
 }
 
-export async function resolveRef(ref: string): Promise<{ x: number; y: number; tag: string; text: string } | null> {
+/** Why a ref cannot be used, or null when it can. */
+export function refProblem(ref: string): string | null {
+  const el = window.__browserPilotRefMap?.get(ref);
+  if (el?.isConnected) return null;
+  if (el || window.__browserPilotRetiredRefs?.has(ref)) {
+    return `Stale ref ${ref}: the element it named has been removed from the page (it re-rendered or ` +
+      `changed). Take a new snapshot and use the ref it gives.`;
+  }
+  return `Stale ref ${ref}: it does not belong to the page now in the tab (it came from a page that ` +
+    `has since navigated or reloaded, or was never handed out). Take a new snapshot.`;
+}
+
+/**
+ * Locate an element by CSS selector or visible text and return where to click it.
+ *
+ * Same contract as resolveRef, and the same reason for existing: measuring from inside the
+ * page is reliable, whereas page.evaluate() through the extension transport can land on a
+ * stale execution context and see an empty document.
+ */
+export async function locateElement(
+  by: { selector?: string; text?: string },
+  options: MeasureOptions = {}
+): Promise<ClickTarget | null> {
+  // The page and every same-origin iframe in it, outermost first: the snapshot already
+  // shows what is inside those frames, so a click by selector or text has to reach it too.
+  const docs = searchableDocuments();
+  let el: Element | null = null;
+
+  if (by.selector) {
+    for (const doc of docs) {
+      el = doc.querySelector(by.selector);
+      if (el) break;
+    }
+  } else if (by.text) {
+    const wanted = by.text.trim();
+    // Prefer a leaf whose whole text matches, the way a person points at a label.
+    outer: for (const doc of docs) {
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Element;
+        if (node.children.length === 0 && node.textContent?.trim() === wanted) { el = node; break outer; }
+      }
+    }
+    if (!el) {
+      for (const doc of docs) {
+        el = [...doc.querySelectorAll('button,a,input[type="submit"],input[type="button"],[role="button"]')]
+          .find((e) => e.textContent?.trim().includes(wanted)) ?? null;
+        if (el) break;
+      }
+    }
+  }
+
+  if (!el) return null;
+  return measureForClick(el, options);
+}
+
+/**
+ * Choose an option in a native <select>, found by snapshot ref or by CSS selector — in the
+ * page or in a same-origin iframe.
+ *
+ * Done here rather than through page.evaluate(), which only sees the top frame and can land
+ * on a stale execution context. No click either: clicking a native <select> opens its
+ * dropdown, and focus is all a framework needs to see the change as a user's.
+ */
+export function selectOption(
+  by: { ref?: string; selector?: string },
+  value: string,
+  matchBy: 'text' | 'value' = 'text'
+): { success: true; selectedValue: string; selectedText: string } | { success: false; error: string } {
+  let el: Element | null = null;
+  if (by.ref) {
+    el = window.__browserPilotRefMap?.get(by.ref) ?? null;
+    if (!el) return { success: false, error: `Ref not found: ${by.ref} — take a new snapshot` };
+  } else if (by.selector) {
+    for (const doc of searchableDocuments()) {
+      el = doc.querySelector(by.selector);
+      if (el) break;
+    }
+    if (!el) return { success: false, error: `Select element not found: ${by.selector}` };
+  }
+  // A ref may point at a wrapper or at an option; the control is the nearest <select>.
+  const select = (el?.tagName === 'SELECT' ? el : el?.closest('select')) as HTMLSelectElement | null;
+  if (!select) return { success: false, error: `Element is not a <select>: ${el?.tagName ?? 'nothing'}` };
+
+  const options = Array.from(select.options);
+  const exact = options.find((o) => matchBy === 'value'
+    ? o.value === value
+    : o.text.trim() === value || o.textContent?.trim() === value);
+  const lower = value.toLowerCase();
+  const partial = !exact && matchBy === 'text'
+    ? options.find((o) => o.text.trim().toLowerCase().includes(lower) || o.textContent?.trim().toLowerCase().includes(lower))
+    : undefined;
+  const option = exact ?? partial;
+  if (!option) {
+    const available = options.map((o) => `"${o.text.trim()}" (value="${o.value}")`).join(', ');
+    return { success: false, error: `No option matching "${value}" (by ${matchBy}). Available: ${available}` };
+  }
+
+  select.focus();
+  select.value = option.value;
+  // So frameworks (React, Vue, Angular) pick the change up.
+  select.dispatchEvent(new Event('input', { bubbles: true }));
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  return { success: true, selectedValue: option.value, selectedText: option.text.trim() };
+}
+
+/** This document and the documents of its same-origin iframes, recursively. */
+function searchableDocuments(): Document[] {
+  const docs: Document[] = [];
+  const visit = (doc: Document) => {
+    docs.push(doc);
+    for (const frame of doc.querySelectorAll('iframe, frame')) {
+      let inner: Document | null = null;
+      try {
+        inner = (frame as HTMLIFrameElement).contentDocument; // null when cross-origin
+      } catch {
+        inner = null;
+      }
+      if (inner?.body) visit(inner);
+    }
+  };
+  visit(document);
+  return docs;
+}
+
+export async function resolveRef(ref: string, options: MeasureOptions = {}): Promise<ClickTarget | null> {
   const el = window.__browserPilotRefMap?.get(ref);
   if (!el) return null;
-
-  // Check if the element is already visible in the viewport — avoid
-  // scrollIntoView for dropdown/overlay items that are already on screen,
-  // because scrolling the page can displace absolutely-positioned overlays.
-  let rect = el.getBoundingClientRect();
-  const inViewport =
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.top >= 0 &&
-    rect.left >= 0 &&
-    rect.bottom <= window.innerHeight &&
-    rect.right <= window.innerWidth;
-
-  if (!inViewport) {
-    (el as HTMLElement).scrollIntoView({ behavior: 'instant', block: 'center' });
-    // Wait for layout to settle after scrolling
-    await new Promise(r => setTimeout(r, 50));
-    rect = el.getBoundingClientRect();
-  }
-
-  if (rect.width === 0 || rect.height === 0) return null;
-
-  return {
-    x: Math.round(rect.x + rect.width / 2),
-    y: Math.round(rect.y + rect.height / 2),
-    tag: el.tagName.toLowerCase(),
-    text: el.textContent?.slice(0, 50) || ''
-  };
+  return measureForClick(el, options);
 }
 
-export function drawAnnotations() {
+export interface ClickTarget {
+  x: number;
+  y: number;
+  tag: string;
+  text: string;
+  /** The page scrolled: the caller should let it settle and measure again. */
+  scrolled?: boolean;
+  /** Set when something else is on top of the target at (x, y): what it is. */
+  coveredBy?: string;
+}
+
+interface MeasureOptions {
+  /**
+   * First measurement of a click: if the target is covered, scroll it to the centre and
+   * report `scrolled` instead of a verdict — a sticky header or a fixed bar often stops
+   * covering it once it is centred. The follow-up measurement passes false and decides.
+   */
+  uncover?: boolean;
+}
+
+function measureForClick(el: Element, { uncover = false }: MeasureOptions = {}): ClickTarget | null {
+  // An element inside a same-origin iframe measures itself against that iframe, so its
+  // position is shifted by every frame it sits in. levels carries those offsets.
+  let levels = frameLevels(el as never, document as never);
+  if (!levels) {
+    return { x: 0, y: 0, tag: el.tagName.toLowerCase(), text: el.textContent?.slice(0, 50) || '',
+      coveredBy: 'a cross-origin frame around it, which this extension cannot see into' };
+  }
+
+  // Visible means visible in its own frame AND, once placed on the page, in the window —
+  // avoid scrollIntoView for dropdown/overlay items that are already on screen, because
+  // scrolling the page can displace absolutely-positioned overlays.
+  const isInView = (lv: FrameLevel[]): boolean => {
+    const r = el.getBoundingClientRect();
+    const own = el.ownerDocument.defaultView ?? window;
+    const inOwnFrame = r.width > 0 && r.height > 0 && r.top >= 0 && r.left >= 0 &&
+      r.bottom <= own.innerHeight && r.right <= own.innerWidth;
+    const { originX, originY } = lv[lv.length - 1];
+    const onPage = r.top + originY >= 0 && r.left + originX >= 0 &&
+      r.bottom + originY <= window.innerHeight && r.right + originX <= window.innerWidth;
+    return inOwnFrame && onPage;
+  };
+
+  const inViewport = isInView(levels);
+  if (!inViewport) {
+    // Also scrolls the frames around it into view.
+    (el as HTMLElement).scrollIntoView({ behavior: 'instant', block: 'center' });
+    // NO timer here: this runs in the page, and Chrome clamps page timers to ~1s when the
+    // window is hidden or covered — which is the normal case for a piloted window. A 50ms
+    // settle wait became ~1.2s per action. The caller (service worker, not throttled)
+    // waits and asks again when `scrolled` is set.
+    levels = frameLevels(el as never, document as never) ?? levels;
+  }
+
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return null;
+
+  const { originX, originY } = levels[levels.length - 1];
+  const target = {
+    x: Math.round(originX + rect.x + rect.width / 2),
+    y: Math.round(originY + rect.y + rect.height / 2),
+    tag: el.tagName.toLowerCase(),
+    text: el.textContent?.slice(0, 50) || '',
+  };
+
+  // Just scrolled on a first measurement: positions may still move. Let the caller settle
+  // and ask again before deciding anything about what covers what. (On the follow-up the
+  // instant scroll above has already been laid out, so a verdict is safe.)
+  if (!inViewport && uncover) return { ...target, scrolled: true };
+
+  // What the page will actually deliver the click to, followed through every frame on the
+  // way. Without this the tool reported success with the target's name while a banner, a
+  // sticky header or an image took the click — the agent believed it had clicked, and
+  // nothing had happened.
+  const verdict = hitTestThroughFrames(levels, target.x, target.y);
+  if (verdict.ok) return { ...target, scrolled: false };
+
+  // A link that wraps onto two lines has the centre of its box between the lines — on its
+  // parent (a <th> on Wikipedia), which was then reported as covering it. Each line box of
+  // the element is a place a person could click: try their centres before saying "covered".
+  for (const box of Array.from(el.getClientRects())) {
+    if (box.width < 1 || box.height < 1) continue;
+    const x = Math.round(originX + box.x + box.width / 2);
+    const y = Math.round(originY + box.y + box.height / 2);
+    if (hitTestThroughFrames(levels, x, y).ok) return { ...target, x, y, scrolled: false };
+  }
+
+  if (uncover) {
+    (el as HTMLElement).scrollIntoView({ behavior: 'instant', block: 'center' });
+    return { ...target, scrolled: true };
+  }
+  return { ...target, scrolled: false, coveredBy: describeBlocker(verdict.blocker) };
+}
+
+/**
+ * Outline every ref of this frame's last snapshot, for an annotated screenshot.
+ *
+ * Each box is drawn in the document that holds its element. An element inside a same-origin
+ * iframe measures itself against that iframe's viewport: drawn on the page, its box landed
+ * at the page's top-left instead of on the iframe. Drawn in the iframe's own document it is
+ * placed and clipped by the iframe itself. Cross-origin frames draw their own (cmdScreenshot
+ * asks each of them); `banner` is for the top frame only, counting their refs as `extraRefs`.
+ */
+export function drawAnnotations(options: { banner?: boolean; extraRefs?: number } = {}): number {
   clearAnnotations();
+
+  const refMap = window.__browserPilotRefMap || new Map<string, Element>();
+  const byDoc = new Map<Document, [string, Element][]>();
+  refMap.forEach((el, ref) => {
+    if (!el.isConnected) return;
+    const list = byDoc.get(el.ownerDocument) ?? [];
+    list.push([ref, el]);
+    byDoc.set(el.ownerDocument, list);
+  });
+
+  for (const [doc, entries] of byDoc) drawLayer(doc, entries);
+  if (options.banner !== false) {
+    const total = refMap.size + (options.extraRefs ?? 0);
+    drawLayer(document, [], `IziTest Agent: ${total} refs`);
+  }
+  return refMap.size;
+}
+
+const ANNOTATION_ID = 'browser-pilot-annotations';
+
+function annotationLayer(doc: Document): ShadowRoot {
+  const existing = doc.getElementById(ANNOTATION_ID);
+  if (existing?.shadowRoot) return existing.shadowRoot;
 
   // Use a Shadow DOM host to completely isolate annotations from the page's CSS.
   // Sites like lacentrale.fr have aggressive CSS rules (resets, flex overrides,
   // overflow:hidden) that break plain div overlays.
-  const host = document.createElement('browser-pilot-annotations');
-  host.id = 'browser-pilot-annotations';
+  const host = doc.createElement('browser-pilot-annotations');
+  host.id = ANNOTATION_ID;
   // Host styles must use !important to resist page-level CSS on custom elements
   host.style.cssText = [
     'position: fixed !important',
@@ -113,7 +384,7 @@ export function drawAnnotations() {
   const shadow = host.attachShadow({ mode: 'open' });
 
   // All styles scoped inside the shadow — immune to the page's CSS
-  const style = document.createElement('style');
+  const style = doc.createElement('style');
   style.textContent = `
     :host {
       all: initial !important;
@@ -152,14 +423,21 @@ export function drawAnnotations() {
     }
   `;
   shadow.appendChild(style);
+  doc.documentElement.appendChild(host);
+  return shadow;
+}
 
-  const refMap = window.__browserPilotRefMap || new Map();
-  refMap.forEach((el, ref) => {
+function drawLayer(doc: Document, entries: [string, Element][], banner?: string): void {
+  const view = doc.defaultView;
+  if (!view) return;
+  const shadow = annotationLayer(doc);
+
+  for (const [ref, el] of entries) {
     const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) return;
+    if (rect.width === 0 || rect.height === 0) continue;
+    if (rect.bottom < 0 || rect.top > view.innerHeight || rect.right < 0 || rect.left > view.innerWidth) continue;
 
-    const box = document.createElement('div');
+    const box = doc.createElement('div');
     box.className = 'bp-box';
     box.style.left = `${rect.left}px`;
     box.style.top = `${rect.top}px`;
@@ -167,35 +445,37 @@ export function drawAnnotations() {
     box.style.height = `${rect.height}px`;
     shadow.appendChild(box);
 
-    const label = document.createElement('div');
+    const label = doc.createElement('div');
     label.className = 'bp-label';
     label.style.left = `${Math.max(0, rect.left)}px`;
     label.style.top = `${Math.max(0, rect.top)}px`;
     label.textContent = ref;
     shadow.appendChild(label);
-  });
+  }
 
-  const banner = document.createElement('div');
-  banner.className = 'bp-banner';
-  banner.textContent = `IziTest Agent: ${refMap.size} refs`;
-  shadow.appendChild(banner);
-
-  document.documentElement.appendChild(host);
+  if (banner) {
+    const el = doc.createElement('div');
+    el.className = 'bp-banner';
+    el.textContent = banner;
+    shadow.appendChild(el);
+  }
 }
 
 export function clearAnnotations() {
-  const el = document.getElementById('browser-pilot-annotations');
-  if (el) el.remove();
+  for (const doc of searchableDocuments()) doc.getElementById(ANNOTATION_ID)?.remove();
 }
+
+const PAGE_TEXT_MAX_CHARS = 4000;
 
 const FILLABLE_ROLES = new Set([
   'textbox', 'combobox', 'listbox', 'checkbox', 'radio', 'slider',
   'spinbutton', 'searchbox', 'switch'
 ]);
 
+// Checkboxes and radios are clicked too — and some menus are a checkbox in disguise.
 const CLICKABLE_ROLES = new Set([
   'link', 'button', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
-  'tab', 'option', 'treeitem', 'switch', 'gridcell'
+  'tab', 'option', 'treeitem', 'switch', 'gridcell', 'checkbox', 'radio'
 ]);
 
 function matchesPurposeFilter(role: string, tag: string, purpose: SnapshotPurpose | undefined): boolean {
@@ -216,34 +496,32 @@ function matchesPurposeFilter(role: string, tag: string, purpose: SnapshotPurpos
   return true;
 }
 
-export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotResult {
-  const options = {
-    interactiveOnly: false,
-    compact: false,
-    maxDepth: 50,
-    scope: null,
-    format: 'text',
-    maxTextLength: 80,
-    includeHidden: false,
-    includeRects: false,
-    inlineFrames: true,
-    ...providedOptions
+
+const LOCATOR_BUDGET_MS = 400;
+
+/**
+ * What an action on `ref` should record: the element's role, name and locators, computed
+ * for that one element. Asked before the action, while the element is surely still there.
+ */
+export function describeRef(ref: string): RefNodeInfo | null {
+  const el = window.__browserPilotRefMap?.get(ref);
+  if (!el?.isConnected) return null;
+  const { getRole, getAccessibleName, buildSelector, buildLocators } = pageTools();
+  const role = getRole(el);
+  const name = getAccessibleName(el);
+  return {
+    role,
+    name: name.replace(/\s+/g, ' ').trim().slice(0, 80),
+    selector: buildSelector(el),
+    locators: buildLocators(el, name, role),
   };
+}
 
-  initRefMap();
-  const refMap = window.__browserPilotRefMap!;
-  let refCounter = 1;
-  const jsonRefs: Record<string, RefNodeInfo> = {};
-
-  const truncate = (text: string) => {
-    if (!text) return '';
-    const clean = text.replace(/\s+/g, ' ').trim();
-    if (clean.length > options.maxTextLength!) {
-      return clean.slice(0, options.maxTextLength! - 3) + '...';
-    }
-    return clean;
-  };
-
+/**
+ * Roles, names, visibility and locators of page elements — shared by the snapshot and by
+ * describeRef, which computes one element's locators when an action uses its ref.
+ */
+function pageTools() {
   const isCustomElement = (tag: string): boolean => tag.includes('-');
 
   // Returns true when the element AND all descendants are truly not rendered.
@@ -361,9 +639,12 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       }
     }
 
-    const htmlEl = el as HTMLElement;
-    if (el.tagName === 'IMG') return (el as HTMLImageElement).alt || htmlEl.title || '';
-    if (htmlEl.title) return htmlEl.title;
+    // The attribute, not the property: on a <form>, `.title` is whatever control is named
+    // "title" — Wikipedia's search form has one, and the snapshot crashed on the element it
+    // got back instead of a string.
+    const title = el.getAttribute('title') ?? '';
+    if (el.tagName === 'IMG') return el.getAttribute('alt') || title;
+    if (title) return title;
 
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
       const placeholder = el.getAttribute('placeholder');
@@ -852,8 +1133,56 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
 
     return locators;
   };
+  return { isCustomElement, isSubtreeHidden, isVisible, getRole, getAccessibleName, isInteractiveRole, isDynamicId, isDynamicClass, isUniqueCSS, isUniqueXPath, buildSelector, buildXPath, buildLocators };
+}
 
+export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotResult {
+  const options = {
+    interactiveOnly: false,
+    compact: false,
+    maxDepth: 50,
+    scope: null,
+    format: 'text',
+    maxTextLength: 80,
+    includeHidden: false,
+    includeRects: false,
+    inlineFrames: true,
+    ...providedOptions
+  };
+
+  const freshRefs = prepareRefRegistry(options.resetRefs === true);
+  const refMap = window.__browserPilotRefMap!;
+  const refOf = window.__browserPilotRefOf!;
+  let refCounter = freshRefs && options.restartIfFresh
+    ? 1
+    : Math.max(options.refStart ?? 1, window.__browserPilotNextRef ?? 1);
+  const refFor = (el: Element): string => {
+    const known = refOf.get(el);
+    if (known && refMap.get(known) === el) return known;
+    const ref = `@e${refCounter++}`;
+    refMap.set(ref, el);
+    refOf.set(el, ref);
+    return ref;
+  };
+  const jsonRefs: Record<string, RefNodeInfo> = {};
+  const locatorDeadline = performance.now() + LOCATOR_BUDGET_MS;
+
+  const truncate = (text: string) => {
+    if (!text) return '';
+    const clean = String(text).replace(/\s+/g, ' ').trim();
+    if (clean.length > options.maxTextLength!) {
+      return clean.slice(0, options.maxTextLength! - 3) + '...';
+    }
+    return clean;
+  };
+
+  const { isCustomElement, isSubtreeHidden, isVisible, getRole, getAccessibleName, isInteractiveRole, isDynamicId, isDynamicClass, isUniqueCSS, isUniqueXPath, buildSelector, buildXPath, buildLocators } = pageTools();
   const treeLines: string[] = [];
+  /** Interactive elements and iframes listed: none, and the page's text is shown instead. */
+  let actionable = 0;
+  const digest: string[] = [];
+  const DIGEST_MAX_ITEMS = 15;
+  const DIGEST_MAX_CHARS = 120;
 
   const traverse = (el: Element, depth: number) => {
     if (depth > options.maxDepth!) return;
@@ -872,6 +1201,31 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       if (!isNaN(ti) && ti >= 0) interactive = true;
     }
 
+    // Opt-in (pointerInteractive): a NAMED element whose cursor is 'pointer' while its
+    // parent's is not — the outermost element of a clickable region built without semantic
+    // markup. The parent check also drops the inside of links/styled buttons (inherited cursor).
+    // Known limit: when the pointer cursor is set on a whole list container rather than on
+    // its items, only the container is reported.
+    let pointerOnly = false;
+    if (!interactive && options.pointerInteractive && name && tag !== 'body' && tag !== 'html') {
+      if (window.getComputedStyle(el).cursor === 'pointer') {
+        const parent = el.parentElement;
+        if (!parent || window.getComputedStyle(parent).cursor !== 'pointer') {
+          interactive = true;
+          pointerOnly = true;
+        }
+      }
+    }
+
+    if (options.textDigest && digest.length < DIGEST_MAX_ITEMS) {
+      const isHeading = role === 'heading' && ['h1', 'h2', 'h3'].includes(tag);
+      const isAnnouncement = ['alert', 'status', 'dialog', 'alertdialog'].includes(role);
+      if ((isHeading || isAnnouncement) && isVisible(el)) {
+        const text = (name || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, DIGEST_MAX_CHARS);
+        if (text) digest.push(`${isHeading ? tag : role}: ${text}`);
+      }
+    }
+
     let skipNodeRender = false;
 
     // Element-level visibility: don't render this node but still traverse children.
@@ -888,8 +1242,12 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       skipNodeRender = true;
     }
 
-    // Purpose-based filtering: skip elements that don't match the intended action
-    if (!skipNodeRender && providedOptions.purposeFilter && providedOptions.purposeFilter !== 'read') {
+    // Purpose-based filtering: skip elements that don't match the intended action.
+    // A search looks through every interactive element whatever the filter: a menu built on
+    // a checkbox ("Mon idealo" on idealo.fr) is clicked, but it is no button, and
+    // purposeFilter "click" + searchText hid the very element the agent was looking for.
+    const searchedAnyway = !!providedOptions.searchText && interactive;
+    if (!skipNodeRender && !searchedAnyway && providedOptions.purposeFilter && providedOptions.purposeFilter !== 'read') {
       if (!matchesPurposeFilter(role, tag, providedOptions.purposeFilter)) {
         skipNodeRender = true;
       }
@@ -907,12 +1265,14 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
         crossOrigin = true;
       }
 
-      const ref = `@e${refCounter++}`;
-      refMap.set(ref, el);
+      const ref = refFor(el);
+      actionable++;
       const indent = '  '.repeat(depth);
-      const frameName = name || iframe.name || iframe.title || 'iframe';
+      const frameName = name || iframe.getAttribute('name') || iframe.getAttribute('title') || 'iframe';
       
-      treeLines.push(`${indent}${ref} [iframe] "${truncate(frameName)}"${crossOrigin ? ' [cross-origin]' : ''}`);
+      // Its address: what execute_js's `frame` can name it by, and a hint of what it holds.
+      const src = iframe.src && !iframe.src.startsWith('about:') ? ` src="${truncate(iframe.src)}"` : '';
+      treeLines.push(`${indent}${ref} [iframe] "${truncate(frameName)}"${crossOrigin ? ' [cross-origin]' : ''}${src}`);
       
       if (!crossOrigin && iframeDoc && iframeDoc.body) {
         traverse(iframeDoc.body, depth + 1);
@@ -921,8 +1281,8 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     }
 
     if (!skipNodeRender && tag !== 'body') {
-      const ref = `@e${refCounter++}`;
-      refMap.set(ref, el);
+      const ref = refFor(el);
+      if (interactive) actionable++;
 
       const indent = '  '.repeat(depth);
       let line = `${indent}${ref} [${role}]`;
@@ -982,7 +1342,9 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       }
 
       // cursor=pointer indicates clickable non-semantic elements (divs, spans with click handlers)
-      if (!interactive) {
+      if (pointerOnly) {
+        line += ` [cursor=pointer]`;
+      } else if (!interactive) {
         const cursor = window.getComputedStyle(el).cursor;
         if (cursor === 'pointer') line += ` [cursor=pointer]`;
       }
@@ -1020,12 +1382,15 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
         }
       }
 
-      // Always build ref mapping (needed for workflow recording)
+      // Always build ref mapping (needed for workflow recording). Locators check their
+      // uniqueness against the whole document, so their cost grows with the square of the
+      // page: Wikipedia's "France" article (6,000+ links) took over 30 s. Past the budget they
+      // are left out; an action on a ref computes its own element's (describeRef).
+      const withLocators = performance.now() < locatorDeadline;
       const refInfo: RefNodeInfo = {
         role,
         name: truncate(name),
-        selector: buildSelector(el),
-        locators: buildLocators(el, name, role)
+        ...(withLocators ? { selector: buildSelector(el), locators: buildLocators(el, name, role) } : {}),
       };
       if (role === 'heading') {
          const level = parseInt(tag.replace('h', ''), 10);
@@ -1076,6 +1441,17 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     });
   }
 
+  // A page with nothing to act on — raw JSON, a plain-text file, an error page — still says
+  // something. "No elements found" left the agent believing the page was empty, and a JSON
+  // body showed as one [generic] line cut at 80 characters.
+  if (actionable === 0 && !options.scope && !providedOptions.searchText) {
+    const text = (document.body?.innerText ?? '').trim();
+    if (text) {
+      treeLines.push(`[page text] (no elements to act on; ${text.length} chars${text.length > PAGE_TEXT_MAX_CHARS ? `, first ${PAGE_TEXT_MAX_CHARS} shown — use extract for the rest` : ''})`);
+      treeLines.push(text.slice(0, PAGE_TEXT_MAX_CHARS));
+    }
+  }
+
   // ─── Post-filter: searchText ──────────────────────────────────────
   let filteredTreeLines = treeLines;
   let filteredRefs = jsonRefs;
@@ -1093,14 +1469,10 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       if (match) matchedRefIds.add(match[1]);
     }
 
-    // Filter refs to only matched ones and clean refMap
+    // Only the matched refs are returned; the others stay valid (refs outlive a snapshot).
     filteredRefs = {};
     for (const [key, value] of Object.entries(jsonRefs)) {
-      if (matchedRefIds.has(key)) {
-        filteredRefs[key] = value;
-      } else {
-        refMap.delete(`@${key}`);
-      }
+      if (matchedRefIds.has(key)) filteredRefs[key] = value;
     }
   }
 
@@ -1109,8 +1481,18 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     title: document.title,
     timestamp: Date.now(),
     refs: filteredRefs,
-    tree: filteredTreeLines.join('\n')
+    tree: filteredTreeLines.join('\n'),
+    viewport: {
+      w: window.innerWidth,
+      h: window.innerHeight,
+      scrollY: Math.round(window.scrollY),
+      pageH: document.documentElement.scrollHeight
+    },
+    ...(options.textDigest ? { digest } : {}),
+    nextRef: refCounter,
+    freshRefs,
   };
+  window.__browserPilotNextRef = refCounter;
 
   return result;
 }

@@ -1,8 +1,9 @@
 // IziTest Agent — Content Script
 // Injected into every page to enable deep DOM interaction
 
-import { buildSnapshot, resolveRef, drawAnnotations, clearAnnotations, SnapshotOptions } from './dom/snapshot';
+import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, selectOption } from './dom/snapshot';
 import FindSimilarElements from './utils/FindSimilarElements';
+import { announceToParent, listenForHops } from './dom/frame-hop';
 
 (() => {
   // Helper: build a stable CSS selector for an element (for serialization)
@@ -30,6 +31,8 @@ import FindSimilarElements from './utils/FindSimilarElements';
     return parts.join(' > ') || el.tagName.toLowerCase();
   }
 
+  listenForHops();
+
   chrome.runtime.onMessage.addListener((
     message: Record<string, unknown>,
     _sender: chrome.runtime.MessageSender,
@@ -37,6 +40,12 @@ import FindSimilarElements from './utils/FindSimilarElements';
   ) => {
     if (message.type === 'ping') {
       sendResponse({ alive: true, url: window.location.href });
+    }
+
+    if (message.type === 'announce_to_parent') {
+      const point = typeof message.x === 'number' && typeof message.y === 'number'
+        ? { x: message.x as number, y: message.y as number } : undefined;
+      sendResponse({ sent: announceToParent(message.token as string, point, message.uncover === true) });
     }
 
     if (message.type === 'get_snapshot') {
@@ -49,13 +58,30 @@ import FindSimilarElements from './utils/FindSimilarElements';
       }
     }
 
+    if (message.type === 'describe_ref') {
+      try {
+        sendResponse({ success: true, info: describeRef(message.ref as string) });
+      } catch (error) {
+        sendResponse({ success: false, error: String(error) });
+      }
+    }
+
     if (message.type === 'resolve_ref') {
-      resolveRef(message.ref as string)
+      const problem = refProblem(message.ref as string);
+      if (problem) {
+        sendResponse({ success: false, error: problem, stale: true });
+        return true;
+      }
+      resolveRef(message.ref as string, { uncover: message.uncover === true })
         .then(result => {
           if (result) {
             sendResponse({ success: true, element: result });
           } else {
-            sendResponse({ success: false, error: `Ref not found or invisible: ${message.ref}` });
+            sendResponse({
+              success: false,
+              error: `Ref ${message.ref} is on the page but not visible now (hidden, collapsed, or zero-sized). ` +
+                'Open whatever contains it first, then retry.',
+            });
           }
         })
         .catch(error => {
@@ -63,10 +89,33 @@ import FindSimilarElements from './utils/FindSimilarElements';
         });
     }
 
+    if (message.type === 'locate_element') {
+      locateElement(
+        { selector: message.selector as string | undefined, text: message.text as string | undefined },
+        { uncover: message.uncover === true }
+      )
+        .then(result => {
+          if (result) sendResponse({ success: true, element: result });
+          else sendResponse({ success: false, error: `Element not found: ${message.selector || message.text}` });
+        })
+        .catch(error => sendResponse({ success: false, error: String(error) }));
+    }
+
+    if (message.type === 'select_option') {
+      sendResponse(selectOption(
+        { ref: message.ref as string | undefined, selector: message.selector as string | undefined },
+        message.value as string,
+        (message.matchBy as 'text' | 'value' | undefined) ?? 'text'
+      ));
+    }
+
     if (message.type === 'draw_annotations') {
       try {
-        drawAnnotations();
-        sendResponse({ success: true });
+        const refs = drawAnnotations({
+          banner: message.banner as boolean | undefined,
+          extraRefs: message.frameRefs as number | undefined,
+        });
+        sendResponse({ success: true, refs });
       } catch (error) {
         sendResponse({ success: false, error: String(error) });
       }

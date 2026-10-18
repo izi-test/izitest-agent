@@ -5,7 +5,7 @@ import type { Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-brows
 export const IS_MAC = navigator.userAgent.includes('Macintosh');
 export const CMD_KEY = IS_MAC ? 'Meta' : 'Control';
 
-import type { KeyboardModifier } from '../types';
+import type { KeyboardModifier, TypingMode } from '../types';
 export const MODIFIER_MAP: Record<KeyboardModifier, string> = {
   alt: 'Alt', ctrl: 'Control', meta: 'Meta', shift: 'Shift'
 };
@@ -140,12 +140,20 @@ export async function focusViaLocator(page: Page, locatorType: string, locatorVa
   }
 }
 
-export async function clearAndType(page: Page, value: string, clear = true): Promise<void> {
+export async function clearAndType(page: Page, value: string, clear = true, typing: TypingMode = 'keys'): Promise<void> {
   if (clear) {
+    // Select-all is named explicitly as an editing command. On macOS a Cmd+A sent through
+    // CDP is only a key event — Chrome does not turn it into "select all" — so the field kept
+    // its text and Backspace removed one character: "4242" then "x9" became "424x9", and
+    // fill still answered success.
     await page.keyboard.down(CMD_KEY);
-    await page.keyboard.press('a');
+    await page.keyboard.press('a', { commands: ['SelectAll'] });
     await page.keyboard.up(CMD_KEY);
     await page.keyboard.press('Backspace');
   }
-  await page.keyboard.type(value);
+  if (typing === 'insert') {
+    await page.keyboard.sendCharacter(value); // single Input.insertText
+  } else {
+    await page.keyboard.type(value);
+  }
 }

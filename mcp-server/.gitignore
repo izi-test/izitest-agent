@@ -4,3 +4,4 @@ data/*.db-shm
 data/assertion-screenshots/
 data/baselines/
 public/
+data/live/

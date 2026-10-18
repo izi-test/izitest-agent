@@ -1,6 +1,6 @@
 // Replay engine: executes a recorded workflow step sequence.
 import { getPage, detachBrowser } from '../puppeteer-client';
-import { resolveTabId, delay } from '../helpers';
+import { resolveTabId, delay, TOP_FRAME } from '../helpers';
 import { clickViaLocator, clickToggleViaHandle, focusViaLocator, clearAndType, isStaleContextError } from './page-helpers';
 import { findElementWithLocators, type ElementCondition } from './locators';
 import { resolveVariableElement, type ReplayStep } from './variable-resolver';
@@ -37,7 +37,7 @@ export function abortSequence() {
 }
 
 export async function cmdReplaySequence(
-  { steps, startIndex, newWindow, tabId, viewportWidth, viewportHeight }: ReplaySequenceParams,
+  { steps, startIndex, newWindow, tabId, sessionId, viewportWidth, viewportHeight }: ReplaySequenceParams,
   onProgress?: (data: any) => void
 ) {
   isAbortRequested = false;
@@ -89,7 +89,7 @@ export async function cmdReplaySequence(
       chrome.tabs.sendMessage(currentTabId, {
         type: 'update_overlay',
         state: { mode: 'playing', step: i + 1, totalSteps, stepName: step.intent || step.command }
-      }).catch(() => {});
+      }, { frameId: TOP_FRAME }).catch(() => {});
     }
 
     if (currentTabId) {
@@ -112,7 +112,7 @@ export async function cmdReplaySequence(
       if (step.variableResolve && step.command === 'click') {
         console.log(`  🔀 Variable resolve: ${step.variableResolve.selectionMode}="${step.variableResolve.value}"`);
 
-        const resolvedTab = await resolveTabId(baseParams.tabId);
+        const resolvedTab = await resolveTabId(baseParams.tabId, sessionId);
         const page = await getPage(resolvedTab);
         currentTabId = resolvedTab;
 
@@ -152,7 +152,7 @@ export async function cmdReplaySequence(
       if (hasLocators) {
         console.log(`  Locators available: ${step.locators!.length} (${step.locators!.map((l: Locator) => l.type).join(', ')})`);
 
-        const resolvedTab = await resolveTabId(baseParams.tabId);
+        const resolvedTab = await resolveTabId(baseParams.tabId, sessionId);
         currentTabId = resolvedTab;
 
         const elementCondition: ElementCondition =

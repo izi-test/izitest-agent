@@ -20,6 +20,19 @@ export MCP_PORT=3459
 node mcp-server/server.js
 ```
 
+### Vue en direct
+
+| Variable | Défaut | Description |
+|----------|--------|-------------|
+| `BROWSER_PILOT_LIVE` | activée | `off` coupe la vue en direct, sans possibilité de la rallumer avant le redémarrage |
+| `BROWSER_PILOT_LIVE_RECORD` | activé | `off` coupe l'enregistrement continu des sessions, sans possibilité de le rallumer avant le redémarrage |
+| `BROWSER_PILOT_LIVE_SESSION_MAX_FRAMES` | `300` | Images de flux gardées par session (les plus récentes ; les images d'action sont toutes gardées) |
+| `BROWSER_PILOT_LIVE_RECORD_INTERVAL_MS` | `1000` | Enregistrement continu coupé : écart entre deux images gardées pendant qu'un spectateur regarde |
+| `BROWSER_PILOT_LIVE_MAX_FRAMES` | `20000` | Nombre maximal d'images gardées (les plus anciennes partent d'abord) |
+| `BROWSER_PILOT_LIVE_DIR` | `mcp-server/data/live` | Dossier des images |
+
+Voir [live-view.md](live-view.md).
+
 ---
 
 ## Configuration Claude Desktop

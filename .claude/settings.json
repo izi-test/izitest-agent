@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/mcp-server/bin/ensure-server.js\" --quiet",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

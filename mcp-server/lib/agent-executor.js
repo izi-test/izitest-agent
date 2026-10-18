@@ -5,11 +5,28 @@ import { generateText, tool, stepCountIs } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { log } from './logger.js';
-import {
-  getRecording, setRecording,
-  getLastRefMap, setLastRefMap,
-  saveActionToHistory
-} from './recording.js';
+import { recordAction } from './recording.js';
+import { currentSession, runInSession, createAdHocSession, destroySession } from './session.js';
+
+// The dashboard agent gets its own session like any other agent, so a run from the web UI
+// and an agent on an MCP connection no longer share a window, refs or a recording.
+const sess = () => currentSession();
+const getRecording = () => sess().recording;
+const setRecording = (value) => { sess().recording = value; };
+const getLastRefMap = () => sess().refMap;
+// Refs outlive a snapshot (an element keeps its @eN while it stays on the page), so the
+// map grows with each snapshot — a filtered one returns only some refs — and starts over
+// when the extension reports a new page.
+const setLastRefMap = (refs, freshPage) => { const s = sess(); s.refMap = freshPage ? refs : { ...s.refMap, ...refs }; };
+// click/fill/select by ref return the element's locators, computed just before acting: keep
+// them for the recorded step, out of what the model reads.
+const learnTarget = (ref, result) => {
+  if (!result?.target) return result;
+  const { target, ...shown } = result;
+  if (ref) setLastRefMap({ [String(ref).replace('@', '')]: target }, false);
+  return shown;
+};
+const saveActionToHistory = (...args) => recordAction(sess(), ...args);
 import { classifyWithLLM, detectListContext } from './classify.js';
 import { loadTest, saveTest } from './test-store.js';
 import { evaluateAssertion } from './test-execute.js';
@@ -96,10 +113,10 @@ function formatToolError(err, toolName) {
   if (/No tab with id/i.test(msg)) {
     return `Error: ${msg}\n\nHINT: Do NOT pass any numeric id parameter. This tool operates on the active browser tab automatically. Call it again with only the documented fields (no tabId).`;
   }
-  // Stale ref: the extension wipes its refMap on every new snapshot, so
-  // clicks/fills using an @eX from an older snapshot fail here.
-  if (/Element not found:?\s*@e\d+/i.test(msg) || /Failed to resolve ref/i.test(msg)) {
-    return `Error: ${msg}\n\nHINT: This @eX ref is stale — a newer snapshot has invalidated it, or the DOM changed. Call snapshot() again with purposeFilter and searchText to get fresh refs, then retry.`;
+  // Stale ref: its element left the page (re-render, navigation). Refs survive a new
+  // snapshot otherwise, so this means the page itself changed.
+  if (/Stale ref/i.test(msg) || /Element not found:?\s*@e\d+/i.test(msg) || /Failed to resolve ref/i.test(msg)) {
+    return `Error: ${msg}\n\nHINT: This @eX ref is stale — the element it named is no longer on the page. Call snapshot() again with purposeFilter and searchText to get fresh refs, then retry.`;
   }
   if (/Element not found/i.test(msg)) {
     return `Error: ${msg}\n\nHINT: The selector did not match. Try snapshot(purposeFilter="click"|"fill", searchText="...") to find the right element and use its @eX ref.`;
@@ -123,8 +140,8 @@ function formatToolError(err, toolName) {
 //   2. KEEP-LAST-ONLY — for tools whose output becomes stale the moment the
 //      tool is called again (snapshot/screenshot/execute_js/extract), ONLY
 //      the most recent call keeps its full output. This prevents the agent
-//      from reusing stale @eX refs from an older snapshot (the extension's
-//      refMap is cleared on every new snapshot, so old refs always fail).
+//      from reusing stale @eX refs from an older snapshot (an element keeps its
+//      ref, but one that left the page since does not).
 //
 // This runs via `prepareStep` BEFORE each model call, so the SDK's own
 // history (to which tools append) is left intact; we only rewrite the copy
@@ -275,7 +292,11 @@ function buildTools(sendCommand) {
       }),
       execute: async ({ url, intent }) => {
         try {
-          const result = await sendCommand(undefined, 'navigate', { url });
+          // First navigate of the run opens this session's own window, rather than
+          // hijacking whichever tab happens to be active (possibly another agent's).
+          const isNewSession = sess().lastTabId === undefined;
+          const result = await sendCommand(undefined, 'navigate', { url, newWindow: isNewSession });
+          sess().adoptTab(result?.tabId, result?.windowId);
           let screenshotBase64 = null;
           if (getRecording()?.use_vrt) {
             try { const s = await sendCommand(undefined, 'screenshot', { annotate: false }); if (s?.dataUrl) screenshotBase64 = s.dataUrl; } catch(e) {}
@@ -296,7 +317,7 @@ function buildTools(sendCommand) {
       }),
       execute: async ({ selector, text, ref, intent }) => {
         try {
-          const result = await sendCommand(undefined, 'click', { selector, text, ref });
+          const result = learnTarget(ref, await sendCommand(undefined, 'click', { selector, text, ref }));
           let screenshotBase64 = null;
           if (getRecording()?.use_vrt) {
             try { const s = await sendCommand(undefined, 'screenshot', { annotate: false }); if (s?.dataUrl) screenshotBase64 = s.dataUrl; } catch(e) {}
@@ -318,7 +339,7 @@ function buildTools(sendCommand) {
       }),
       execute: async ({ selector, value, ref, clear, intent }) => {
         try {
-          const result = await sendCommand(undefined, 'fill', { selector, value, ref, clear });
+          const result = learnTarget(ref, await sendCommand(undefined, 'fill', { selector, value, ref, clear }));
           let screenshotBase64 = null;
           if (getRecording()?.use_vrt) {
             try { const s = await sendCommand(undefined, 'screenshot', { annotate: false }); if (s?.dataUrl) screenshotBase64 = s.dataUrl; } catch(e) {}
@@ -340,7 +361,7 @@ function buildTools(sendCommand) {
       }),
       execute: async ({ selector, value, ref, matchBy, intent }) => {
         try {
-          const result = await sendCommand(undefined, 'select', { selector, value, ref, matchBy });
+          const result = learnTarget(ref, await sendCommand(undefined, 'select', { selector, value, ref, matchBy }));
           let screenshotBase64 = null;
           if (getRecording()?.use_vrt) {
             try { const s = await sendCommand(undefined, 'screenshot', { annotate: false }); if (s?.dataUrl) screenshotBase64 = s.dataUrl; } catch(e) {}
@@ -390,7 +411,7 @@ function buildTools(sendCommand) {
             compact: compact ?? true, format: 'text', purposeFilter, searchText, includeHidden
           });
           if (!result?.tree) return 'Snapshot failed — no elements found. Try different filters or searchText.';
-          if (result.refs) setLastRefMap(result.refs);
+          if (result.refs) setLastRefMap(result.refs, result.freshRefs);
           const refCount = result.refs ? Object.keys(result.refs).length : 0;
           const MAX = 25000;
           let tree = result.tree;
@@ -408,7 +429,7 @@ function buildTools(sendCommand) {
       execute: async () => {
         try {
           const snapResult = await sendCommand(undefined, 'snapshot', { interactiveOnly: true, compact: true, format: 'text' });
-          if (snapResult?.refs) setLastRefMap(snapResult.refs);
+          if (snapResult?.refs) setLastRefMap(snapResult.refs, snapResult.freshRefs);
           await sendCommand(undefined, 'screenshot', { annotate: true });
           const refCount = snapResult?.refs ? Object.keys(snapResult.refs).length : 0;
           return `Screenshot taken. DOM mapping (${refCount} elements):\n${snapResult?.tree || '(no mapping)'}`;
@@ -726,13 +747,36 @@ RULES:
 // ─── Agent executor ────────────────────────────────────────────────
 
 export async function runAgent(config, prompt, sendCommand, onProgress, signal) {
+  const session = createAdHocSession('dashboard-agent');
+  try {
+    return await runInSession(session, {}, () =>
+      runAgentInSession(config, prompt, sendCommand, onProgress, signal, session));
+  } finally {
+    destroySession(session.id);
+  }
+}
+
+async function runAgentInSession(config, prompt, rawSendCommand, onProgress, signal, session) {
   const { model: modelName, apiKey } = config;
+  // Pin every command to this run's own window, exactly like the MCP tools do.
+  const sendCommand = (profile, command, params, ...rest) =>
+    rawSendCommand(profile, command, session.scope(params), ...rest);
 
   log(`[Agent] Starting: ${modelName}`);
   onProgress({ type: 'chunk', text: `Using ${modelName}\n\n` });
 
   const model = createModel(modelName, apiKey);
-  const tools = buildTools(sendCommand);
+
+  // Per-step timing: browser time is measured around sendCommand, and whatever
+  // is left of the step's wall time is the LLM round trip (+ SDK overhead).
+  // Parallel tool calls overlap, so llmMs is clamped at 0.
+  const timing = { runStartedAt: Date.now(), stepStartedAt: Date.now(), stepBrowserMs: 0, browserMs: 0, llmMs: 0 };
+  const timedSendCommand = async (...args) => {
+    const startedAt = Date.now();
+    try { return await sendCommand(...args); }
+    finally { timing.stepBrowserMs += Date.now() - startedAt; }
+  };
+  const tools = buildTools(timedSendCommand);
 
   try {
     const result = await generateText({
@@ -776,7 +820,13 @@ export async function runAgent(config, prompt, sendCommand, onProgress, signal) 
       },
       onStepFinish: (step) => {
         const { text, toolCalls, toolResults, finishReason, stepNumber } = step;
-        log(`[Agent] Step ${stepNumber} finished: finishReason=${finishReason}, toolCalls=${toolCalls?.length || 0}, toolResults=${toolResults?.length || 0}, textLen=${text?.length || 0}`);
+        const stepMs = Date.now() - timing.stepStartedAt;
+        const stepLlmMs = Math.max(0, stepMs - timing.stepBrowserMs);
+        timing.browserMs += timing.stepBrowserMs;
+        timing.llmMs += stepLlmMs;
+        log(`[Agent] Step ${stepNumber} finished: finishReason=${finishReason}, toolCalls=${toolCalls?.length || 0}, toolResults=${toolResults?.length || 0}, textLen=${text?.length || 0}, total=${stepMs}ms (llm≈${stepLlmMs}ms, browser=${timing.stepBrowserMs}ms)`);
+        timing.stepStartedAt = Date.now();
+        timing.stepBrowserMs = 0;
         if (text) {
           onProgress({ type: 'chunk', text: text + '\n' });
         }
@@ -800,7 +850,7 @@ export async function runAgent(config, prompt, sendCommand, onProgress, signal) 
       onProgress({ type: 'chunk', text: '\n' + result.text });
     }
 
-    log(`[Agent] Done: ${result.steps?.length || 0} steps, ${result.usage?.totalTokens || '?'} tokens`);
+    log(`[Agent] Done: ${result.steps?.length || 0} steps, ${result.usage?.totalTokens || '?'} tokens, ${Date.now() - timing.runStartedAt}ms (llm≈${timing.llmMs}ms, browser=${timing.browserMs}ms)`);
     onProgress({ type: 'done', exitCode: 0, output: result.text || '' });
 
   } catch (err) {

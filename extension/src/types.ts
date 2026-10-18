@@ -5,6 +5,8 @@ export type KeyboardModifier = 'ctrl' | 'shift' | 'alt' | 'meta';
 export interface NavigateParams {
   url: string;
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   newWindow?: boolean;
   viewportWidth?: number;
   viewportHeight?: number;
@@ -13,22 +15,34 @@ export interface NavigateParams {
 export interface ClickParams {
   selector?: string;
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   text?: string;
   ref?: string;
 }
+
+// 'keys'   — one keyDown/keyUp per character: human-like, but ~2 CDP round trips per char.
+// 'insert' — the whole value in one Input.insertText call: fast, fires input events
+//            but no per-character key events (less human-like; key-driven widgets may not react).
+export type TypingMode = 'keys' | 'insert';
 
 export interface FillParams {
   selector?: string;
   value: string;
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   clear?: boolean;
   ref?: string;
+  typing?: TypingMode;
 }
 
 export interface SelectParams {
   selector?: string;
   value: string;
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   ref?: string;
   matchBy?: 'value' | 'text';
 }
@@ -37,12 +51,16 @@ export interface KeyboardParams {
   key: string;
   modifiers?: KeyboardModifier[];
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
 }
 
 export interface ScrollParams {
   direction?: 'up' | 'down';
   amount?: number;
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   selector?: string;
   ref?: string;
 }
@@ -51,11 +69,15 @@ export interface ExtractParams {
   selector: string;
   attribute?: string;
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   multiple?: boolean;
 }
 
 export interface SnapshotParams {
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   interactiveOnly?: boolean;
   compact?: boolean;
   maxDepth?: number;
@@ -65,22 +87,36 @@ export interface SnapshotParams {
   includeHidden?: boolean;
   includeRects?: boolean;
   inlineFrames?: boolean;
+  pointerInteractive?: boolean;
+  textDigest?: boolean;
 }
 
 export interface WaitParams {
   ms?: number;
   selector?: string;
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
 }
 
 export interface ScreenshotParams {
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   annotate?: boolean;
+  // Default PNG (lossless — required by visual regression). JPEG is ~5x smaller: use it
+  // when the image is only going to be looked at by a model.
+  format?: 'png' | 'jpeg';
+  quality?: number;
 }
 
 export interface ExecuteJsParams {
   code: string;
   tabId?: number;
+  /** Run inside this iframe: the ref of its <iframe> (@e4) or a piece of its URL. */
+  frame?: string;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
 }
 
 export interface GetCookiesParams {
@@ -90,10 +126,60 @@ export interface GetCookiesParams {
 
 export interface CloseTabParams {
   tabId: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
+}
+
+export interface CloseWindowParams {
+  /**
+   * Sessions the server currently considers alive. A window owned by a session that is
+   * NOT in this list is an orphan — its agent is gone — so any session may close it.
+   * Without this, orphaned working windows could be closed by nobody and piled up.
+   */
+  liveSessions?: string[];
+  tabId: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string; // any tab of the window to close
 }
 
 export interface PageInfoParams {
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
+}
+
+export interface NetworkRequestsParams {
+  tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
+  textFilter?: string;
+  method?: string;
+  resourceType?: string;
+  requestBodyFilter?: string;
+  limit?: number;
+}
+
+export interface NetworkResponseParams {
+  tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
+  id: string;
+  jsonPath?: string;
+  maxLength?: number;
+}
+
+export interface NetworkSearchParams {
+  tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
+  textFilter?: string;
+  method?: string;
+  resourceType?: string;
+  requestBodyFilter?: string;
+  jsonPath?: string;
+  bodyContains?: string;
+  limit?: number;
+  maxMatches?: number;
 }
 
 // ─── Command Results ────────────────────────────────────────────────
@@ -133,6 +219,8 @@ export interface ReplaySequenceParams {
   startIndex: number;
   newWindow?: boolean;
   tabId?: number;
+  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
   viewportWidth?: number;
   viewportHeight?: number;
 }
@@ -152,6 +240,8 @@ export interface SnapshotResult {
   timestamp: number;
   refs?: Record<string, RefNodeInfo>;
   tree: string;
+  /** The page had no refs before this snapshot: the refs of the page before are void. */
+  freshRefs?: boolean;
 }
 
 export interface ElementCoordinates {

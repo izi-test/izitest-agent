@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 import { executeTest } from './tests.js';
-import { sendCommand } from './websocket.js';
+import { sendCommand, broadcastToExtensions, getProfiles, waitForProfileReregister, getClientErrors, clearClientErrors } from './websocket.js';
 import { DebugController, activeDebugControllers } from './debug-controller.js';
 import {
   seedProjectStepDefinitions,
@@ -25,6 +25,10 @@ import { generatePlaywrightCucumber } from './codegen/playwright-cucumber.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
 const CODEGEN_FRAMEWORKS = ['playwright-plain', 'playwright-cucumber'];
+
+// How long to wait for a reloaded extension to register again. A reload drops the socket
+// and the service worker reconnects after ~1s; this leaves room for a slow restart.
+const RELOAD_RECONNECT_TIMEOUT_MS = 8000;
 
 const execFileAsync = promisify(execFile);
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
@@ -80,6 +84,35 @@ export async function apiRouter(req, res, url) {
   const path = url.pathname;
 
   try {
+    // ── GET|DELETE /api/dev/extension-errors ──
+    // What the extension's service worker reported since the last clear. A test run clears
+    // it first, then asserts it is still empty at the end — the extension's console is not
+    // otherwise reachable from outside Chrome.
+    if (path === '/api/dev/extension-errors') {
+      if (method === 'GET') return json(res, 200, { errors: getClientErrors() });
+      if (method === 'DELETE') return json(res, 200, { cleared: clearClientErrors() });
+      return json(res, 405, { error: 'Use GET or DELETE' });
+    }
+
+    // ── POST /api/dev/reload-extension ──
+    // Lets `npm run build` in extension/ reload the unpacked extension in Chrome instead
+    // of the user clicking Reload in chrome://extensions. The extension reloads itself
+    // (chrome.runtime.reload), so nothing here needs CDP or a relaunched browser.
+    if (method === 'POST' && path === '/api/dev/reload-extension') {
+      if (getProfiles().size === 0) {
+        log('Extension reload requested, but no extension is connected');
+        return json(res, 200, { notified: 0, reloaded: false });
+      }
+      // Listener first: the extension can be back before this request finishes.
+      const reconnected = waitForProfileReregister(RELOAD_RECONNECT_TIMEOUT_MS);
+      const notified = broadcastToExtensions({ type: 'reload_extension' });
+      const reloaded = await reconnected;
+      log(reloaded
+        ? `Extension reload confirmed (${notified} profile(s) notified, extension re-registered)`
+        : `Extension reload pushed to ${notified} profile(s) but none came back — it is probably running a build from before auto-reload`);
+      return json(res, 200, { notified, reloaded });
+    }
+
     // ── GET /api/tests ──
     if (method === 'GET' && path === '/api/tests') {
       const projectId = url.searchParams.get('project_id');
@@ -917,10 +950,14 @@ export async function apiRouter(req, res, url) {
           mcpServers: {
             'browser-pilot': {
               type: 'sse',
-              url: `http://127.0.0.1:${MCP_PORT}/sse`
+              url: `http://127.0.0.1:${MCP_PORT}/sse`,
+              // The server refuses unauthenticated clients when a token is set.
+              ...(process.env.BROWSER_PILOT_TOKEN
+                ? { headers: { Authorization: `Bearer ${process.env.BROWSER_PILOT_TOKEN}` } }
+                : {})
             }
           }
-        }));
+        }), { mode: 0o600 }); // it may hold the token: readable by this user only
         args.push('--mcp-config', tmpMcpConfig, '--strict-mcp-config');
       }
 

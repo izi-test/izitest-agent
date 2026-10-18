@@ -2,68 +2,73 @@
 // These use chrome.scripting.executeScript (not CDP)
 // because they only need DOM read access
 
-import { resolveTabId, delay, ensureContentScript, captureTabScreenshot } from '../helpers';
+import { resolveTabId, delay, ensureContentScript, captureTabScreenshot, TOP_FRAME } from '../helpers';
+import { findFrame, framesWithRefs, sendToFrame, snapshotAllFrames } from '../frames';
 import type {
   SnapshotParams, ExtractParams, PageInfoParams,
   ScreenshotParams, ExecuteJsParams, WaitParams,
-  GetCookiesParams, CloseTabParams, SnapshotResult
+  GetCookiesParams, CloseTabParams, CloseWindowParams, SnapshotResult
 } from '../types';
 import { getPage } from '../puppeteer-client';
+import { isOwnedWindow, forgetOwnedWindow, getWindowOwner, listOwnedWindows, listPopupWindows, popupParent, popupsOf } from '../owned-windows';
+import { detachBrowser } from '../puppeteer-client';
 
 const MAX_SNAPSHOT_ELEMENTS = 500;
 const WAIT_MAX_TIMEOUT_MS = 10000;
+const WAIT_POLL_MS = 300;
 
 // ─── Snapshot ───────────────────────────────────────────────────────
 
-export async function cmdSnapshot({ tabId, ...options }: SnapshotParams): Promise<SnapshotResult> {
-  const resolvedTabId = await resolveTabId(tabId);
+export async function cmdSnapshot({ tabId, sessionId, ...options }: SnapshotParams): Promise<SnapshotResult> {
+  const resolvedTabId = await resolveTabId(tabId, sessionId);
   await ensureContentScript(resolvedTabId);
-
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(resolvedTabId, { type: 'get_snapshot', options }, (response) => {
-      if (chrome.runtime.lastError) {
-        return reject(new Error(chrome.runtime.lastError.message));
-      }
-      if (!response) {
-        return reject(new Error('No response from content script'));
-      }
-      if (!response.success) {
-        return reject(new Error(response.error || 'Failed to capture snapshot'));
-      }
-      resolve(response.result as SnapshotResult);
-    });
-  });
+  // The page, with the content of its cross-origin iframes merged in (see frames.ts).
+  return snapshotAllFrames(resolvedTabId, options as Record<string, unknown>);
 }
 
 // ─── Extract ────────────────────────────────────────────────────────
 
-export async function cmdExtract({ selector, attribute, tabId, multiple }: ExtractParams) {
-  const resolvedTabId = await resolveTabId(tabId);
+export async function cmdExtract({ selector, attribute, tabId, sessionId, multiple }: ExtractParams) {
+  const resolvedTabId = await resolveTabId(tabId, sessionId);
 
+  // Every frame of the tab, cross-origin iframes included; the page answers first.
   const results = await chrome.scripting.executeScript({
-    target: { tabId: resolvedTabId },
+    target: { tabId: resolvedTabId, allFrames: true },
     func: (sel: string, attr: string | null, multi: boolean) => {
-      const elements = multi
-        ? Array.from(document.querySelectorAll(sel))
-        : [document.querySelector(sel)].filter(Boolean) as Element[];
+      // A frame its parent can read is searched by that parent; answering here as well
+      // would return its elements twice.
+      if (window.frameElement) return [];
 
-      return elements.map(el => {
-        if (attr) {
-          return el.getAttribute(attr);
+      // This document and its same-origin iframes. Inlined: an injected function is
+      // serialised, it cannot import a helper.
+      const docs: Document[] = [];
+      const visit = (doc: Document) => {
+        docs.push(doc);
+        for (const frame of doc.querySelectorAll('iframe, frame')) {
+          try { const inner = (frame as HTMLIFrameElement).contentDocument; if (inner?.body) visit(inner); } catch { /* cross-origin */ }
         }
-        return el.outerHTML;
-      });
+      };
+      visit(document);
+
+      const elements = multi
+        ? docs.flatMap((doc) => Array.from(doc.querySelectorAll(sel)))
+        : [docs.map((doc) => doc.querySelector(sel)).find(Boolean)].filter(Boolean) as Element[];
+
+      return elements.map(el => (attr ? el.getAttribute(attr) : el.outerHTML));
     },
     args: [selector, attribute || null, multiple ?? false]
   });
 
-  return results[0]?.result;
+  const found = results
+    .sort((a, b) => (a.frameId === TOP_FRAME ? -1 : b.frameId === TOP_FRAME ? 1 : 0))
+    .flatMap((r) => (r.result as (string | null)[] | undefined) ?? []);
+  return multiple ? found : found.slice(0, 1);
 }
 
 // ─── Page Info ──────────────────────────────────────────────────────
 
-export async function cmdGetPageInfo({ tabId }: PageInfoParams) {
-  const resolvedTabId = await resolveTabId(tabId);
+export async function cmdGetPageInfo({ tabId, sessionId }: PageInfoParams) {
+  const resolvedTabId = await resolveTabId(tabId, sessionId);
   const tab = await chrome.tabs.get(resolvedTabId);
 
   const results = await chrome.scripting.executeScript({
@@ -115,23 +120,31 @@ function logScreenshotPreview(dataUrl: string): void {
   );
 }
 
-export async function cmdScreenshot({ tabId, annotate }: ScreenshotParams) {
-  const resolvedTabId = await resolveTabId(tabId);
+export async function cmdScreenshot({ tabId, sessionId, annotate, format, quality }: ScreenshotParams) {
+  const resolvedTabId = await resolveTabId(tabId, sessionId);
   
+  // Each cross-origin frame outlines its own refs (the page cannot reach into it); the page
+  // then draws its own, with the banner counting every ref of the tab.
+  const frames = annotate ? await framesWithRefs(resolvedTabId) : [];
   if (annotate) {
-    await new Promise((resolve) => {
-      chrome.tabs.sendMessage(resolvedTabId, { type: 'draw_annotations' }, resolve);
-    });
+    let frameRefs = 0;
+    for (const frameId of frames) {
+      const drawn = await sendToFrame<{ refs?: number }>(resolvedTabId, frameId, { type: 'draw_annotations', banner: false })
+        .catch(() => null);
+      frameRefs += drawn?.refs ?? 0;
+    }
+    await sendToFrame(resolvedTabId, TOP_FRAME, { type: 'draw_annotations', banner: true, frameRefs })
+      .catch(() => null);
     // Wait for render
     await delay(100);
   }
 
-  const dataUrl = await captureTabScreenshot(resolvedTabId, { format: 'png', quality: 90 });
+  const dataUrl = await captureTabScreenshot(resolvedTabId, { format: format ?? 'png', quality: quality ?? 90 });
 
   if (annotate) {
-    await new Promise((resolve) => {
-      chrome.tabs.sendMessage(resolvedTabId, { type: 'clear_annotations' }, resolve);
-    });
+    for (const frameId of [TOP_FRAME, ...frames]) {
+      await sendToFrame(resolvedTabId, frameId, { type: 'clear_annotations' }).catch(() => null);
+    }
   }
 
   logScreenshotPreview(dataUrl);
@@ -143,74 +156,121 @@ export async function cmdScreenshot({ tabId, annotate }: ScreenshotParams) {
 
 export async function cmdGetTabs() {
   const tabs = await chrome.tabs.query({});
+  // Who each tab belongs to, so an agent can tell its own working window from another
+  // session's and from the user's own tabs before passing an explicit tabId anywhere.
+  const owners = new Map(await listOwnedWindows());
+  const popups = await listPopupWindows();
   return tabs.map((tab) => ({
     id: tab.id,
+    windowId: tab.windowId,
     url: tab.url,
     title: tab.title,
     active: tab.active,
-    status: tab.status
+    status: tab.status,
+    owner: owners.has(tab.windowId)
+      ? (owners.get(tab.windowId) || 'browser-pilot (no session)')
+      : 'user',
+    // A popup the page opened (window.open): the working window it was opened from.
+    ...(popups.has(tab.windowId) ? { openedFrom: popups.get(tab.windowId) } : {}),
   }));
 }
 
 export async function cmdCloseTab({ tabId }: CloseTabParams) {
+  // Detach first, while the tab still exists: Puppeteer's ExtensionTransport.close() calls
+  // chrome.debugger.detach without handling its rejection, so detaching after the tab is
+  // gone surfaces as "Uncaught (in promise) No tab with given id".
+  detachBrowser(tabId);
   await chrome.tabs.remove(tabId);
   return { success: true };
 }
 
+// Closes the whole window holding `tabId` — only if Browser Pilot opened that window.
+// Returns a status rather than throwing, so the MCP tool can explain a refusal.
+export async function cmdCloseWindow({ tabId, sessionId, liveSessions }: CloseWindowParams) {
+  let windowId: number;
+  try {
+    windowId = (await chrome.tabs.get(tabId)).windowId;
+  } catch {
+    return { closed: false, reason: 'gone' }; // already closed (by the user, or earlier)
+  }
+
+  const tabs = await chrome.tabs.query({ windowId });
+  if (!(await isOwnedWindow(windowId))) {
+    return { closed: false, reason: 'not_owned', windowId, tabCount: tabs.length };
+  }
+
+  // A session closes its own window, never the window of another agent that is still
+  // working. An owner that is no longer alive leaves an orphan, which anyone may close —
+  // it is still a window Browser Pilot opened, never one of the user's.
+  const owner = await getWindowOwner(windowId);
+  const ownerIsWorking = !!owner && owner !== sessionId
+    && (liveSessions === undefined || liveSessions.includes(owner));
+  if (sessionId && ownerIsWorking) {
+    return { closed: false, reason: 'other_session', windowId, tabCount: tabs.length, owner };
+  }
+
+  // Closing the working window closes the popups its pages opened too: they are the same
+  // task's, and nobody would close them afterwards. A popup closed on its own goes alone.
+  const isPopup = (await popupParent(windowId)) !== undefined;
+  const windowIds = [windowId, ...(isPopup ? [] : await popupsOf(windowId))];
+
+  const tabIds: number[] = [];
+  let popupsClosed = 0;
+  for (const id of windowIds) {
+    const windowTabs = id === windowId ? tabs : await chrome.tabs.query({ windowId: id }).catch(() => []);
+    // Same reason as cmdCloseTab: detach every tab of the window before destroying it,
+    // rather than letting tabs.onRemoved detach from tabs that no longer exist.
+    for (const tab of windowTabs) if (tab.id !== undefined) detachBrowser(tab.id);
+    if (id === windowId) await chrome.windows.remove(id);
+    const removed = id === windowId || await chrome.windows.remove(id).then(() => true, () => false);
+    await forgetOwnedWindow(id);
+    if (!removed) continue; // a popup already closed by its page
+    if (id !== windowId) popupsClosed++;
+    for (const tab of windowTabs) if (tab.id !== undefined) tabIds.push(tab.id);
+  }
+  return { closed: true, windowId, tabIds, isPopup, popupsClosed };
+}
+
 // ─── Wait ───────────────────────────────────────────────────────────
 
-export async function cmdWait({ ms, selector, tabId }: WaitParams) {
+export async function cmdWait({ ms, selector, tabId, sessionId }: WaitParams) {
   if (ms) {
     await delay(ms);
     return { waited: ms };
   }
 
   if (selector) {
-    const resolvedTabId = await resolveTabId(tabId);
+    const resolvedTabId = await resolveTabId(tabId, sessionId);
 
-    // First check if the element already exists
-    const immediate = await chrome.scripting.executeScript({
-      target: { tabId: resolvedTabId },
-      func: (sel: string) => !!document.querySelector(sel),
-      args: [selector]
-    });
-    if (immediate[0]?.result) return { found: true, selector };
-
-    // Use MutationObserver instead of polling for better performance
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: resolvedTabId },
-      func: (sel: string, timeoutMs: number) => {
-        return new Promise<{ found: boolean; selector: string; timeout?: boolean }>((resolve) => {
-          // Check once more in case it appeared between checks
-          if (document.querySelector(sel)) {
-            return resolve({ found: true, selector: sel });
-          }
-
-          const timer = setTimeout(() => {
-            observer.disconnect();
-            resolve({ found: false, selector: sel, timeout: true });
-          }, timeoutMs);
-
-          const observer = new MutationObserver(() => {
-            if (document.querySelector(sel)) {
-              observer.disconnect();
-              clearTimeout(timer);
-              resolve({ found: true, selector: sel });
+    // Looked for in every frame of the tab, cross-origin iframes included, and asked again
+    // from here rather than watched from inside the page: a MutationObserver only sees its
+    // own document, and page timers are throttled to ~1s in a hidden window, service worker
+    // ones are not.
+    const isThere = async (): Promise<boolean> => {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: resolvedTabId, allFrames: true },
+        func: (sel: string) => {
+          if (window.frameElement) return false; // searched by its parent
+          const find = (doc: Document): boolean => {
+            if (doc.querySelector(sel)) return true;
+            for (const frame of doc.querySelectorAll('iframe, frame')) {
+              try { const inner = (frame as HTMLIFrameElement).contentDocument; if (inner?.body && find(inner)) return true; } catch { /* cross-origin */ }
             }
-          });
+            return false;
+          };
+          return find(document);
+        },
+        args: [selector]
+      }).catch(() => []);
+      return results.some((r) => r.result === true);
+    };
 
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['class', 'id', 'style', 'hidden']
-          });
-        });
-      },
-      args: [selector, WAIT_MAX_TIMEOUT_MS]
-    });
-
-    return results[0]?.result || { found: false, selector, timeout: true };
+    const deadline = Date.now() + WAIT_MAX_TIMEOUT_MS;
+    do {
+      if (await isThere()) return { found: true, selector };
+      await delay(WAIT_POLL_MS);
+    } while (Date.now() < deadline);
+    return { found: false, selector, timeout: true };
   }
 
   return { error: 'Specify either ms or selector' };
@@ -218,11 +278,40 @@ export async function cmdWait({ ms, selector, tabId }: WaitParams) {
 
 // ─── Execute JavaScript ─────────────────────────────────────────────
 
-export async function cmdExecuteJs({ code, tabId }: ExecuteJsParams) {
-  const resolvedTabId = await resolveTabId(tabId);
+export async function cmdExecuteJs({ code, tabId, sessionId, frame }: ExecuteJsParams) {
+  const resolvedTabId = await resolveTabId(tabId, sessionId);
   const page = await getPage(resolvedTabId);
-  const result = await page.evaluate(code);
-  return result;
+  if (!frame) return page.evaluate(code);
+
+  // Through the debugger when Puppeteer sees the frame: like on the page, the code then runs
+  // whatever the frame's Content-Security-Policy says about eval.
+  const target = await findFrame(resolvedTabId, frame);
+  const matches = page.frames().filter((f) => f !== page.mainFrame() && f.url() === target.url);
+  if (matches.length === 1) return matches[0].evaluate(code);
+
+  // Otherwise straight into that frame. eval runs in the page's own world, so a frame whose
+  // CSP forbids eval refuses it: say so rather than return nothing.
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId: resolvedTabId, frameIds: [target.frameId] },
+    world: 'MAIN',
+    args: [code],
+    func: async (source: string) => {
+      try {
+        return { ok: true, value: await (0, eval)(source) };
+      } catch (error) {
+        return { ok: false, error: String(error) };
+      }
+    },
+  });
+  const outcome = injection?.result as { ok: boolean; value?: unknown; error?: string } | undefined;
+  if (!outcome) throw new Error(`The iframe ${target.url} did not answer.`);
+  if (!outcome.ok) {
+    const csp = /unsafe-eval|Content Security Policy/i.test(outcome.error ?? '')
+      ? ' This iframe\'s Content-Security-Policy forbids running code from a string; snapshot, extract and wait still read it.'
+      : '';
+    throw new Error(`In iframe ${target.url}: ${outcome.error}.${csp}`);
+  }
+  return outcome.value;
 }
 
 // ─── Cookies ────────────────────────────────────────────────────────

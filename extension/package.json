@@ -6,7 +6,8 @@
     "watch": "npm run copy && node watch.js",
     "copy": "mkdir -p dist && cp manifest.json popup.html popup.js dist/ && cp -R icons dist/",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
     "@anthropic-ai/claude-code": "^1.0.0",
@@ -15,6 +16,7 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
-    "puppeteer-core": "^24.40.0"
+    "puppeteer-core": "^24.40.0",
+    "jsonpath-plus": "^10.3.0"
   }
 }

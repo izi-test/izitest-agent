@@ -9,7 +9,9 @@
     "start:stdio": "node server.js --stdio",
     "dev": "node --watch server.js",
     "dev:frontend": "cd frontend && npm run dev",
-    "build:frontend": "cd frontend && npm run build"
+    "build:frontend": "cd frontend && npm run build",
+    "ensure": "node bin/ensure-server.js",
+    "test": "node --test \"test/**/*.test.js\""
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.52",

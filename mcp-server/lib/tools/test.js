@@ -2,10 +2,9 @@
 
 import { z } from 'zod';
 import { log } from '../logger.js';
+import { currentSession } from '../session.js';
+import { recordAction } from '../recording.js';
 import {
-  getRecording, setRecording,
-  getLastRefMap,
-  getAction, saveActionToHistory,
   classifyWithLLM, detectListContext,
   loadTest, saveTest, deleteTest as deleteTestDb, listTests as listTestsDb, executeTest,
   updateTestStep, evaluateAssertion
@@ -95,7 +94,17 @@ function cleanRecoverySteps(steps) {
   return result;
 }
 
-export function registerTestTools(server, { sendCommand }) {
+export function registerTestTools(server, { sendCommand: dispatch }) {
+
+  // Recording state is per session (see tools/session-scope.js): two agents can record two
+  // different tests at the same time without their steps interleaving.
+  const sess = () => currentSession();
+  const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, sess().scope(params), ...rest);
+  const getRecording = () => sess().recording;
+  const setRecording = (value) => { sess().recording = value; };
+  const getLastRefMap = () => sess().refMap;
+  const getAction = (id) => sess().getAction(id);
+  const saveActionToHistory = (...args) => recordAction(sess(), ...args);
 
   // --- Tool: start_recording ---
   server.tool(
@@ -132,6 +141,7 @@ export function registerTestTools(server, { sendCommand }) {
         }
         const navResult = await sendCommand(undefined, 'navigate', navParams);
         newTabId = navResult?.tabId || null;
+        sess().adoptTab(navResult?.tabId, navResult?.windowId);
       } catch (err) {
         log(`Failed to open new window for recording: ${err.message}`);
       }
@@ -179,7 +189,7 @@ export function registerTestTools(server, { sendCommand }) {
           updateOnly: true,
           step: recording.steps.length,
           stepName: intent || lastStep.command
-        });
+        }, sess().lastTabId ?? null);
       }).catch(() => {});
 
       return { content: [{ type: 'text', text: `Step ${recording.steps.length} (${lastStep.command}) updated with overrides. Note: record_step is deprecated — steps are auto-recorded. Just call stop_recording when done.` }] };
@@ -198,7 +208,7 @@ export function registerTestTools(server, { sendCommand }) {
       }
       
       import('../websocket.js').then(({ pushOverlayState }) => {
-        pushOverlayState(null, null); // null state hides the overlay
+        pushOverlayState(null, null, sess().lastTabId ?? null); // null state hides the overlay
       }).catch(() => {});
 
       if (recording.steps.length === 0) {

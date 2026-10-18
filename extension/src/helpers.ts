@@ -1,9 +1,39 @@
 // Shared utility functions used across commands
 
+import { getSessionWindow, getWindowOwner } from './owned-windows';
+
+/**
+ * A refusal the agent is meant to read and act on — not a malfunction.
+ * Flagged so the command loop can report it without logging it as an extension error.
+ */
+export class ExpectedRefusal extends Error {
+  readonly expected = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExpectedRefusal';
+  }
+}
+
+export function isExpectedRefusal(error: unknown): boolean {
+  return error instanceof Error && (error as { expected?: boolean }).expected === true;
+}
+
 const TAB_LOAD_TIMEOUT_MS = 15000;
+
+/**
+ * The page's own frame. Every message meant for the page names it: once the content script
+ * also runs inside iframes, a message without a frameId goes to every frame of the tab and
+ * the first one to answer wins.
+ */
+export const TOP_FRAME = 0;
 export const SCROLL_SETTLE_DELAY_MS = 150;
 const SCREENSHOT_MIN_INTERVAL_MS = 1200;
 const SCREENSHOT_RETRY_DELAYS_MS = [800, 1500, 2200];
+// Captures are serialised through one queue, so a capture that never settles would block
+// every later one for the life of the service worker — and with it every command that
+// takes a debug screenshot. captureVisibleTab can hang on a window that cannot be brought
+// to the front, so no capture is allowed to run unbounded.
+const SCREENSHOT_TIMEOUT_MS = 10000;
 
 let lastScreenshotCaptureAt = 0;
 let screenshotCaptureQueue: Promise<void> = Promise.resolve();
@@ -25,8 +55,72 @@ export async function getActiveTabId(): Promise<number> {
   throw new Error('No active tab found');
 }
 
-export async function resolveTabId(tabId?: number): Promise<number> {
-  return tabId ?? (await getActiveTabId());
+/**
+ * Which tab a command acts on.
+ *
+ * An explicit tabId always wins. Otherwise the command stays inside its own session's
+ * window — and if that session has no window yet, it fails instead of guessing.
+ *
+ * There is deliberately no fallback to the globally active tab for a session: "active"
+ * means whichever window was focused last, which is either another agent's work or the
+ * page the user is reading right now. Reading that page was never the intent, and it leaks
+ * whatever the user happens to have open.
+ *
+ * The fallback survives only for callers with no session at all — the popup's debug panel,
+ * which acts on the current tab on purpose.
+ */
+export async function resolveTabId(tabId?: number, sessionId?: string): Promise<number> {
+  if (tabId) return tabId;
+
+  if (sessionId) {
+    const windowId = await getSessionWindow(sessionId);
+    if (windowId !== undefined) {
+      const [active] = await chrome.tabs.query({ active: true, windowId });
+      if (active?.id) return active.id;
+    }
+    throw new ExpectedRefusal(
+      `This session has no window of its own yet, so there is no tab to act on. ` +
+      `Call navigate() first — it opens one — or pass an explicit tabId to work in a tab ` +
+      `that already exists (get_tabs lists them, with the owner of each). ` +
+      `Browser Pilot will not fall back to the foreground tab: that is the user's own page.`
+    );
+  }
+
+  return getActiveTabId();
+}
+
+/**
+ * Refuse an explicit tabId that points into another agent's working window.
+ *
+ * Seen live: session B passed session A's tabId, read A's page and navigated in it. The
+ * window changed owner, A could no longer close its own window, and B's close_window
+ * closed A's. Taking over another agent's tab now has to be asked for, with force.
+ */
+export async function assertTabIsNotAnotherSessions(
+  tabId: number,
+  sessionId: string | undefined,
+  { liveSessions, force }: { liveSessions?: string[]; force?: boolean }
+): Promise<void> {
+  if (!sessionId || force) return;
+
+  let windowId: number;
+  try {
+    windowId = (await chrome.tabs.get(tabId)).windowId;
+  } catch {
+    return; // the tab is gone; let the command fail on its own terms
+  }
+
+  const owner = await getWindowOwner(windowId);
+  if (!owner || owner === sessionId) return;
+  // An owner that is no longer alive left an orphan — nobody is working there.
+  if (liveSessions !== undefined && !liveSessions.includes(owner)) return;
+
+  throw new ExpectedRefusal(
+    `Tab ${tabId} is in the working window of session ${owner}, which is another agent ` +
+    `still working. Acting there would move the window to you and leave that agent without ` +
+    `one. Use your own tab (navigate() opens it), or pass force: true if you really mean to ` +
+    `take over this tab.`
+  );
 }
 
 export function waitForTabLoad(tabId: number): Promise<void> {
@@ -104,7 +198,14 @@ export async function captureTabScreenshot(tabId: number, options: { format?: 'p
     throw new Error('Screenshot capture failed unexpectedly');
   };
 
-  const captureTask = screenshotCaptureQueue.then(runCapture);
+  const bounded = (): Promise<string> => Promise.race([
+    runCapture(),
+    delay(SCREENSHOT_TIMEOUT_MS).then(() => {
+      throw new Error(`Screenshot of tab ${tabId} timed out after ${SCREENSHOT_TIMEOUT_MS}ms`);
+    }),
+  ]);
+
+  const captureTask = screenshotCaptureQueue.then(bounded, bounded);
   screenshotCaptureQueue = captureTask.then(() => undefined, () => undefined);
   return captureTask;
 }
@@ -124,10 +225,10 @@ export function delay(ms: number): Promise<void> {
  */
 export async function ensureContentScript(tabId: number): Promise<void> {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'ping' });
+    await chrome.tabs.sendMessage(tabId, { type: 'ping' }, { frameId: TOP_FRAME });
   } catch {
     await chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, frameIds: [TOP_FRAME] },
       files: ['content.js']
     });
   }

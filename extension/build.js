@@ -1,4 +1,5 @@
 const esbuild = require('esbuild');
+const { reloadExtension } = require('./reload-extension');
 
 esbuild.build({
   entryPoints: ['src/background.ts', 'src/content.ts'],
@@ -18,8 +19,9 @@ esbuild.build({
     '@puppeteer/browsers',
     'crypto'
   ]
-}).then(() => {
+}).then(async () => {
   console.log("Build complete!");
+  await reloadExtension();
 }).catch((err) => {
   console.error(err);
   process.exit(1);

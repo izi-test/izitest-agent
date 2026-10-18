@@ -1,23 +1,11 @@
-// In-memory recording state and action history
+// Action history and auto-recording of test steps.
+//
+// State lives on the Session (see session.js), never in this module: several agents record
+// different tests at the same time, and each must only ever see its own steps and refs.
 
 import { log } from './logger.js';
 
-// ─── Recording State ───────────────────────────────────────────────
-
-let recording = null; // { name, steps: [], startedAt }
-let lastRefMap = {};  // ref (@eX) → { selector, text, role, name }
-
-export function getRecording() { return recording; }
-export function setRecording(val) { recording = val; }
-export function getLastRefMap() { return lastRefMap; }
-export function setLastRefMap(val) { lastRefMap = val; }
-
 // ─── Action History ────────────────────────────────────────────────
-
-const actionHistory = new Map();
-let actionCounter = 0;
-
-export function getAction(id) { return actionHistory.get(id); }
 
 /**
  * Build a human-readable intent from available step context.
@@ -79,14 +67,17 @@ function deriveIntent(command, params, locators) {
   }
 }
 
-export function saveActionToHistory(command, params, refKey, screenshotBase64, agentIntent) {
-  const id = `act_${++actionCounter}`;
+/**
+ * Record one executed action in `session`'s history, and append it to that session's
+ * recording when one is active. Returns the action id handed back to the agent.
+ */
+export function recordAction(session, command, params, refKey, screenshotBase64, agentIntent) {
   let locators = null;
   const recordParams = { ...params };
 
-  if (refKey && lastRefMap) {
+  if (refKey && session.refMap) {
     const key = String(refKey).replace('@', '');
-    const refInfo = lastRefMap[key];
+    const refInfo = session.refMap[key];
     if (refInfo) {
       if (refInfo.selector) recordParams.selector = refInfo.selector;
       if (refInfo.locators && refInfo.locators.length > 0) {
@@ -95,13 +86,10 @@ export function saveActionToHistory(command, params, refKey, screenshotBase64, a
     }
   }
 
-  actionHistory.set(id, { command, params: recordParams, locators });
-
-  if (actionHistory.size > 100) {
-    actionHistory.delete(actionHistory.keys().next().value);
-  }
+  const id = session.putAction({ command, params: recordParams, locators });
 
   // Auto-record step when recording is active
+  const recording = session.recording;
   if (recording) {
     const intent = agentIntent || deriveIntent(command, recordParams, locators);
     const step = {
@@ -118,19 +106,19 @@ export function saveActionToHistory(command, params, refKey, screenshotBase64, a
       }
     });
     recording.steps.push(step);
-    log(`Auto-recorded step: ${command} via ${id} (${recording.steps.length} steps total)`);
-    
-    // Update overlay with new action count
+    log(`[${session.id}] Auto-recorded step: ${command} via ${id} (${recording.steps.length} steps total)`);
+
+    // Update overlay with new action count — on this session's tab, not whichever
+    // window happens to have focus.
     import('./websocket.js').then(({ pushOverlayState }) => {
       pushOverlayState(null, {
         mode: 'recording',
         updateOnly: true,
         step: recording.steps.length,
         stepName: intent || command
-      });
+      }, session.lastTabId ?? null);
     }).catch(() => {});
   }
 
   return id;
 }
-

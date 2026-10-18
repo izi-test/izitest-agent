@@ -3,3 +3,6 @@ dist/
 .DS_Store
 .env
 /izitest/*
+
+# Runtime artefacts du serveur partagé
+mcp-server/data/server.log

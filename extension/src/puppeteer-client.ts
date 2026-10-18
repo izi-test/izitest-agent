@@ -132,8 +132,13 @@ export async function getPage(tabId: number): Promise<Page> {
 export function detachBrowser(tabId: number): void {
   const browser = connectedBrowsers.get(tabId);
   if (browser) {
-    // browser.disconnect() might throw if the tab is already destroyed, we can wrap it
-    try { browser.disconnect(); } catch (e) {}
+    // disconnect() returns a promise: it detaches the debugger, which rejects with
+    // "No tab with given id" when the tab is already gone — the usual case here, since
+    // this runs from tabs.onRemoved. A plain try/catch only catches a synchronous throw,
+    // so that rejection used to escape as an uncaught promise error.
+    Promise.resolve()
+      .then(() => browser.disconnect())
+      .catch(() => { /* the tab is gone; nothing left to detach from */ });
     connectedBrowsers.delete(tabId);
     connectedPages.delete(tabId);
   }
