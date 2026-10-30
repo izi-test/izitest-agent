@@ -4,7 +4,7 @@
 # Each profile gets its own user data directory = isolated cookies, sessions, history
 
 PROFILE_NAME="${1:-default}"
-PROFILES_DIR="$HOME/.browser-pilot/profiles"
+PROFILES_DIR="$HOME/.izitest/profiles"
 PROFILE_DIR="$PROFILES_DIR/$PROFILE_NAME"
 
 mkdir -p "$PROFILE_DIR"

@@ -265,7 +265,7 @@ async function handleAgentChatCli(project, convId, message, cliConfig, isNewConv
 
   if (provider === 'claude') {
     const agentToolNames = AGENT_TOOLS
-      .map(t => `mcp__browser-pilot__${t.name}`)
+      .map(t => `mcp__izitest-agent__${t.name}`)
       .join(',');
 
     args.push('-p', prompt, '--output-format', 'json',
@@ -280,7 +280,7 @@ async function handleAgentChatCli(project, convId, message, cliConfig, isNewConv
     tmpMcpConfig = join(tmpdir(), `bp-chat-mcp-${Date.now()}.json`);
     writeFileSync(tmpMcpConfig, JSON.stringify({
       mcpServers: {
-        'browser-pilot': { type: 'sse', url: `http://127.0.0.1:${MCP_PORT}/sse` }
+        'izitest-agent': { type: 'sse', url: `http://127.0.0.1:${MCP_PORT}/sse` }
       }
     }));
     args.push('--mcp-config', tmpMcpConfig, '--strict-mcp-config');

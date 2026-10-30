@@ -18,7 +18,7 @@ JavaScript executed via the `execute_js` tool runs within the **Chrome extension
 ## Best Practices for Users
 
 ### 1. Dedicated Profiles
-We strongly recommend using **separate Chrome profiles** for sensitive work (e.g., banking) and IziTest Agent automation. See our [Multi-Account Guide](file:///Library/Dev/browser-pilot/docs/multi-account.md) for more details.
+We strongly recommend using **separate Chrome profiles** for sensitive work (e.g., banking) and IziTest Agent automation. See our [Multi-Account Guide](multi-account.md) for more details.
 
 ### 2. Monitor AI Actions
 Always keep an eye on the browser window while an AI is performing tasks. Claude is generally very reliable, but browser automation can sometimes encounter unexpected edge cases on dynamic websites.
@@ -65,9 +65,9 @@ IziTest Agent stores data locally in the following locations:
 - **Lifecycle** : Les screenshots d'assertion échouées sont conservés pour diagnostic
 
 ### Chrome Profiles
-- **Location** : `~/.browser-pilot/profiles/<profile-name>/`
+- **Location** : `~/.izitest/profiles/<profile-name>/`
 - **Content** : Données Chrome isolées (cookies, historique, localStorage)
 - **Note** : Ces données sont gérées par Chrome lui-même
 
 ---
-[< Previous: Configuration](file:///Library/Dev/browser-pilot/docs/configuration.md) | [Next: Troubleshooting >](file:///Library/Dev/browser-pilot/docs/troubleshooting.md)
+[< Previous: Configuration](configuration.md) | [Next: Troubleshooting >](troubleshooting.md)

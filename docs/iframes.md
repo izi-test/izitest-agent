@@ -1,6 +1,6 @@
 # Iframes 🪟
 
-Browser Pilot voit et pilote le contenu des iframes, y compris celles d'un autre site
+IziTest Agent voit et pilote le contenu des iframes, y compris celles d'un autre site
 (bannières de cookies tierces, champs de paiement, widgets intégrés).
 
 ## Ce qui marche

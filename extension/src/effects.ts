@@ -160,8 +160,8 @@ interface PageWatch {
 
 /** Note what is visible now, and watch the DOM. Returns the frame's URL. */
 function armInPage(token: string): string {
-  const w = window as unknown as { __browserPilotEffects?: PageWatch };
-  w.__browserPilotEffects?.observer.disconnect();
+  const w = window as unknown as { __izitestEffects?: PageWatch };
+  w.__izitestEffects?.observer.disconnect();
 
   // Panels that show and hide: what a click usually opens or closes.
   const PANELS = [
@@ -202,14 +202,14 @@ function armInPage(token: string): string {
   watch.observer.observe(document.documentElement, {
     subtree: true, childList: true, attributes: true, attributeFilter: ['aria-expanded'], attributeOldValue: true,
   });
-  w.__browserPilotEffects = watch;
+  w.__izitestEffects = watch;
   return location.href;
 }
 
 /** Wait for the DOM to settle, then say what appeared, expanded and went away. */
 async function collectInPage(token: string): Promise<FrameEffects> {
-  const w = window as unknown as { __browserPilotEffects?: PageWatch };
-  const watch = w.__browserPilotEffects;
+  const w = window as unknown as { __izitestEffects?: PageWatch };
+  const watch = w.__izitestEffects;
   const base = { url: location.href, title: document.title, appeared: [], disappeared: [], expanded: [] };
   if (!watch || watch.token !== token) return { ...base, armed: false };
 
@@ -221,7 +221,7 @@ async function collectInPage(token: string): Promise<FrameEffects> {
     await new Promise((r) => setTimeout(r, 50));
   }
   watch.observer.disconnect();
-  delete w.__browserPilotEffects;
+  delete w.__izitestEffects;
 
   const PANELS = [
     'dialog', '[role=dialog]', '[role=alertdialog]', '[aria-modal=true]', '[role=alert]', '[role=status]',
@@ -237,7 +237,7 @@ async function collectInPage(token: string): Promise<FrameEffects> {
   };
   const clean = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
   const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
-  const ours = (el: Element) => el.tagName.toLowerCase().startsWith('browser-pilot');
+  const ours = (el: Element) => el.tagName.toLowerCase().startsWith('izitest-agent');
   const TAG_ROLES: Record<string, string> = {
     DIALOG: 'dialog', DETAILS: 'details', NAV: 'navigation', FORM: 'form', UL: 'list', OL: 'list',
     ASIDE: 'aside', SECTION: 'section', HEADER: 'header', FOOTER: 'footer', IFRAME: 'iframe',

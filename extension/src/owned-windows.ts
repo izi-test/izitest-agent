@@ -1,4 +1,4 @@
-// Windows Browser Pilot opened itself (navigate with newWindow), and which session owns
+// Windows IziTest Agent opened itself (navigate with newWindow), and which session owns
 // each one. close_window only ever closes one of these — never a window holding the user's
 // own tabs — and tab resolution for a session stays inside that session's window, so two
 // agents working at the same time cannot click in each other's pages.
@@ -26,7 +26,7 @@ type Popups = Record<string, number>;
 // Every access is queued, because the storage API offers no read-modify-write.
 // Two sessions opening a window at the same instant both read the old map and both wrote
 // their own version back, so the second write erased the first — and close_window then
-// refused a window Browser Pilot had genuinely opened. Serialising makes each
+// refused a window IziTest Agent had genuinely opened. Serialising makes each
 // read-then-write indivisible with respect to the others.
 let queue: Promise<unknown> = Promise.resolve();
 
@@ -88,7 +88,7 @@ export function getWindowOwner(windowId: number): Promise<string | undefined> {
   return serialized(async () => (await read())[String(windowId)]);
 }
 
-/** Every Browser Pilot window with its owning session, as [windowId, sessionId] pairs. */
+/** Every IziTest Agent window with its owning session, as [windowId, sessionId] pairs. */
 export function listOwnedWindows(): Promise<[number, string][]> {
   return serialized(async () =>
     Object.entries(await read()).map(([windowId, owner]) => [Number(windowId), owner] as [number, string]));
@@ -109,7 +109,7 @@ export function forgetOwnedWindow(windowId: number): Promise<void> {
 }
 
 /**
- * A page in a Browser Pilot window opened another window: it joins the same session.
+ * A page in a IziTest Agent window opened another window: it joins the same session.
  *
  * Seen live: "Continue with Google" opened accounts.google.com in a popup window; the agent
  * drove it with the newTabId the click returned, but the window belonged to nobody —

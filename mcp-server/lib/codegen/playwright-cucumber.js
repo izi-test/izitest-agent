@@ -1,4 +1,4 @@
-// Generate a Playwright-Cucumber project from a browser-pilot test.
+// Generate a Playwright-Cucumber project from a izitest-agent test.
 // Emits a multi-file bundle: the .feature file, reusable step definitions,
 // a Playwright World with browser lifecycle, and a cucumber.js config.
 // Pure: no DB, no filesystem. Returns `{ files: [{ path, content }] }`.

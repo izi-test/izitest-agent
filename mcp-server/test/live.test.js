@@ -10,8 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const dir = mkdtempSync(join(tmpdir(), 'bp-live-'));
-process.env.BROWSER_PILOT_LIVE_DIR = dir;
-process.env.BROWSER_PILOT_LIVE_SESSION_MAX_FRAMES = '5';
+process.env.IZITEST_LIVE_DIR = dir;
+process.env.IZITEST_LIVE_SESSION_MAX_FRAMES = '5';
 const live = await import('../lib/live.js');
 const { resolveSession, destroySession, setConnectionClient } = await import('../lib/session.js');
 
@@ -92,7 +92,7 @@ test('an action frame is kept, served, and named in the session', async () => {
 });
 
 test('a frame id that is not one is refused, path tricks included', async () => {
-  assert.equal((await fetch(`${base}/live/frames/..%2F..%2Fbrowser-pilot.db.jpg`)).status, 404);
+  assert.equal((await fetch(`${base}/live/frames/..%2F..%2Fizitest.db.jpg`)).status, 404);
   assert.equal((await fetch(`${base}/live/frames/zzzzzz-000000000000.jpg`)).status, 404);
 });
 
@@ -183,7 +183,7 @@ test('continuous recording: a session keeps its newest stream frames and every a
 
   const body = await (await fetch(`${base}/live/tabs/${AGENT_TAB}/recording`)).json();
   const stream = body.frames.filter((f) => f.kind === 'stream');
-  assert.equal(stream.length, 5, 'capped at BROWSER_PILOT_LIVE_SESSION_MAX_FRAMES');
+  assert.equal(stream.length, 5, 'capped at IZITEST_LIVE_SESSION_MAX_FRAMES');
   const newest = await Promise.all(stream.map(async (f) => Buffer.from(await (await fetch(`${base}${f.src}`)).arrayBuffer())[2]));
   assert.deepEqual(newest, [43, 44, 45, 46, 47]);
   for (const id of actions) assert.ok(body.frames.some((f) => f.frameId === id), 'action frames are never dropped');

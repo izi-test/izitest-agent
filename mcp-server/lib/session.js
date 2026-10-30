@@ -176,7 +176,7 @@ export function currentCallOptions() {
 /** The session of the tool call currently running. */
 export function currentSession() {
   const session = activeSession.getStore();
-  if (!session) throw new Error('No active Browser Pilot session in this context');
+  if (!session) throw new Error('No active IziTest Agent session in this context');
   return session;
 }
 

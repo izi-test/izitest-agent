@@ -1,4 +1,4 @@
-// Parse a .feature document back into browser-pilot test_steps.
+// Parse a .feature document back into izitest-agent test_steps.
 // Any unresolved phrase produces a clear error so the user can fix the Gherkin.
 
 import { AstBuilder, GherkinClassicTokenMatcher, Parser } from '@cucumber/gherkin';

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-// Make sure exactly one Browser Pilot server is running, then exit.
+// Make sure exactly one IziTest Agent server is running, then exit.
 //
-// Browser Pilot is a single shared server that many agents connect to at once: one
+// IziTest Agent is a single shared server that many agents connect to at once: one
 // WebSocket bridge to Chrome, one session per connected agent. Two agents starting it at
 // the same moment used to fight over port 3456 — so this script is the only supported way
 // to start it from an agent, and it is safe to run concurrently.
@@ -35,7 +35,7 @@ const asHost = (host) => (host.includes(':') ? `[${host}]` : host); // IPv6 lite
 const HEALTH_URLS = [...new Set(['127.0.0.1', MCP_HOST])]
   .map((host) => `http://${asHost(host)}:${MCP_PORT}/health`);
 const HEALTH_URL = HEALTH_URLS[0];
-const LOCK_FILE = join(tmpdir(), `browser-pilot-${MCP_PORT}.lock`);
+const LOCK_FILE = join(tmpdir(), `izitest-agent-${MCP_PORT}.lock`);
 
 const QUIET = process.argv.includes('--quiet');
 const STARTUP_TIMEOUT_MS = 20000;

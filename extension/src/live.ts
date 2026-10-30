@@ -44,15 +44,15 @@ async function client(tabId: number): Promise<CDPSession> {
 // Timing stays in the service worker — timers of a background tab are throttled to 1s,
 // mutation callbacks are not.
 function sinceLastMutation(): number {
-  const w = window as unknown as { __browserPilotLiveLastMutation?: number; __browserPilotLiveObserver?: MutationObserver };
-  if (!w.__browserPilotLiveObserver) {
-    w.__browserPilotLiveLastMutation = performance.now();
-    w.__browserPilotLiveObserver = new MutationObserver(() => { w.__browserPilotLiveLastMutation = performance.now(); });
-    w.__browserPilotLiveObserver.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  const w = window as unknown as { __izitestLiveLastMutation?: number; __izitestLiveObserver?: MutationObserver };
+  if (!w.__izitestLiveObserver) {
+    w.__izitestLiveLastMutation = performance.now();
+    w.__izitestLiveObserver = new MutationObserver(() => { w.__izitestLiveLastMutation = performance.now(); });
+    w.__izitestLiveObserver.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
     return 0;
   }
   if (document.readyState === 'loading') return 0;
-  return performance.now() - (w.__browserPilotLiveLastMutation ?? 0);
+  return performance.now() - (w.__izitestLiveLastMutation ?? 0);
 }
 
 /** Wait until the page went SETTLE_QUIET_MS without a DOM change, or `maxMs` passed. */
@@ -172,16 +172,16 @@ const qualityOf = (cast: Cast) => (cast.viewerFps ? LIVE_JPEG_QUALITY : RECORD_J
 
 // Content-script world again: visibility, and a counter of what can change the screen.
 function pageState(): { visibility: string; changes: number } {
-  const w = window as unknown as { __browserPilotLiveChanges?: number };
-  if (w.__browserPilotLiveChanges === undefined) {
-    w.__browserPilotLiveChanges = 1;
-    const bump = () => { w.__browserPilotLiveChanges = (w.__browserPilotLiveChanges ?? 0) + 1; };
+  const w = window as unknown as { __izitestLiveChanges?: number };
+  if (w.__izitestLiveChanges === undefined) {
+    w.__izitestLiveChanges = 1;
+    const bump = () => { w.__izitestLiveChanges = (w.__izitestLiveChanges ?? 0) + 1; };
     new MutationObserver(bump).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
     for (const type of ['scroll', 'input', 'resize', 'load']) {
       window.addEventListener(type, bump, { capture: true, passive: true });
     }
   }
-  return { visibility: document.visibilityState, changes: w.__browserPilotLiveChanges };
+  return { visibility: document.visibilityState, changes: w.__izitestLiveChanges };
 }
 
 /** Hidden = background tab, minimized or covered window: Chrome stops painting it. */

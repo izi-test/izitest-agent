@@ -24,12 +24,12 @@ node mcp-server/server.js
 
 | Variable | Défaut | Description |
 |----------|--------|-------------|
-| `BROWSER_PILOT_LIVE` | activée | `off` coupe la vue en direct, sans possibilité de la rallumer avant le redémarrage |
-| `BROWSER_PILOT_LIVE_RECORD` | activé | `off` coupe l'enregistrement continu des sessions, sans possibilité de le rallumer avant le redémarrage |
-| `BROWSER_PILOT_LIVE_SESSION_MAX_FRAMES` | `300` | Images de flux gardées par session (les plus récentes ; les images d'action sont toutes gardées) |
-| `BROWSER_PILOT_LIVE_RECORD_INTERVAL_MS` | `1000` | Enregistrement continu coupé : écart entre deux images gardées pendant qu'un spectateur regarde |
-| `BROWSER_PILOT_LIVE_MAX_FRAMES` | `20000` | Nombre maximal d'images gardées (les plus anciennes partent d'abord) |
-| `BROWSER_PILOT_LIVE_DIR` | `mcp-server/data/live` | Dossier des images |
+| `IZITEST_LIVE` | activée | `off` coupe la vue en direct, sans possibilité de la rallumer avant le redémarrage |
+| `IZITEST_LIVE_RECORD` | activé | `off` coupe l'enregistrement continu des sessions, sans possibilité de le rallumer avant le redémarrage |
+| `IZITEST_LIVE_SESSION_MAX_FRAMES` | `300` | Images de flux gardées par session (les plus récentes ; les images d'action sont toutes gardées) |
+| `IZITEST_LIVE_RECORD_INTERVAL_MS` | `1000` | Enregistrement continu coupé : écart entre deux images gardées pendant qu'un spectateur regarde |
+| `IZITEST_LIVE_MAX_FRAMES` | `20000` | Nombre maximal d'images gardées (les plus anciennes partent d'abord) |
+| `IZITEST_LIVE_DIR` | `mcp-server/data/live` | Dossier des images |
 
 Voir [live-view.md](live-view.md).
 
@@ -148,7 +148,7 @@ izitest-agent/
 └── scripts/
     └── launch-profile.sh
 
-~/.browser-pilot/
+~/.izitest/
 └── profiles/
     ├── default/                  # Profil par défaut
     ├── youtube-work/            # Profil personnalisé
@@ -209,7 +209,7 @@ claude mcp remove izitest-agent
 | `scripts/launch-profile.sh` | Lancement des profils Chrome |
 | `mcp-server/data/tests.db` | Base de données des tests |
 | `extension/dist/manifest.json` | Manifest de l'extension |
-| `~/.browser-pilot/profiles/*` | Données Chrome des profils |
+| `~/.izitest/profiles/*` | Données Chrome des profils |
 
 ---
-[< Previous: Architecture Details](file:///Library/Dev/browser-pilot/docs/architecture-details.md) | [Next: Security >](file:///Library/Dev/browser-pilot/docs/security.md)
+[< Previous: Architecture Details](architecture-details.md) | [Next: Security >](security.md)

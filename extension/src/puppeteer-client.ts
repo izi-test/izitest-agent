@@ -44,7 +44,7 @@ function attachDialogListener(tabId: number, page: Page): void {
     const timeoutHandle = setTimeout(async () => {
       const current = pendingDialogs.get(tabId);
       if (current && current.dialog === dialog) {
-        console.warn(`[BrowserPilot] Dialog on tab ${tabId} timed out after ${DIALOG_SAFETY_TIMEOUT_MS}ms — auto-dismissing`);
+        console.warn(`[IziTest] Dialog on tab ${tabId} timed out after ${DIALOG_SAFETY_TIMEOUT_MS}ms — auto-dismissing`);
         pendingDialogs.delete(tabId);
         try { await dialog.dismiss(); } catch {}
       }
@@ -59,7 +59,7 @@ function attachDialogListener(tabId: number, page: Page): void {
       timeoutHandle
     });
 
-    console.log(`[BrowserPilot] Dialog detected on tab ${tabId}: ${dialog.type()} "${dialog.message()}"`);
+    console.log(`[IziTest] Dialog detected on tab ${tabId}: ${dialog.type()} "${dialog.message()}"`);
   });
 }
 

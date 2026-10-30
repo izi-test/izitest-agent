@@ -4,7 +4,7 @@ const { reloadExtension } = require('./reload-extension');
 // Reload the extension in Chrome after every successful rebuild. reloadExtension
 // debounces, so the two contexts below rebuilding together still trigger one reload.
 const reloadOnRebuild = {
-  name: 'browser-pilot-reload',
+  name: 'izitest-reload',
   setup(build) {
     let first = true;
     build.onEnd((result) => {
@@ -40,7 +40,7 @@ async function watch() {
   await backgroundContext.watch();
   await contentContext.watch();
 
-  console.log('[BrowserPilot] Watching for changes... (the extension reloads itself in Chrome after each rebuild)');
+  console.log('[IziTest] Watching for changes... (the extension reloads itself in Chrome after each rebuild)');
 }
 
 watch().catch(console.error);

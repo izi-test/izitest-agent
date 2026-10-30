@@ -54,4 +54,4 @@ While you can open many tabs in a single profile, those tabs **share cookies and
 - You want to avoid cross-site tracking or session leakage between different automation tasks.
 
 ---
-[< Previous: MCP Tools Reference](file:///Library/Dev/browser-pilot/docs/mcp-tools.md) | [Next: Architecture Details >](file:///Library/Dev/browser-pilot/docs/architecture-details.md)
+[< Previous: MCP Tools Reference](mcp-tools.md) | [Next: Architecture Details >](architecture-details.md)

@@ -82,7 +82,7 @@ export async function resolveTabId(tabId?: number, sessionId?: string): Promise<
       `This session has no window of its own yet, so there is no tab to act on. ` +
       `Call navigate() first — it opens one — or pass an explicit tabId to work in a tab ` +
       `that already exists (get_tabs lists them, with the owner of each). ` +
-      `Browser Pilot will not fall back to the foreground tab: that is the user's own page.`
+      `IziTest Agent will not fall back to the foreground tab: that is the user's own page.`
     );
   }
 

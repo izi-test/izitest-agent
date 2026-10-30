@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', 'data');
 mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(join(DATA_DIR, 'browser-pilot.db'));
+const db = new Database(join(DATA_DIR, 'izitest.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 

@@ -90,7 +90,7 @@ fin de tâche. Le serveur log les fenêtres laissées ouvertes.
 
 ## Le serveur est unique et partagé
 
-Browser Pilot n'a qu'**un** pont WebSocket vers Chrome (port 3456) et **un** endpoint MCP
+IziTest Agent n'a qu'**un** pont WebSocket vers Chrome (port 3456) et **un** endpoint MCP
 (port 3457). Un deuxième serveur ne peut pas fonctionner : il refuse de démarrer sur un
 port déjà pris, plutôt que de tuer celui qui tourne.
 
@@ -111,7 +111,7 @@ Les clients se connectent ensuite en SSE :
 ```json
 {
   "mcpServers": {
-    "browser-pilot": { "type": "sse", "url": "http://127.0.0.1:3457/sse" }
+    "izitest-agent": { "type": "sse", "url": "http://127.0.0.1:3457/sse" }
   }
 }
 ```
@@ -132,21 +132,21 @@ seulement depuis la machine qui fait déjà tourner le navigateur piloté.
 
 ### Avec un jeton
 
-Dès que `MCP_HOST` sort de la machine, `BROWSER_PILOT_TOKEN` est obligatoire, et il est
+Dès que `MCP_HOST` sort de la machine, `IZITEST_TOKEN` est obligatoire, et il est
 exigé **sur les deux interfaces** (loopback comprise). Deux conséquences locales :
 
 - `.mcp.json` doit porter l'en-tête — sans jamais écrire le secret dans le fichier :
 
   ```json
-  "headers": { "Authorization": "Bearer ${BROWSER_PILOT_TOKEN:-}" }
+  "headers": { "Authorization": "Bearer ${IZITEST_TOKEN:-}" }
   ```
 
 - `npm run build` dans `extension/` lit le même jeton depuis l'environnement pour pouvoir
   recharger l'extension.
 
-Il faut donc que `BROWSER_PILOT_TOKEN` soit exporté dans le shell où tournent Claude Code
+Il faut donc que `IZITEST_TOKEN` soit exporté dans le shell où tournent Claude Code
 et les builds — la même valeur que celle passée au serveur. Sinon le build affiche
-« requires a token and BROWSER_PILOT_TOKEN is not set in this shell » et l'outil MCP
+« requires a token and IZITEST_TOKEN is not set in this shell » et l'outil MCP
 répond 403.
 
 ## Recharger l'extension après un build
@@ -159,7 +159,7 @@ l'extension s'auto-redémarre via `chrome.runtime.reload()`. Plus besoin de pass
 ```bash
 cd extension && npm run build
 # → Build complete!
-# → [BrowserPilot] Extension reloaded in Chrome (1 profile).
+# → [IziTest] Extension reloaded in Chrome (1 profile).
 ```
 
 Le rechargement est **vérifié, pas supposé** : une extension rechargée lâche sa socket et
@@ -172,7 +172,7 @@ message — le build le dit, au lieu d'annoncer un succès qui n'a pas eu lieu.
 > pas encore le message. Une seule fois ; ensuite elle se recharge seule.
 
 Si le serveur n'est pas lancé, ou qu'aucune extension n'est connectée, le build affiche
-quoi faire et **n'échoue jamais**. `BROWSER_PILOT_NO_RELOAD=1` désactive le mécanisme.
+quoi faire et **n'échoue jamais**. `IZITEST_NO_RELOAD=1` désactive le mécanisme.
 
 Un redémarrage de l'extension vide `chrome.storage.session`, donc elle oublie quelle
 fenêtre appartient à quelle session. Le serveur, lui, s'en souvient : dès que l'extension

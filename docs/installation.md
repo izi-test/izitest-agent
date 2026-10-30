@@ -113,4 +113,4 @@ En mode SSE, l'interface web est accessible à `http://127.0.0.1:3457`.
 3.  If successful, Claude should respond with a list including the profile you just configured.
 
 ---
-[< Previous: Introduction](file:///Library/Dev/browser-pilot/docs/introduction.md) | [Next: Configuration >](file:///Library/Dev/browser-pilot/docs/configuration.md)
+[< Previous: Introduction](introduction.md) | [Next: Configuration >](configuration.md)

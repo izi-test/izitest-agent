@@ -1,5 +1,5 @@
 {
-  "name": "browser-pilot-mcp",
+  "name": "izitest-agent-mcp",
   "version": "1.0.0",
   "description": "MCP server + WebSocket bridge for IziTest Agent",
   "type": "module",

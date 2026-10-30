@@ -2,8 +2,8 @@
 //
 // The bug this guards: chrome.storage has no read-modify-write, so two sessions opening a
 // window at the same instant both read the old map and both write their own version back.
-// The second write erased the first, and close_window then refused a window Browser Pilot
-// had genuinely opened ("window Browser Pilot did not open", seen on 4 of 5 windows).
+// The second write erased the first, and close_window then refused a window IziTest Agent
+// had genuinely opened ("window IziTest Agent did not open", seen on 4 of 5 windows).
 //
 // Run with: node --test test/*.test.mjs
 

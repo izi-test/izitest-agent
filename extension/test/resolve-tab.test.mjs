@@ -55,7 +55,7 @@ async function loadHelpers(tabs) {
   return import(outfile);
 }
 
-// The user's own foreground tab, plus a Browser Pilot working window.
+// The user's own foreground tab, plus a IziTest Agent working window.
 const TABS = [
   { id: 1, windowId: 10, active: true, url: 'https://platform.claude.com/' }, // the user's
   { id: 2, windowId: 20, active: true, url: 'https://a.example/' },           // session A

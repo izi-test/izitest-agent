@@ -64,7 +64,7 @@ test('closes the session\'s own window whether or not a profile is passed', asyn
   assert.equal(calls[0].params.tabId, 103);
 });
 
-test('refuses — and says so — when the window is not one Browser Pilot opened', async () => {
+test('refuses — and says so — when the window is not one IziTest Agent opened', async () => {
   await connect(() => ({ closed: false, reason: 'not_owned', windowId: 1, tabCount: 12 }));
   const res = await closeWindow({ tabId: 555 });
   assert.equal(res.isError, true);
@@ -111,5 +111,5 @@ test('an extension build without close_window gets an actionable message', async
   await connect(() => { throw new Error('Unknown command: close_window'); });
   const res = await closeWindow({ tabId: 101 });
   assert.equal(res.isError, true);
-  assert.match(res.text, /needs a newer build of the Browser Pilot extension/);
+  assert.match(res.text, /needs a newer build of the IziTest Agent extension/);
 });

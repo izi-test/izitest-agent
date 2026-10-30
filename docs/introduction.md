@@ -38,4 +38,4 @@ The project is built to handle multiple Chrome profiles simultaneously. You can 
 Instead of making Claude guess where elements are, IziTest Agent provides a `snapshot` tool that scans the page and returns a compact, high-utility list of interactive elements with unique, short IDs (UIDs).
 
 ---
-[Next: Installation >](file:///Library/Dev/browser-pilot/docs/installation.md)
+[Next: Installation >](installation.md)

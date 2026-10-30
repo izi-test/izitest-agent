@@ -9,7 +9,7 @@
 
 import { deepElementFromPoint, isHitOnTarget, describeBlocker, frameLevels } from './hit-test';
 
-const HOP_KEY = '__browserPilotHop';
+const HOP_KEY = '__izitestHop';
 
 interface HopRequest {
   [HOP_KEY]: string; // token
@@ -35,8 +35,8 @@ function findSendingIframe(source: MessageEventSource | null): HTMLIFrameElement
 }
 
 function refOf(el: Element): string | null {
-  const ref = window.__browserPilotRefOf?.get(el);
-  if (ref && window.__browserPilotRefMap?.get(ref) === el) return ref;
+  const ref = window.__izitestRefOf?.get(el);
+  if (ref && window.__izitestRefMap?.get(ref) === el) return ref;
   return null;
 }
 

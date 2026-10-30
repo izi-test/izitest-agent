@@ -241,4 +241,4 @@ Si le problème persiste :
    - Une seule commande (`navigate`)
 
 ---
-[< Previous: Security](file:///Library/Dev/browser-pilot/docs/security.md) | [Next: Usage >](file:///Library/Dev/browser-pilot/docs/usage.md)
+[< Previous: Security](security.md) | [Next: Usage >](usage.md)

@@ -39,7 +39,7 @@ export function closeWebSocket() {
   if (wss) wss.close();
 }
 
-// Browser Pilot is a single shared server that many agents connect to at once, so the port
+// IziTest Agent is a single shared server that many agents connect to at once, so the port
 // being taken means a usable instance is already running — never a zombie to kill. The old
 // behaviour here (lsof | xargs kill -9) made two agents starting in parallel kill each
 // other's bridge, which is exactly what parallel sessions must not do.
@@ -52,7 +52,7 @@ export function startWebSocketServer(port) {
 
   wss.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      log(`Port ${port} is already in use: another Browser Pilot server is running. ` +
+      log(`Port ${port} is already in use: another IziTest Agent server is running. ` +
           `Connect to it instead of starting a second one (see bin/ensure-server.js). Exiting.`);
       process.exit(1);
     } else {

@@ -1,4 +1,4 @@
-// Serialize a browser-pilot test into a Gherkin .feature document.
+// Serialize a izitest-agent test into a Gherkin .feature document.
 // The Gherkin is computed on the fly from test_steps — nothing is stored.
 
 import { db, parseJson } from '../db.js';

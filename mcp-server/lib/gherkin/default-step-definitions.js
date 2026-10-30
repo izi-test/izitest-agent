@@ -1,5 +1,5 @@
 // Seed catalogue inserted into every new project.
-// Every entry maps a Gherkin phrase to a browser-pilot command.
+// Every entry maps a Gherkin phrase to a izitest-agent command.
 // Placeholders {0}, {1}, ... refer to the Cucumber expression parameters in order.
 
 export const DEFAULT_STEP_DEFINITIONS = [

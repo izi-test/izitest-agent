@@ -166,7 +166,7 @@ function renderOverlayUI(state: { mode: 'recording' | 'playing' | 'success' | 'f
 export function showOverlay(state: Parameters<typeof renderOverlayUI>[0]) {
   if (!overlayHost) {
     overlayHost = document.createElement('div');
-    overlayHost.id = 'browser-pilot-overlay-host';
+    overlayHost.id = 'izitest-overlay-host';
     // Position fixed so shadow root itself sits right but internal is also fixed
     // Actually best to just attach it directly to body
     // and let the internal CSS host absolute/fixed position

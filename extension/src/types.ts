@@ -5,7 +5,7 @@ export type KeyboardModifier = 'ctrl' | 'shift' | 'alt' | 'meta';
 export interface NavigateParams {
   url: string;
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   newWindow?: boolean;
   viewportWidth?: number;
@@ -15,7 +15,7 @@ export interface NavigateParams {
 export interface ClickParams {
   selector?: string;
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   text?: string;
   ref?: string;
@@ -30,7 +30,7 @@ export interface FillParams {
   selector?: string;
   value: string;
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   clear?: boolean;
   ref?: string;
@@ -41,7 +41,7 @@ export interface SelectParams {
   selector?: string;
   value: string;
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   ref?: string;
   matchBy?: 'value' | 'text';
@@ -51,7 +51,7 @@ export interface KeyboardParams {
   key: string;
   modifiers?: KeyboardModifier[];
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
 }
 
@@ -59,7 +59,7 @@ export interface ScrollParams {
   direction?: 'up' | 'down';
   amount?: number;
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   selector?: string;
   ref?: string;
@@ -69,14 +69,14 @@ export interface ExtractParams {
   selector: string;
   attribute?: string;
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   multiple?: boolean;
 }
 
 export interface SnapshotParams {
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   interactiveOnly?: boolean;
   compact?: boolean;
@@ -95,13 +95,13 @@ export interface WaitParams {
   ms?: number;
   selector?: string;
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
 }
 
 export interface ScreenshotParams {
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   annotate?: boolean;
   // Default PNG (lossless — required by visual regression). JPEG is ~5x smaller: use it
@@ -115,7 +115,7 @@ export interface ExecuteJsParams {
   tabId?: number;
   /** Run inside this iframe: the ref of its <iframe> (@e4) or a piece of its URL. */
   frame?: string;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
 }
 
@@ -126,7 +126,7 @@ export interface GetCookiesParams {
 
 export interface CloseTabParams {
   tabId: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
 }
 
@@ -138,19 +138,19 @@ export interface CloseWindowParams {
    */
   liveSessions?: string[];
   tabId: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string; // any tab of the window to close
 }
 
 export interface PageInfoParams {
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
 }
 
 export interface NetworkRequestsParams {
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   textFilter?: string;
   method?: string;
@@ -161,7 +161,7 @@ export interface NetworkRequestsParams {
 
 export interface NetworkResponseParams {
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   id: string;
   jsonPath?: string;
@@ -170,7 +170,7 @@ export interface NetworkResponseParams {
 
 export interface NetworkSearchParams {
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   textFilter?: string;
   method?: string;
@@ -219,7 +219,7 @@ export interface ReplaySequenceParams {
   startIndex: number;
   newWindow?: boolean;
   tabId?: number;
-  /** Browser Pilot session this command belongs to — scopes tab resolution to its window. */
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   viewportWidth?: number;
   viewportHeight?: number;

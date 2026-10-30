@@ -70,29 +70,29 @@ export interface SnapshotResult {
 // number is never reused for something else while the page lives.
 declare global {
   interface Window {
-    __browserPilotRefMap?: Map<string, Element>;
-    __browserPilotRefOf?: WeakMap<Element, string>;
+    __izitestRefMap?: Map<string, Element>;
+    __izitestRefOf?: WeakMap<Element, string>;
     /** Refs whose element has left the page: a click on one is told it is stale. */
-    __browserPilotRetiredRefs?: Set<string>;
-    __browserPilotNextRef?: number;
+    __izitestRetiredRefs?: Set<string>;
+    __izitestNextRef?: number;
   }
 }
 
 /** Ready the ref registry for a snapshot. True when this document had none (a new page). */
 function prepareRefRegistry(reset: boolean): boolean {
-  const fresh = !window.__browserPilotRefMap || reset;
+  const fresh = !window.__izitestRefMap || reset;
   if (fresh) {
-    window.__browserPilotRefMap = new Map();
-    window.__browserPilotRefOf = new WeakMap();
-    window.__browserPilotRetiredRefs = new Set();
-    window.__browserPilotNextRef = 1;
+    window.__izitestRefMap = new Map();
+    window.__izitestRefOf = new WeakMap();
+    window.__izitestRetiredRefs = new Set();
+    window.__izitestNextRef = 1;
     return true;
   }
   // Holding a removed element would keep its whole detached subtree alive.
-  for (const [ref, el] of window.__browserPilotRefMap!) {
+  for (const [ref, el] of window.__izitestRefMap!) {
     if (!el.isConnected) {
-      window.__browserPilotRefMap!.delete(ref);
-      window.__browserPilotRetiredRefs!.add(ref);
+      window.__izitestRefMap!.delete(ref);
+      window.__izitestRetiredRefs!.add(ref);
     }
   }
   return false;
@@ -100,9 +100,9 @@ function prepareRefRegistry(reset: boolean): boolean {
 
 /** Why a ref cannot be used, or null when it can. */
 export function refProblem(ref: string): string | null {
-  const el = window.__browserPilotRefMap?.get(ref);
+  const el = window.__izitestRefMap?.get(ref);
   if (el?.isConnected) return null;
-  if (el || window.__browserPilotRetiredRefs?.has(ref)) {
+  if (el || window.__izitestRetiredRefs?.has(ref)) {
     return `Stale ref ${ref}: the element it named has been removed from the page (it re-rendered or ` +
       `changed). Take a new snapshot and use the ref it gives.`;
   }
@@ -169,7 +169,7 @@ export function selectOption(
 ): { success: true; selectedValue: string; selectedText: string } | { success: false; error: string } {
   let el: Element | null = null;
   if (by.ref) {
-    el = window.__browserPilotRefMap?.get(by.ref) ?? null;
+    el = window.__izitestRefMap?.get(by.ref) ?? null;
     if (!el) return { success: false, error: `Ref not found: ${by.ref} — take a new snapshot` };
   } else if (by.selector) {
     for (const doc of searchableDocuments()) {
@@ -224,7 +224,7 @@ function searchableDocuments(): Document[] {
 }
 
 export async function resolveRef(ref: string, options: MeasureOptions = {}): Promise<ClickTarget | null> {
-  const el = window.__browserPilotRefMap?.get(ref);
+  const el = window.__izitestRefMap?.get(ref);
   if (!el) return null;
   return measureForClick(el, options);
 }
@@ -335,7 +335,7 @@ function measureForClick(el: Element, { uncover = false }: MeasureOptions = {}):
 export function drawAnnotations(options: { banner?: boolean; extraRefs?: number } = {}): number {
   clearAnnotations();
 
-  const refMap = window.__browserPilotRefMap || new Map<string, Element>();
+  const refMap = window.__izitestRefMap || new Map<string, Element>();
   const byDoc = new Map<Document, [string, Element][]>();
   refMap.forEach((el, ref) => {
     if (!el.isConnected) return;
@@ -352,7 +352,7 @@ export function drawAnnotations(options: { banner?: boolean; extraRefs?: number 
   return refMap.size;
 }
 
-const ANNOTATION_ID = 'browser-pilot-annotations';
+const ANNOTATION_ID = 'izitest-annotations';
 
 function annotationLayer(doc: Document): ShadowRoot {
   const existing = doc.getElementById(ANNOTATION_ID);
@@ -361,7 +361,7 @@ function annotationLayer(doc: Document): ShadowRoot {
   // Use a Shadow DOM host to completely isolate annotations from the page's CSS.
   // Sites like lacentrale.fr have aggressive CSS rules (resets, flex overrides,
   // overflow:hidden) that break plain div overlays.
-  const host = doc.createElement('browser-pilot-annotations');
+  const host = doc.createElement('izitest-annotations');
   host.id = ANNOTATION_ID;
   // Host styles must use !important to resist page-level CSS on custom elements
   host.style.cssText = [
@@ -504,7 +504,7 @@ const LOCATOR_BUDGET_MS = 400;
  * for that one element. Asked before the action, while the element is surely still there.
  */
 export function describeRef(ref: string): RefNodeInfo | null {
-  const el = window.__browserPilotRefMap?.get(ref);
+  const el = window.__izitestRefMap?.get(ref);
   if (!el?.isConnected) return null;
   const { getRole, getAccessibleName, buildSelector, buildLocators } = pageTools();
   const role = getRole(el);
@@ -1151,11 +1151,11 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
   };
 
   const freshRefs = prepareRefRegistry(options.resetRefs === true);
-  const refMap = window.__browserPilotRefMap!;
-  const refOf = window.__browserPilotRefOf!;
+  const refMap = window.__izitestRefMap!;
+  const refOf = window.__izitestRefOf!;
   let refCounter = freshRefs && options.restartIfFresh
     ? 1
-    : Math.max(options.refStart ?? 1, window.__browserPilotNextRef ?? 1);
+    : Math.max(options.refStart ?? 1, window.__izitestNextRef ?? 1);
   const refFor = (el: Element): string => {
     const known = refOf.get(el);
     if (known && refMap.get(known) === el) return known;
@@ -1492,7 +1492,7 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     nextRef: refCounter,
     freshRefs,
   };
-  window.__browserPilotNextRef = refCounter;
+  window.__izitestNextRef = refCounter;
 
   return result;
 }

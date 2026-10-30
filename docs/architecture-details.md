@@ -55,4 +55,4 @@ Traditional automation is easy to flag:
 **IziTest Agent inherits everything from your real browsing environment.** If you can browse a site as a human without being blocked, IziTest Agent can too.
 
 ---
-[< Previous: Multi-Account Management](file:///Library/Dev/browser-pilot/docs/multi-account.md) | [Next: Configuration >](file:///Library/Dev/browser-pilot/docs/configuration.md)
+[< Previous: Multi-Account Management](multi-account.md) | [Next: Configuration >](configuration.md)

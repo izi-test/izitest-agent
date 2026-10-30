@@ -930,7 +930,7 @@ export async function apiRouter(req, res, url) {
           'get_tabs', 'get_page_info', 'scroll', 'wait', 'execute_js', 'keyboard',
           'get_cookies', 'snapshot', 'start_recording', 'record_step', 'stop_recording',
           'list_tests', 'run_test', 'fix_test_step', 'delete_test', 'add_assertion'
-        ].map(t => `mcp__browser-pilot__${t}`).join(',');
+        ].map(t => `mcp__izitest-agent__${t}`).join(',');
         args.push('-p', body.prompt, '--allowedTools', mcpToolNames, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
       } else if (agentConfig.cli?.provider === 'copilot') {
         args.push('-p', body.prompt, '--allow-all', '--allow-all-tools');
@@ -948,12 +948,12 @@ export async function apiRouter(req, res, url) {
         tmpMcpConfig = join(tmpdir(), `bp-mcp-${Date.now()}.json`);
         writeFileSync(tmpMcpConfig, JSON.stringify({
           mcpServers: {
-            'browser-pilot': {
+            'izitest-agent': {
               type: 'sse',
               url: `http://127.0.0.1:${MCP_PORT}/sse`,
               // The server refuses unauthenticated clients when a token is set.
-              ...(process.env.BROWSER_PILOT_TOKEN
-                ? { headers: { Authorization: `Bearer ${process.env.BROWSER_PILOT_TOKEN}` } }
+              ...(process.env.IZITEST_TOKEN
+                ? { headers: { Authorization: `Bearer ${process.env.IZITEST_TOKEN}` } }
                 : {})
             }
           }

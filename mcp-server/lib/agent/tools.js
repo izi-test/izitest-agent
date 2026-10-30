@@ -154,7 +154,7 @@ export const AGENT_TOOLS = [
         project_id: { type: 'number', description: 'Project ID' },
         keyword: { type: 'string', enum: ['Given', 'When', 'Then'], description: 'Gherkin keyword' },
         pattern: { type: 'string', description: 'Cucumber expression pattern, e.g. "I login with {string} and {string}"' },
-        command: { type: 'string', description: 'Browser-pilot command (for single step). Omit if steps_template is provided.' },
+        command: { type: 'string', description: 'IziTest Agent command (for single step). Omit if steps_template is provided.' },
         params_template: { type: 'object', description: 'Parameter template (for single step)' },
         steps_template: {
           type: 'array',

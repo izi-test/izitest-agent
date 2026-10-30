@@ -81,4 +81,4 @@ add_retroactive_vrt("mon_test", { step_order: 3, selector: "#header" })
 | `selector` | string | (Optionnel) Sélecteur CSS pour cibler un élément spécifique |
 
 ---
-[< Previous: Usage](file:///Library/Dev/browser-pilot/docs/usage.md) | [Next: Multi-Account Management >](file:///Library/Dev/browser-pilot/docs/multi-account.md)
+[< Previous: Usage](usage.md) | [Next: Multi-Account Management >](multi-account.md)

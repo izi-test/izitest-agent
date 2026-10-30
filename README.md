@@ -50,7 +50,7 @@ cd extension && npm install && npm run build
 
 ### 3. Configuration Claude
 
-Browser Pilot tourne comme **un serveur partagé** auquel tous les agents se connectent en
+IziTest Agent tourne comme **un serveur partagé** auquel tous les agents se connectent en
 SSE. C'est ce qui permet de lancer plusieurs agents en parallèle sans qu'ils se gênent.
 
 #### Option A : Claude Desktop
@@ -60,7 +60,7 @@ Ajoute dans `~/Library/Application Support/Claude/claude_desktop_config.json` :
 ```json
 {
   "mcpServers": {
-    "browser-pilot": {
+    "izitest-agent": {
       "type": "sse",
       "url": "http://127.0.0.1:3457/sse"
     }
@@ -71,7 +71,7 @@ Ajoute dans `~/Library/Application Support/Claude/claude_desktop_config.json` :
 #### Option B : Claude Code
 
 ```bash
-claude mcp add --transport sse browser-pilot http://127.0.0.1:3457/sse
+claude mcp add --transport sse izitest-agent http://127.0.0.1:3457/sse
 ```
 
 > Le mode stdio (`node mcp-server/server.js --stdio`) reste disponible, mais **pour un seul
@@ -144,7 +144,7 @@ Une fois configuré, parle simplement à Claude :
 | `extract` | Extrait du contenu de la page |
 | `screenshot` | Capture d'écran |
 | `get_tabs` | Liste les onglets ouverts |
-| `close_window` | Ferme la fenêtre de travail en fin de tâche — uniquement une fenêtre ouverte par Browser Pilot, jamais celles de l'utilisateur |
+| `close_window` | Ferme la fenêtre de travail en fin de tâche — uniquement une fenêtre ouverte par IziTest Agent, jamais celles de l'utilisateur |
 | `get_page_info` | Infos détaillées sur la page |
 | `scroll` | Scroll haut/bas ou vers un élément |
 | `wait` | Attend (temps ou apparition d'élément) |

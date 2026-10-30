@@ -1,4 +1,4 @@
-// Ask the running Browser Pilot server to reload the unpacked extension in Chrome, so a
+// Ask the running IziTest Agent server to reload the unpacked extension in Chrome, so a
 // rebuild lands in the browser without a trip to chrome://extensions.
 //
 // The server pushes the request down the WebSocket it already holds to the extension,
@@ -6,11 +6,11 @@
 //
 // Best effort by design: if no server is running, or no extension is connected, this
 // prints how to reload by hand and never fails the build.
-// Set BROWSER_PILOT_NO_RELOAD=1 to skip it entirely.
+// Set IZITEST_NO_RELOAD=1 to skip it entirely.
 
 const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
 const MCP_PORT = process.env.MCP_PORT || '3457';
-const TOKEN = process.env.BROWSER_PILOT_TOKEN || '';
+const TOKEN = process.env.IZITEST_TOKEN || '';
 const HOST = MCP_HOST.includes(':') ? `[${MCP_HOST}]` : MCP_HOST; // IPv6 literal
 const URL = `http://${HOST}:${MCP_PORT}/api/dev/reload-extension`;
 
@@ -26,7 +26,7 @@ let lastRequestAt = 0;
 const manually = 'reload it by hand in chrome://extensions';
 
 async function reloadExtension({ quiet = false } = {}) {
-  if (process.env.BROWSER_PILOT_NO_RELOAD === '1') return false;
+  if (process.env.IZITEST_NO_RELOAD === '1') return false;
 
   const now = Date.now();
   if (now - lastRequestAt < DEBOUNCE_MS) return false;
@@ -39,32 +39,32 @@ async function reloadExtension({ quiet = false } = {}) {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (res.status === 403) {
-      // The server runs with BROWSER_PILOT_TOKEN set (it is reachable beyond this machine),
+      // The server runs with IZITEST_TOKEN set (it is reachable beyond this machine),
       // but this shell does not have it. Nothing is broken; the build just cannot authenticate.
-      console.log('[BrowserPilot] The server requires a token and BROWSER_PILOT_TOKEN is not set in this shell,');
-      console.log(`[BrowserPilot] so the extension was not reloaded — ${manually}, or export the token first.`);
+      console.log('[IziTest] The server requires a token and IZITEST_TOKEN is not set in this shell,');
+      console.log(`[IziTest] so the extension was not reloaded — ${manually}, or export the token first.`);
       return false;
     }
     if (!res.ok) {
-      if (!quiet) console.log(`[BrowserPilot] Server answered ${res.status} — ${manually}.`);
+      if (!quiet) console.log(`[IziTest] Server answered ${res.status} — ${manually}.`);
       return false;
     }
     // `reloaded` is confirmed by the extension registering again, not assumed from the
     // push: an extension running a build from before this feature ignores the message.
     const { notified, reloaded } = await res.json();
     if (reloaded) {
-      console.log(`[BrowserPilot] Extension reloaded in Chrome (${notified} profile${notified > 1 ? 's' : ''}).`);
+      console.log(`[IziTest] Extension reloaded in Chrome (${notified} profile${notified > 1 ? 's' : ''}).`);
       return true;
     }
     if (notified > 0) {
-      console.log('[BrowserPilot] The extension did not restart. It is most likely running a build from before');
-      console.log(`[BrowserPilot] auto-reload existed — ${manually} ONCE, and later builds will reload themselves.`);
+      console.log('[IziTest] The extension did not restart. It is most likely running a build from before');
+      console.log(`[IziTest] auto-reload existed — ${manually} ONCE, and later builds will reload themselves.`);
       return false;
     }
-    if (!quiet) console.log(`[BrowserPilot] No extension connected to the bridge — ${manually}.`);
+    if (!quiet) console.log(`[IziTest] No extension connected to the bridge — ${manually}.`);
     return false;
   } catch {
-    if (!quiet) console.log(`[BrowserPilot] Browser Pilot server not reachable on ${HOST}:${MCP_PORT} — ${manually}.`);
+    if (!quiet) console.log(`[IziTest] IziTest Agent server not reachable on ${HOST}:${MCP_PORT} — ${manually}.`);
     return false;
   }
 }

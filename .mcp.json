@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "browser-pilot": {
+    "izitest-agent": {
       "type": "sse",
       "url": "http://127.0.0.1:3457/sse",
       "headers": {
-        "Authorization": "Bearer ${BROWSER_PILOT_TOKEN:-}"
+        "Authorization": "Bearer ${IZITEST_TOKEN:-}"
       }
     }
   }

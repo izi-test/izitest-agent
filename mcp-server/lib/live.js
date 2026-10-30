@@ -29,16 +29,16 @@ import * as websocket from './websocket.js';
 import { listSessions } from './session.js';
 import { db, parseJson } from './db.js';
 
-const DATA_DIR = process.env.BROWSER_PILOT_LIVE_DIR
+const DATA_DIR = process.env.IZITEST_LIVE_DIR
   || join(fileURLToPath(new URL('.', import.meta.url)), '..', 'data', 'live');
 const INDEX_FILE = join(DATA_DIR, 'index.jsonl');
 
 export const MAX_VIEWERS_PER_TAB = 2;
 const RETENTION_MS = 24 * 60 * 60 * 1000;
-const MAX_KEPT_FRAMES = Number(process.env.BROWSER_PILOT_LIVE_MAX_FRAMES) || 20000;
+const MAX_KEPT_FRAMES = Number(process.env.IZITEST_LIVE_MAX_FRAMES) || 20000;
 // When continuous recording is off, a watched tab still keeps one stream frame per interval.
-const RECORD_INTERVAL_MS = Number(process.env.BROWSER_PILOT_LIVE_RECORD_INTERVAL_MS) || 1000;
-const SESSION_MAX_STREAM_FRAMES = Number(process.env.BROWSER_PILOT_LIVE_SESSION_MAX_FRAMES) || 300;
+const RECORD_INTERVAL_MS = Number(process.env.IZITEST_LIVE_RECORD_INTERVAL_MS) || 1000;
+const SESSION_MAX_STREAM_FRAMES = Number(process.env.IZITEST_LIVE_SESSION_MAX_FRAMES) || 300;
 // Which tabs to record is re-checked this often (and right after each action), which also
 // restarts a recording lost with an extension restart.
 const RECONCILE_MS = 3000;
@@ -50,7 +50,7 @@ const MAX_FPS = 30;
 // is asked to start again — a no-op when it is alive, a restart when its debugger session
 // went away (navigation that swapped the renderer, service worker restart).
 const STREAM_REVIVE_MS = 5000;
-const BOUNDARY = 'browserpilotframe';
+const BOUNDARY = 'izitestframe';
 const FRAME_ID = /^[a-z0-9]{6,12}-[0-9a-f]{12}$/;
 
 export const LIVE_ACTIONS = new Set(['navigate', 'click', 'fill', 'select', 'keyboard']);
@@ -68,14 +68,14 @@ export function setLiveBridge(fake) {
 
 // ─── Switch ─────────────────────────────────────────────────────────
 //
-// BROWSER_PILOT_LIVE=off is the hard switch: nothing can turn live view back on without a
+// IZITEST_LIVE=off is the hard switch: nothing can turn live view back on without a
 // restart. Otherwise PUT /live/settings { enabled } flips it at runtime, kept in the settings
 // table so it survives a restart.
 
 const isOff = (v) => /^(0|off|false|no)$/i.test(v || '');
-const ENV_OFF = isOff(process.env.BROWSER_PILOT_LIVE);
-// BROWSER_PILOT_LIVE_RECORD=off: same, for the continuous recording only.
-const ENV_RECORD_OFF = isOff(process.env.BROWSER_PILOT_LIVE_RECORD);
+const ENV_OFF = isOff(process.env.IZITEST_LIVE);
+// IZITEST_LIVE_RECORD=off: same, for the continuous recording only.
+const ENV_RECORD_OFF = isOff(process.env.IZITEST_LIVE_RECORD);
 
 function storedSettings() {
   try {
@@ -121,7 +121,7 @@ export function liveSettings() {
 }
 
 export function setLiveEnabled(on) {
-  if (ENV_OFF && on) throw Object.assign(new Error('Live view is switched off by BROWSER_PILOT_LIVE=off; restart the server without it to turn it on.'), { status: 409 });
+  if (ENV_OFF && on) throw Object.assign(new Error('Live view is switched off by IZITEST_LIVE=off; restart the server without it to turn it on.'), { status: 409 });
   enabled = Boolean(on);
   saveSettings();
   if (!enabled) stopEverything();
@@ -132,7 +132,7 @@ export function setLiveEnabled(on) {
 
 /** The continuous recording alone; live view itself (streams, action frames) stays as is. */
 export function setContinuousRecording(on) {
-  if (ENV_RECORD_OFF && on) throw Object.assign(new Error('Continuous recording is switched off by BROWSER_PILOT_LIVE_RECORD=off; restart the server without it to turn it on.'), { status: 409 });
+  if (ENV_RECORD_OFF && on) throw Object.assign(new Error('Continuous recording is switched off by IZITEST_LIVE_RECORD=off; restart the server without it to turn it on.'), { status: 409 });
   continuousRecording = Boolean(on);
   saveSettings();
   orphanCheckDue = true;
@@ -269,7 +269,7 @@ function sessionForTab(tab) {
     || null;
 }
 
-/** An agent's tab: in a window Browser Pilot opened, or a popup opened from one. The
+/** An agent's tab: in a window IziTest Agent opened, or a popup opened from one. The
  *  user's own tabs are never shown — the same rule that keeps agents out of them. */
 function isAgentTab(tab) {
   return tab.owner !== 'user' || tab.openedFrom !== undefined || Boolean(sessionForTab(tab));
@@ -763,6 +763,6 @@ export function initLive({ reconcileEveryMs = RECONCILE_MS } = {}) {
   if (reconcileEveryMs) {
     setInterval(() => reconcileRecorders().catch((err) => log(`[live] Recording check failed: ${err.message}`)), reconcileEveryMs).unref();
   }
-  log(`[live] Live view ${enabled ? 'on' : 'off'}${ENV_OFF ? ' (BROWSER_PILOT_LIVE=off)' : ''}, ` +
+  log(`[live] Live view ${enabled ? 'on' : 'off'}${ENV_OFF ? ' (IZITEST_LIVE=off)' : ''}, ` +
       `continuous recording ${enabled && continuousRecording ? 'on' : 'off'} — ${kept.length} frame(s) kept`);
 }

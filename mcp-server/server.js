@@ -39,7 +39,7 @@ const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
 // l'ouvrir au-delà de la machine revient à confier ses comptes à qui peut l'atteindre.
 // D'où le défaut loopback, et le refus de démarrer sur une autre interface sans jeton.
 const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
-const MCP_TOKEN = process.env.BROWSER_PILOT_TOKEN || '';
+const MCP_TOKEN = process.env.IZITEST_TOKEN || '';
 const LOOPBACK = ['127.0.0.1', '::1', 'localhost'];
 const WILDCARD = ['0.0.0.0', '::', ''];
 
@@ -54,7 +54,7 @@ const HOSTS = LOOPBACK.includes(MCP_HOST) || WILDCARD.includes(MCP_HOST)
 
 if (!LOOPBACK.includes(MCP_HOST) && !MCP_TOKEN) {
   console.error(`[server] Refus de démarrer : MCP_HOST=${MCP_HOST} expose le serveur hors de cette machine ` +
-    `sans BROWSER_PILOT_TOKEN. Définis un jeton, ou garde MCP_HOST=127.0.0.1.`);
+    `sans IZITEST_TOKEN. Définis un jeton, ou garde MCP_HOST=127.0.0.1.`);
   process.exit(1);
 }
 
@@ -107,7 +107,7 @@ onProfileRegistered((profileId) => {
  */
 function createMcpServer(connectionId) {
   const server = new McpServer({
-    name: 'browser-pilot',
+    name: 'izitest-agent',
     version: '1.0.0',
   });
 

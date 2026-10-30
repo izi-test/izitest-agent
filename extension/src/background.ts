@@ -36,7 +36,7 @@ async function cmdDetectListContext(params: { selector?: string; text?: string; 
 
 const WS_URL = 'ws://127.0.0.1:3456';
 const RECONNECT_DELAY_MS = 1000;
-const KEEPALIVE_ALARM = 'browser-pilot-keepalive';
+const KEEPALIVE_ALARM = 'izitest-keepalive';
 const KEEPALIVE_INTERVAL_MIN = 0.4; // ~24 seconds, under the 30s MV3 limit
 
 let websocket: WebSocket | null = null;
@@ -117,7 +117,7 @@ async function executeCommand(command: string, params: Record<string, unknown>, 
     // Evict the stale Puppeteer connection and retry once.
     const tabId = params.tabId as number | undefined;
     if (tabId) {
-      console.warn(`[BrowserPilot] about:blank error on tab ${tabId}, evicting and retrying...`);
+      console.warn(`[IziTest] about:blank error on tab ${tabId}, evicting and retrying...`);
       detachBrowser(tabId);
       await delay(300);
 
@@ -161,7 +161,7 @@ function connect(): void {
       }));
     });
     updateBadge('ON', '#10b981');
-    console.log('[BrowserPilot] Connected to bridge');
+    console.log('[IziTest] Connected to bridge');
   };
 
   websocket.onmessage = async (event: MessageEvent) => {
@@ -171,7 +171,7 @@ function connect(): void {
       messageId = message.id;
 
       if (message.type === 'command') {
-        console.group(`[BrowserPilot] ⚡ Command: ${message.command}`);
+        console.group(`[IziTest] ⚡ Command: ${message.command}`);
         console.log('Params:', message.params);
         
         const captureDebugScreenshot = async (isError: boolean) => {
@@ -229,14 +229,14 @@ function connect(): void {
         // Pushed by the bridge after `npm run build` in extension/, so a rebuild lands in
         // Chrome without a trip to chrome://extensions. This kills the service worker
         // immediately: nothing after it runs, and any in-flight command is lost.
-        console.log('[BrowserPilot] Reload requested by the bridge — restarting the extension');
+        console.log('[IziTest] Reload requested by the bridge — restarting the extension');
         chrome.runtime.reload();
       } else if (message.type === 'restore_owned_windows') {
         // A reload wipes chrome.storage.session, so the server hands back the windows its
         // sessions are working in — otherwise close_window would refuse them and tab
         // resolution would stop being scoped to each session's window.
         const restored = await restoreOwnedWindows(message.windows ?? []);
-        if (restored) console.log(`[BrowserPilot] Re-adopted ${restored} session window(s) after restart`);
+        if (restored) console.log(`[IziTest] Re-adopted ${restored} session window(s) after restart`);
       } else if (message.type === 'set_overlay_state') {
         const state = message.state;
         // In some cases we want to update state but not popup if it wasn't there
@@ -260,8 +260,8 @@ function connect(): void {
       console.groupEnd();
       // Both are sent back to the agent; only a real malfunction belongs in the
       // extension's error list (chrome://extensions).
-      if (isExpectedRefusal(error)) console.warn('[BrowserPilot]', (error as Error).message);
-      else console.error('[BrowserPilot] Error:', error);
+      if (isExpectedRefusal(error)) console.warn('[IziTest]', (error as Error).message);
+      else console.error('[IziTest] Error:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (websocket?.readyState === WebSocket.OPEN) {
         websocket.send(JSON.stringify({
@@ -276,7 +276,7 @@ function connect(): void {
   websocket.onclose = () => {
     isConnected = false;
     updateBadge('OFF', '#ef4444');
-    console.log('[BrowserPilot] Disconnected, reconnecting...');
+    console.log('[IziTest] Disconnected, reconnecting...');
     setTimeout(connect, RECONNECT_DELAY_MS);
   };
 

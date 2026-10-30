@@ -42,7 +42,7 @@ const WIZARD_STEP1 = [
   '@e3 [button] "Next"', '@e4 [textbox] "Search docs" placeholder="Search…"',
 ];
 
-// Modelled on browser-pilot-test.html: six sections, many empty required fields outside the contact form.
+// Modelled on izitest-test.html: six sections, many empty required fields outside the contact form.
 const testPage = (filled) => {
   const v = filled ? ' value="[filled]"' : '';
   return [
@@ -107,13 +107,13 @@ const CASES = [
     inputs: ['adresse e-mail', 'mot de passe'], expect: (d) => isFill(d, ['adresse e-mail', 'mot de passe']) },
   { name: 'login: NO values → refuse to guess', tree: LOGIN, title: 'Connexion — Shop', goal: 'Se connecter au compte client',
     inputs: [], expect: (d) => (d.stop === 'blocked' ? null : 'expected BLOCKED') },
-  { name: 'test page: 6 values → fill (probability split across FILL_k)', tree: testPage(false), title: 'Browser Pilot — Test page', goal: CONTACT_GOAL,
+  { name: 'test page: 6 values → fill (probability split across FILL_k)', tree: testPage(false), title: 'IziTest Agent — Test page', goal: CONTACT_GOAL,
     inputs: CONTACT_KEYS, expect: (d) => isFill(d, CONTACT_KEYS), note: (d) => `batch=${d.batch?.length ?? 0}` },
-  { name: 'test page: all typed, other forms empty → click Send', tree: testPage(true), title: 'Browser Pilot — Test page', goal: CONTACT_GOAL,
+  { name: 'test page: all typed, other forms empty → click Send', tree: testPage(true), title: 'IziTest Agent — Test page', goal: CONTACT_GOAL,
     inputs: [], history: filledHistory, expect: (d) => (d.operation === 'CLICK' && d.target?.ref === 'e16' ? null : 'expected CLICK on e16 "Send message"') },
   { name: 'shop home with cookie banner → fill the search box', tree: SHOP_HOME, title: 'Shop — Accueil', goal: 'Rechercher "chaussures de running" et arriver sur la page de résultats',
     inputs: ['recherche'], expect: (d) => (d.operation === 'FILL' && d.target?.ref === 'e7' ? null : 'expected FILL on e7 searchbox') },
-  { name: 'after submit → done', tree: ['@e1 [button] "Send another message"', '@e2 [link] "Back to top" href="#top"'], title: 'Message sent — Browser Pilot', goal: CONTACT_GOAL,
+  { name: 'after submit → done', tree: ['@e1 [button] "Send another message"', '@e2 [link] "Back to top" href="#top"'], title: 'Message sent — IziTest Agent', goal: CONTACT_GOAL,
     inputs: [], history: [...filledHistory, { summary: 'CLICK button "Send message"' }], expect: (d) => (d.stop === 'done' ? null : 'expected DONE') },
   { name: 'login then search: the search value must NOT be batched on the login page', tree: LOGIN_WITH_SEARCH, title: 'Connexion — Shop',
     goal: 'Se connecter au compte, puis rechercher "chaussures de running"', inputs: ['adresse e-mail', 'mot de passe', 'recherche'],

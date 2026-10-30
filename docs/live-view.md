@@ -27,7 +27,7 @@ sont en lecture seule : GET uniquement, sauf le réglage.
 - Le flux s'arrête dès que le dernier spectateur se déconnecte.
 - Un spectateur trop lent saute des images, mais reçoit toujours la dernière, celle qui montre
   l'écran actuel.
-- Seuls les onglets des agents sont visibles : fenêtres ouvertes par Browser Pilot et popups
+- Seuls les onglets des agents sont visibles : fenêtres ouvertes par IziTest Agent et popups
   ouvertes depuis elles. Un onglet de l'utilisateur répond `403`.
 
 **Onglet en arrière-plan.** Chrome ne peint plus un onglet caché (autre onglet au premier
@@ -67,7 +67,7 @@ spectateur.
   revue toutes les 3 s. Il s'arrête quand la fenêtre se ferme ou que la session se termine ;
   ses images restent.
 - **Limite par session** : les 300 images de flux les plus récentes
-  (`BROWSER_PILOT_LIVE_SESSION_MAX_FRAMES`), plus **toutes** les images d'action, qui ne sont
+  (`IZITEST_LIVE_SESSION_MAX_FRAMES`), plus **toutes** les images d'action, qui ne sont
   jamais retirées par cette limite.
 - **Coût** :
   - onglet visible : le screencast n'envoie rien tant que la page ne bouge pas ;
@@ -79,10 +79,10 @@ spectateur.
   la copie enregistrée est réencodée en qualité 50.
 
 Quand l'enregistrement continu est coupé, un onglet regardé garde encore une image du flux par
-seconde (`BROWSER_PILOT_LIVE_RECORD_INTERVAL_MS`), comme avant.
+seconde (`IZITEST_LIVE_RECORD_INTERVAL_MS`), comme avant.
 
 Les images sont gardées **24 h** dans `mcp-server/data/live/` (20 000 au plus,
-`BROWSER_PILOT_LIVE_MAX_FRAMES`). L'enregistrement d'une session reste consultable 24 h après
+`IZITEST_LIVE_MAX_FRAMES`). L'enregistrement d'une session reste consultable 24 h après
 sa fin.
 
 ## Lecture seule
@@ -101,11 +101,11 @@ sa fin.
 - `PUT /live/settings {"enabled": false}` : arrête tous les flux, ne prend plus d'image
   après les actions, et toutes les routes `/live/*` répondent `503`. Le réglage est gardé en
   base et survit à un redémarrage. `{"enabled": true}` rallume.
-- `BROWSER_PILOT_LIVE=off` dans l'environnement du serveur : coupé, et impossible à
+- `IZITEST_LIVE=off` dans l'environnement du serveur : coupé, et impossible à
   rallumer sans redémarrer.
 - `PUT /live/settings {"continuousRecording": false}` : coupe seulement l'enregistrement
   continu. Le flux en direct et les images d'action continuent. Le réglage est gardé en base.
-  `BROWSER_PILOT_LIVE_RECORD=off` le verrouille jusqu'au redémarrage.
+  `IZITEST_LIVE_RECORD=off` le verrouille jusqu'au redémarrage.
 
 Les images déjà gardées ne sont pas effacées ; elles disparaissent au bout de 24 h.
 

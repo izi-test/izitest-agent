@@ -168,7 +168,7 @@ export async function cmdGetTabs() {
     active: tab.active,
     status: tab.status,
     owner: owners.has(tab.windowId)
-      ? (owners.get(tab.windowId) || 'browser-pilot (no session)')
+      ? (owners.get(tab.windowId) || 'izitest-agent (no session)')
       : 'user',
     // A popup the page opened (window.open): the working window it was opened from.
     ...(popups.has(tab.windowId) ? { openedFrom: popups.get(tab.windowId) } : {}),
@@ -184,7 +184,7 @@ export async function cmdCloseTab({ tabId }: CloseTabParams) {
   return { success: true };
 }
 
-// Closes the whole window holding `tabId` — only if Browser Pilot opened that window.
+// Closes the whole window holding `tabId` — only if IziTest Agent opened that window.
 // Returns a status rather than throwing, so the MCP tool can explain a refusal.
 export async function cmdCloseWindow({ tabId, sessionId, liveSessions }: CloseWindowParams) {
   let windowId: number;
@@ -201,7 +201,7 @@ export async function cmdCloseWindow({ tabId, sessionId, liveSessions }: CloseWi
 
   // A session closes its own window, never the window of another agent that is still
   // working. An owner that is no longer alive leaves an orphan, which anyone may close —
-  // it is still a window Browser Pilot opened, never one of the user's.
+  // it is still a window IziTest Agent opened, never one of the user's.
   const owner = await getWindowOwner(windowId);
   const ownerIsWorking = !!owner && owner !== sessionId
     && (liveSessions === undefined || liveSessions.includes(owner));

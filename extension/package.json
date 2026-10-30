@@ -1,5 +1,5 @@
 {
-  "name": "browser-pilot-extension",
+  "name": "izitest-agent-extension",
   "private": true,
   "scripts": {
     "build": "npm run clean && npm run copy && node build.js",

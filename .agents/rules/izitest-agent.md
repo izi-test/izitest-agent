@@ -4,7 +4,7 @@ trigger: always_on
 
 # IziTest Agent - Workflow Recording
 
-When the user asks to "enregistrer", "record", or "sauvegarder" a workflow/parcours for browser automation, use the **browser-pilot** MCP tools in this order:
+When the user asks to "enregistrer", "record", or "sauvegarder" a workflow/parcours for browser automation, use the **izitest-agent** MCP tools in this order:
 
 1. `start_recording({ name, description })` - Start recording
 2. Perform browser actions (`navigate`, `click`, `fill`, etc.) — steps are automatically recorded, do NOT call `record_step`
@@ -20,11 +20,11 @@ When the user asks to "rejouer", "replay", or "relancer" a workflow:
 - The replay tool sends commands directly to the browser without LLM reasoning
 - NEVER read the workflow JSON file to execute steps yourself — always use `replay_workflow`
 
-Do NOT use memory files or notes to store workflows. Always use the browser-pilot recording tools.
+Do NOT use memory files or notes to store workflows. Always use the izitest-agent recording tools.
 
 ## Plusieurs agents en parallèle
 
-Chaque connexion MCP obtient automatiquement sa propre session Browser Pilot : sa fenêtre,
+Chaque connexion MCP obtient automatiquement sa propre session IziTest Agent : sa fenêtre,
 ses refs de snapshot, son enregistrement. Deux agents lancés côte à côte ne se gênent pas,
 et il n'y a **rien à passer** dans les appels.
 
@@ -48,7 +48,7 @@ close_session({ name: "recherche-A" })   // à la fin, ferme sa fenêtre
 ### Toujours `navigate()` avant tout le reste
 
 Une session sans fenêtre refuse d'agir : `snapshot`, `execute_js`, `click`… échouent avec
-« This session has no window of its own yet ». C'est voulu — Browser Pilot ne retombe
+« This session has no window of its own yet ». C'est voulu — IziTest Agent ne retombe
 jamais sur l'onglet au premier plan, qui appartient à l'utilisateur ou à un autre agent.
 
 Pour agir dans un onglet existant, passe un `tabId` explicite. `get_tabs()` indique le

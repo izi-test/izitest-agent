@@ -11,10 +11,10 @@ import { recordAction } from '../recording.js';
 import { captureActionFrame, LIVE_ACTIONS } from '../live.js';
 
 // How text is typed into fields. Default is per-character key events (human-like, slow:
-// ~2 CDP round trips per character). BROWSER_PILOT_TYPING=insert makes one-shot insertion
+// ~2 CDP round trips per character). IZITEST_TYPING=insert makes one-shot insertion
 // the server default — much faster, but less human-like. Needs an extension build that
 // knows the `typing` fill param; older builds ignore it and keep typing key by key.
-const DEFAULT_TYPING = process.env.BROWSER_PILOT_TYPING === 'insert' ? 'insert' : undefined;
+const DEFAULT_TYPING = process.env.IZITEST_TYPING === 'insert' ? 'insert' : undefined;
 const TYPING_PARAM = z.enum(['keys', 'insert']).optional()
   .describe('"keys" = one key event per character (human-like, slow). "insert" = whole value at once (fast, no per-character key events). Default: server setting.');
 
@@ -154,7 +154,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
         forgetTabsEverywhere(result?.tabIds?.length ? result.tabIds : [closed.lastTabId]);
         return { content: [{ type: 'text', text: result?.closed
           ? `Session "${name}" closed, along with its working window.`
-          : `Session "${name}" closed. Its window was left open (${result?.reason ?? 'not owned by Browser Pilot'}).` }] };
+          : `Session "${name}" closed. Its window was left open (${result?.reason ?? 'not owned by IziTest Agent'}).` }] };
       } catch (err) {
         return { content: [{ type: 'text', text: `Session "${name}" closed, but its window could not be: ${err.message}` }] };
       }
@@ -483,8 +483,8 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
   server.tool(
     'close_window',
     [
-      'Close the working window Browser Pilot opened for this task, with every tab in it. Call it ONCE, at the very end, after the last page has been read.',
-      'Safe by design: it only closes a window Browser Pilot itself opened (navigate opens one per session). A window holding the user\'s own tabs is never closed — the call is refused instead, and nothing happens.',
+      'Close the working window IziTest Agent opened for this task, with every tab in it. Call it ONCE, at the very end, after the last page has been read.',
+      'Safe by design: it only closes a window IziTest Agent itself opened (navigate opens one per session). A window holding the user\'s own tabs is never closed — the call is refused instead, and nothing happens.',
       'Without tabId it closes the window of the tab the last navigate() used, with any popup windows its pages opened (e.g. a "Sign in with Google" popup). The next navigate() opens a fresh window.',
       'With the tabId of such a popup (click returns it as newTabId), it closes only that popup.',
     ].join('\n'),
@@ -503,7 +503,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
         result = await sendCommand(profile, 'close_window', { tabId: target, liveSessions: liveSessionIds() });
       } catch (err) {
         if (/Unknown command: close_window/.test(err.message)) {
-          return text('close_window needs a newer build of the Browser Pilot extension (rebuild it and reload it in chrome://extensions). Nothing was closed.', true);
+          return text('close_window needs a newer build of the IziTest Agent extension (rebuild it and reload it in chrome://extensions). Nothing was closed.', true);
         }
         throw err;
       }
@@ -530,7 +530,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
         );
       }
       return text(
-        `Not closed: tab ${target} is in a window Browser Pilot has no ownership record for (${result?.tabCount ?? '?'} tab(s)) — ` +
+        `Not closed: tab ${target} is in a window IziTest Agent has no ownership record for (${result?.tabCount ?? '?'} tab(s)) — ` +
         'either one of the user\'s own windows, or a working window whose record was lost (the extension was reloaded, ' +
         'or it is running a build from before window ownership was tracked per session). Nothing was closed; tell the user it is still open.',
         true

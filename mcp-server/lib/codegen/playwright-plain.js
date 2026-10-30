@@ -1,4 +1,4 @@
-// Generate a plain Playwright test file (@playwright/test) from a browser-pilot
+// Generate a plain Playwright test file (@playwright/test) from a izitest-agent
 // test object. Pure: no DB access, no filesystem. Returns the file content as
 // a single string so the caller can write it to disk or bundle it in a zip.
 

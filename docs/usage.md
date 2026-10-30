@@ -180,4 +180,4 @@ localStorage.getItem('user_id');                   // Lire localStorage
 5. **Vérifiez visuellement** avec des screenshots après des actions critiques
 
 ---
-[< Previous: Troubleshooting](file:///Library/Dev/browser-pilot/docs/troubleshooting.md) | [Next: MCP Tools Reference >](file:///Library/Dev/browser-pilot/docs/mcp-tools.md)
+[< Previous: Troubleshooting](troubleshooting.md) | [Next: MCP Tools Reference >](mcp-tools.md)
