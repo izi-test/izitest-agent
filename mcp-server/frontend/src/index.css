@@ -3,6 +3,10 @@
    Inspired by Stitch design tokens, Linear, Vercel & Raycast
    ═══════════════════════════════════════════════════════════════ */
 
+/* ─── Google Fonts import ─── */
+/* Before every other rule: an @import further down is ignored, and Inter never loaded. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
 /* ─── Design Tokens ─── */
 :root {
   /* Surface Hierarchy (deepest → brightest) */
@@ -3108,6 +3112,3 @@ body {
   .sidebar { display: none; }
   .app-layout { flex-direction: column; }
 }
-
-/* ─── Google Fonts import ─── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
