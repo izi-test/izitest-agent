@@ -385,7 +385,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       profile: z.string().optional(),
       tabId: z.number().optional(),
       annotate: z.boolean().optional().default(true).describe('Draw bounding boxes and return DOM mapping alongside the image (default: true)'),
-      purposeFilter: z.enum(['fill', 'click', 'read']).optional().describe('Restrict annotations: "fill" = only inputs, "click" = only buttons/links, "read" = all interactive'),
+      purposeFilter: z.enum(['fill', 'click', 'read']).optional().describe('Restrict annotations: "fill" = only inputs, "click" = only clickable elements, "read" = all interactive'),
       searchText: z.string().optional().describe('Only annotate elements whose text contains this string (case-insensitive)')
     },
     async ({ profile, tabId, annotate, purposeFilter, searchText }) => {
@@ -658,7 +658,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       'ELEMENT DISCOVERY PROTOCOL — Follow this order when looking for an element:',
       '  STEP 1 (always start here): Call snapshot() WITH a purposeFilter matching your intent.',
       '             -> About to fill a form? Use purposeFilter="fill" (only inputs).',
-      '             -> About to click something? Use purposeFilter="click" (only buttons/links).',
+      '             -> About to click something? Use purposeFilter="click" (only clickable elements).',
       '             -> Combine with searchText="label" to narrow further (e.g. searchText="email").',
       '             -> If you find the element in the output: use its @eX ref directly.',
       '  STEP 2 (if not found): Call snapshot() again with broader filters or searchText variations.',
@@ -671,7 +671,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       'FILTER STRATEGY (mandatory — always apply filters to keep output small):',
       '  1. purposeFilter — ALWAYS set this based on your next action:',
       '     * "fill"  — Only input fields (textbox, combobox, checkbox, radio, select). Use before filling.',
-      '     * "click" — Only clickable elements (button, link, tab, menu item). Use before clicking.',
+      '     * "click" — Only clickable elements (button, link, tab, menu item, cursor:pointer div/span). Use before clicking.',
       '     * "read"  — Everything. Use ONLY to understand full page structure, never as a first call.',
       '  2. searchText — Grep elements by label/text (case-insensitive). Example: searchText="connexion".',
       '     It searches every interactive element whatever the purposeFilter (a menu built on a checkbox is still found).',

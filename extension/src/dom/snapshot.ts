@@ -1195,24 +1195,33 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     const tag = el.tagName.toLowerCase();
     const role = getRole(el);
     const name = getAccessibleName(el);
+    // What the snapshot shows the element as. Locators keep the accessible name: `aria/`
+    // would not find a <div> by its text.
+    let label = name;
     let interactive = isInteractiveRole(role, tag) || el.hasAttribute('onclick');
     if (!interactive && el.hasAttribute('tabindex')) {
       const ti = parseInt(el.getAttribute('tabindex') || '', 10);
       if (!isNaN(ti) && ti >= 0) interactive = true;
     }
 
-    // Opt-in (pointerInteractive): a NAMED element whose cursor is 'pointer' while its
-    // parent's is not — the outermost element of a clickable region built without semantic
-    // markup. The parent check also drops the inside of links/styled buttons (inherited cursor).
+    // pointerInteractive, and always under purposeFilter "click": an element whose cursor is
+    // 'pointer' while its parent's is not — the outermost element of a clickable region built
+    // without semantic markup. The parent check also drops the inside of links/styled buttons
+    // (inherited cursor). Such a region often has no name of its own — Bien'ici's "Afficher
+    // tous les critères" is a <div class="btn"> whose text sits in a child <span>, and the
+    // click filter hid it — so its text names it.
     // Known limit: when the pointer cursor is set on a whole list container rather than on
     // its items, only the container is reported.
     let pointerOnly = false;
-    if (!interactive && options.pointerInteractive && name && tag !== 'body' && tag !== 'html') {
+    if (!interactive && (options.pointerInteractive || options.purposeFilter === 'click') && tag !== 'body' && tag !== 'html') {
       if (window.getComputedStyle(el).cursor === 'pointer') {
         const parent = el.parentElement;
         if (!parent || window.getComputedStyle(parent).cursor !== 'pointer') {
-          interactive = true;
-          pointerOnly = true;
+          label = name || (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+          if (label) {
+            interactive = true;
+            pointerOnly = true;
+          }
         }
       }
     }
@@ -1248,7 +1257,8 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     // purposeFilter "click" + searchText hid the very element the agent was looking for.
     const searchedAnyway = !!providedOptions.searchText && interactive;
     if (!skipNodeRender && !searchedAnyway && providedOptions.purposeFilter && providedOptions.purposeFilter !== 'read') {
-      if (!matchesPurposeFilter(role, tag, providedOptions.purposeFilter)) {
+      const clickableRegion = pointerOnly && providedOptions.purposeFilter === 'click';
+      if (!clickableRegion && !matchesPurposeFilter(role, tag, providedOptions.purposeFilter)) {
         skipNodeRender = true;
       }
     }
@@ -1286,7 +1296,7 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
 
       const indent = '  '.repeat(depth);
       let line = `${indent}${ref} [${role}]`;
-      if (name) line += ` "${truncate(name)}"`;
+      if (label) line += ` "${truncate(label)}"`;
 
       // Active/focus state
       if (document.activeElement === el) line += ` [active]`;
@@ -1389,7 +1399,7 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       const withLocators = performance.now() < locatorDeadline;
       const refInfo: RefNodeInfo = {
         role,
-        name: truncate(name),
+        name: truncate(label),
         ...(withLocators ? { selector: buildSelector(el), locators: buildLocators(el, name, role) } : {}),
       };
       if (role === 'heading') {
