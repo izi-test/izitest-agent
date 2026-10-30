@@ -34,7 +34,7 @@ async function cmdDetectListContext(params: { selector?: string; text?: string; 
   });
 }
 
-const WS_URL = 'ws://127.0.0.1:3456';
+const WS_URL = 'ws://127.0.0.1:3466';
 const RECONNECT_DELAY_MS = 1000;
 const KEEPALIVE_ALARM = 'izitest-keepalive';
 const KEEPALIVE_INTERVAL_MIN = 0.4; // ~24 seconds, under the 30s MV3 limit

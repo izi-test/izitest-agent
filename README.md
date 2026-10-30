@@ -10,8 +10,8 @@ Garde tes vraies sessions, cookies, fingerprint — zéro détection bot.
 ```
 Toi (langage naturel)
   → Claude Desktop / Claude Code / plusieurs agents en parallèle
-    → MCP Server partagé (SSE, port 3457) — une session par agent
-      → WebSocket Bridge (port 3456)
+    → MCP Server partagé (SSE, port 3467) — une session par agent
+      → WebSocket Bridge (port 3466)
         → Extension Chrome (par profil)
           → Ton vrai navigateur, une fenêtre par session
 ```
@@ -62,7 +62,7 @@ Ajoute dans `~/Library/Application Support/Claude/claude_desktop_config.json` :
   "mcpServers": {
     "izitest-agent": {
       "type": "sse",
-      "url": "http://127.0.0.1:3457/sse"
+      "url": "http://127.0.0.1:3467/sse"
     }
   }
 }
@@ -71,12 +71,12 @@ Ajoute dans `~/Library/Application Support/Claude/claude_desktop_config.json` :
 #### Option B : Claude Code
 
 ```bash
-claude mcp add --transport sse izitest-agent http://127.0.0.1:3457/sse
+claude mcp add --transport sse izitest-agent http://127.0.0.1:3467/sse
 ```
 
 > Le mode stdio (`node mcp-server/server.js --stdio`) reste disponible, mais **pour un seul
 > agent à la fois** : il démarre son propre pont WebSocket, et deux agents en stdio se
-> disputeraient le port 3456.
+> disputeraient le port 3466.
 
 ### 4. Lancement
 

@@ -10,7 +10,7 @@ IziTest Agent est un outil d'automatisation de navigateur piloté par IA. Il per
 
 ## 2. Extension Chrome
 
-Contrôle le navigateur via WebSocket (ws://127.0.0.1:3456).
+Contrôle le navigateur via WebSocket (ws://127.0.0.1:3466).
 
 | Commande | Description |
 |----------|-------------|

@@ -33,7 +33,7 @@ sequenceDiagram
 -   **Tool Registration**: Dynamically registers all tools (browser control, test recording).
 
 ### 2. WebSocket Bridge (lib/websocket.js)
--   **Port 3456**: The extension connects to the MCP server via standard WebSockets.
+-   **Port 3466**: The extension connects to the MCP server via standard WebSockets.
 -   **Profiling**: Each WebSocket client (each extension instance) is tracked by a unique `Profile ID`.
 -   **Async Commands**: Commands are sent with a unique ID to ensure that responses from the browser are correctly routed back to the right MCP tool call.
 

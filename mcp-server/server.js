@@ -33,8 +33,8 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'applicati
 
 // ─── Config ─────────────────────────────────────────────────────────
 
-const WS_PORT = process.env.WS_PORT ? parseInt(process.env.WS_PORT) : 3456;
-const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
+const WS_PORT = process.env.WS_PORT ? parseInt(process.env.WS_PORT) : 3466;
+const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 // Ce serveur pilote le Chrome de l'utilisateur, avec ses sessions déjà connectées :
 // l'ouvrir au-delà de la machine revient à confier ses comptes à qui peut l'atteindre.
 // D'où le défaut loopback, et le refus de démarrer sur une autre interface sans jeton.

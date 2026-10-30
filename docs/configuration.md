@@ -10,8 +10,8 @@ Ce document décrit toutes les options de configuration disponibles pour IziTest
 
 | Variable | Défaut | Description |
 |----------|--------|-------------|
-| `WS_PORT` | `3456` | Port WebSocket pour la communication avec l'extension Chrome |
-| `MCP_PORT` | `3457` | Port HTTP/SSE pour le serveur MCP (mode non-stdio) |
+| `WS_PORT` | `3466` | Port WebSocket pour la communication avec l'extension Chrome |
+| `MCP_PORT` | `3467` | Port HTTP/SSE pour le serveur MCP (mode non-stdio) |
 
 **Exemple** :
 ```bash
@@ -101,11 +101,11 @@ node server.js
 ```
 
 **Endpoints disponibles** :
-- `http://127.0.0.1:3457/` - Interface web
-- `http://127.0.0.1:3457/sse` - Endpoint SSE pour MCP
-- `http://127.0.0.1:3457/messages` - Messages MCP
-- `http://127.0.0.1:3457/health` - Vérification d'état
-- `http://127.0.0.1:3457/api/*` - API REST
+- `http://127.0.0.1:3467/` - Interface web
+- `http://127.0.0.1:3467/sse` - Endpoint SSE pour MCP
+- `http://127.0.0.1:3467/messages` - Messages MCP
+- `http://127.0.0.1:3467/health` - Vérification d'état
+- `http://127.0.0.1:3467/api/*` - API REST
 
 **Avantages** :
 - Interface web visuelle
@@ -123,7 +123,7 @@ Cliquez sur l'icône IziTest Agent dans Chrome pour configurer :
 | Paramètre | Description |
 |-----------|-------------|
 | **Profile ID** | Identifiant unique du profil (ex: `youtube-work`, `compte-pro`) |
-| **Server URL** | URL du serveur WebSocket (défaut: `ws://127.0.0.1:3456`) |
+| **Server URL** | URL du serveur WebSocket (défaut: `ws://127.0.0.1:3466`) |
 
 ### Modifier l'URL du serveur WebSocket
 

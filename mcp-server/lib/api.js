@@ -31,7 +31,7 @@ const CODEGEN_FRAMEWORKS = ['playwright-plain', 'playwright-cucumber'];
 const RELOAD_RECONNECT_TIMEOUT_MS = 8000;
 
 const execFileAsync = promisify(execFile);
-const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
+const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 
 // ─── Helpers ───────────────────────────────────────────────────────
 

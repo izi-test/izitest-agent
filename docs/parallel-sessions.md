@@ -90,8 +90,8 @@ fin de tâche. Le serveur log les fenêtres laissées ouvertes.
 
 ## Le serveur est unique et partagé
 
-IziTest Agent n'a qu'**un** pont WebSocket vers Chrome (port 3456) et **un** endpoint MCP
-(port 3457). Un deuxième serveur ne peut pas fonctionner : il refuse de démarrer sur un
+IziTest Agent n'a qu'**un** pont WebSocket vers Chrome (port 3466) et **un** endpoint MCP
+(port 3467). Un deuxième serveur ne peut pas fonctionner : il refuse de démarrer sur un
 port déjà pris, plutôt que de tuer celui qui tourne.
 
 Les agents ne démarrent donc jamais le serveur directement. Ils passent par :
@@ -111,13 +111,13 @@ Les clients se connectent ensuite en SSE :
 ```json
 {
   "mcpServers": {
-    "izitest-agent": { "type": "sse", "url": "http://127.0.0.1:3457/sse" }
+    "izitest-agent": { "type": "sse", "url": "http://127.0.0.1:3467/sse" }
   }
 }
 ```
 
 > **Le mode stdio (`server.js --stdio`) reste réservé à un agent unique.** Il démarre son
-> propre pont WebSocket, donc deux agents en stdio se disputeraient le port 3456. Pour du
+> propre pont WebSocket, donc deux agents en stdio se disputeraient le port 3466. Pour du
 > parallèle, c'est SSE.
 
 ### `MCP_HOST` ajoute une interface, il n'en retire pas
@@ -194,8 +194,8 @@ rend un run de test aveugle à ce que l'extension signale. Elle renvoie donc tou
 atterrirait dans la liste « Erreurs » de `chrome://extensions` au serveur :
 
 ```bash
-curl -X DELETE http://127.0.0.1:3457/api/dev/extension-errors   # avant le run
-curl        http://127.0.0.1:3457/api/dev/extension-errors      # après
+curl -X DELETE http://127.0.0.1:3467/api/dev/extension-errors   # avant le run
+curl        http://127.0.0.1:3467/api/dev/extension-errors      # après
 ```
 
 Un run peut ainsi affirmer qu'il n'a produit **aucune** erreur d'extension, au lieu de

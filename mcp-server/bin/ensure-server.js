@@ -4,7 +4,7 @@
 //
 // IziTest Agent is a single shared server that many agents connect to at once: one
 // WebSocket bridge to Chrome, one session per connected agent. Two agents starting it at
-// the same moment used to fight over port 3456 — so this script is the only supported way
+// the same moment used to fight over port 3466 — so this script is the only supported way
 // to start it from an agent, and it is safe to run concurrently.
 //
 //   node bin/ensure-server.js          # start it if needed, wait until it answers
@@ -24,7 +24,7 @@ const SERVER = join(__dirname, '..', 'server.js');
 const LOG_DIR = join(__dirname, '..', 'data');
 const LOG_FILE = join(LOG_DIR, 'server.log');
 
-const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
+const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
 
 // Probe every interface the server may answer on. It always binds loopback, but a setup

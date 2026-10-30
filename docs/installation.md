@@ -74,8 +74,8 @@ claude mcp add izitest-agent node /ABSOLUTE/PATH/TO/izitest-agent/mcp-server/ser
 ## 4. Configuration des ports (optionnel)
 
 Par défaut, IziTest Agent utilise les ports suivants :
-- **3456** : WebSocket (communication avec l'extension Chrome)
-- **3457** : Serveur MCP en mode SSE (Server-Sent Events)
+- **3466** : WebSocket (communication avec l'extension Chrome)
+- **3467** : Serveur MCP en mode SSE (Server-Sent Events)
 
 Si ces ports sont déjà utilisés, vous pouvez les configurer via des variables d'environnement :
 
@@ -102,7 +102,7 @@ node server.js --stdio
 node server.js
 ```
 
-En mode SSE, l'interface web est accessible à `http://127.0.0.1:3457`.
+En mode SSE, l'interface web est accessible à `http://127.0.0.1:3467`.
 
 ---
 

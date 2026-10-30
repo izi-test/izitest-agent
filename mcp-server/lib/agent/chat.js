@@ -13,7 +13,7 @@ import { log } from '../logger.js';
 import { AGENT_TOOLS, getToolMap } from './tools.js';
 import { listStepDefinitions } from '../gherkin/step-definition-store.js';
 
-const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3457;
+const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 
 // ─── System prompt builder ─────────────────────────────────────────
 

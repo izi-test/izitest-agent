@@ -23,15 +23,15 @@ Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
    - Si "Disconnected", cliquez sur "Reconnect"
 
 3. **Le serveur WebSocket ne tourne pas**
-   - Vérifiez que rien n'utilise le port 3456 :
+   - Vérifiez que rien n'utilise le port 3466 :
    ```bash
-   lsof -i :3456
+   lsof -i :3466
    ```
    - Si occupé, changez de port : `export WS_PORT=3458`
 
 4. **Pare-feu / antivirus**
    - Assurez-vous que localhost (127.0.0.1) n'est pas bloqué
-   - Les ports 3456 et 3457 doivent être accessibles en local
+   - Les ports 3466 et 3467 doivent être accessibles en local
 
 ---
 
@@ -179,7 +179,7 @@ cd mcp-server && node -e "require('./lib/db.js').initDatabase()"
 
 ```bash
 # 1. Vérifier le serveur WebSocket
-curl http://127.0.0.1:3457/health
+curl http://127.0.0.1:3467/health
 
 # 2. Vérifier les profils connectés
 # Dans Claude : "Liste les profils connectés"
@@ -209,7 +209,7 @@ killall "Google Chrome"
 pkill -f "izitest-agent"
 
 # 3. Vérifiez les ports
-lsof -i :3456,3457
+lsof -i :3466,3467
 
 # 4. Redémarrez Chrome avec le profil
 ./scripts/launch-profile.sh default
@@ -227,7 +227,7 @@ Si le problème persiste :
 
 1. **Collectez les informations** :
    - Version de Chrome (`chrome://version`)
-   - Sortie de `curl http://127.0.0.1:3457/health`
+   - Sortie de `curl http://127.0.0.1:3467/health`
    - Messages d'erreur exacts
 
 2. **Vérifiez les logs** :

@@ -21,7 +21,7 @@ IziTest Agent uses a multi-layered bridge to ensure stability and transparency:
 graph TD
     User([User Natural Language]) --> Claude[Claude Desktop / Claude Code]
     Claude --> MCPServer[MCP Server - Node.js]
-    MCPServer <--> WSBridge[WebSocket Bridge - Port 3456]
+    MCPServer <--> WSBridge[WebSocket Bridge - Port 3466]
     WSBridge <--> ChromeExt[Chrome Extension]
     ChromeExt <--> RealBrowser[Real Chrome Browser]
 ```

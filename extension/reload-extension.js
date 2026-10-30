@@ -9,7 +9,7 @@
 // Set IZITEST_NO_RELOAD=1 to skip it entirely.
 
 const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
-const MCP_PORT = process.env.MCP_PORT || '3457';
+const MCP_PORT = process.env.MCP_PORT || '3467';
 const TOKEN = process.env.IZITEST_TOKEN || '';
 const HOST = MCP_HOST.includes(':') ? `[${MCP_HOST}]` : MCP_HOST; // IPv6 literal
 const URL = `http://${HOST}:${MCP_PORT}/api/dev/reload-extension`;
