@@ -80,7 +80,7 @@ const ROLE_OF_TAG = {
 };
 
 /** The tag of the element a selector ends on ("button" in `#f > div > button.btn`), lowercased. */
-function lastTag(selector) {
+export function lastTag(selector) {
   const compounds = String(selector ?? '').replace(/\[[^\]]*\]/g, '[]').split(/\s*[>+~]\s*|\s+/).filter(Boolean);
   return /^([a-z][a-z0-9-]*)/i.exec(compounds.at(-1) ?? '')?.[1]?.toLowerCase() ?? null;
 }

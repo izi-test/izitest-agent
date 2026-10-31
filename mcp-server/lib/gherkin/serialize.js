@@ -2,6 +2,7 @@
 // The Gherkin is computed on the fly from test_steps — nothing is stored.
 
 import { db, parseJson } from '../db.js';
+import { isFragileSelector, isPositionalSelector, lastTag } from '../codegen/locators.js';
 
 export function serializeTestToFeature(test, projectId) {
   const definitions = db.prepare(
@@ -100,18 +101,8 @@ function tryMatchComposite(steps, startIndex, composites) {
     }
 
     // Implicit match: every sub-step command and params must match the template
-    let matched = true;
-    const args = [];
-    for (let j = 0; j < tpls.length; j++) {
-      const step = steps[startIndex + j];
-      const tpl = tpls[j];
-      if (step.command !== tpl.command) { matched = false; break; }
-      if (!walk(tpl.params, normalizeParams(step), args)) { matched = false; break; }
-    }
-    if (!matched) continue;
-
-    // Verify all arg slots are filled
-    if (args.some(a => a === undefined)) continue;
+    const args = extractCompositeArgs(steps, startIndex, tpls);
+    if (!args) continue;
 
     return {
       keyword: def.keyword,
@@ -125,13 +116,57 @@ function tryMatchComposite(steps, startIndex, composites) {
 function extractCompositeArgs(steps, startIndex, tpls) {
   const args = [];
   for (let j = 0; j < tpls.length; j++) {
-    const step = steps[startIndex + j];
-    const tpl = tpls[j];
-    if (step.command !== tpl.command) return null;
-    if (!walk(tpl.params, normalizeParams(step), args)) return null;
+    if (!matchSubStep(tpls[j], steps[startIndex + j], args)) return null;
   }
   if (args.some(a => a === undefined)) return null;
   return args;
+}
+
+/**
+ * A sub-step of a business step against a recorded step: same command, same parameters,
+ * the selector aside when it is weak — an ID the page generates at each load, or a
+ * position. Two recordings of the same click on Bien'ici's "Jardin" hold two different
+ * label[for="<uuid>"]: the element is then known by what both recordings agree on.
+ */
+function matchSubStep(tpl, step, args) {
+  if (step.command !== tpl.command) return false;
+  const actual = normalizeParams(step);
+  const expected = tpl.params ?? {};
+  const selector = expected.selector;
+  if (typeof selector !== 'string' || /\{\d+\}/.test(selector) || selector === actual.selector) {
+    return walk(expected, actual, args);
+  }
+  const { selector: _expected, ...expectedRest } = expected;
+  const { selector: _actual, ...actualRest } = actual;
+  return walk(expectedRest, actualRest, args) && sameElement(tpl, step, selector, actual.selector);
+}
+
+const isWeakSelector = (selector) => isFragileSelector(selector) || isPositionalSelector(selector);
+
+/**
+ * Whether two different selectors, one of them weak, name the same element: same test ID,
+ * a stable CSS locator in common, or the same tag and accessible name. Two stable selectors
+ * that differ are two elements. A box's name attribute is shared by its whole group
+ * (name="interests"): it says nothing about which box.
+ */
+function sameElement(tpl, step, tplSelector, stepSelector) {
+  if (!isWeakSelector(tplSelector) && !isWeakSelector(stepSelector ?? '')) return false;
+  const ours = tpl.locators ?? [];
+  const theirs = step.locators ?? [];
+  const valueOf = (locators, type) => locators.find(l => l.type === type)?.value;
+
+  const testid = valueOf(ours, 'testid');
+  if (testid && testid === valueOf(theirs, 'testid')) return true;
+
+  const isToggle = step.params?.checked !== undefined || tpl.params?.checked !== undefined;
+  const stableCss = (locators) => locators
+    .filter(l => ['css', 'attribute'].includes(l.type) && l.value && !isWeakSelector(l.value) && !(isToggle && /\[name=/.test(l.value)))
+    .map(l => l.value);
+  const theirCss = new Set(stableCss(theirs));
+  if (stableCss(ours).some(css => theirCss.has(css))) return true;
+
+  const name = valueOf(ours, 'aria');
+  return !!name && name === valueOf(theirs, 'aria') && lastTag(tplSelector) === lastTag(stepSelector);
 }
 
 function renderStepPhrase(step, definitions) {

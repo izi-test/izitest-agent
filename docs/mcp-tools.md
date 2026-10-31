@@ -146,6 +146,15 @@ create_business_step({
 par défaut (`I am on {string}`). Rejouée depuis Gherkin (`create_test_from_gherkin`), une étape
 métier redonne ses étapes avec leurs locators.
 
+Une étape métier se reconnaît aussi dans un autre enregistrement des mêmes étapes, même si un
+sélecteur y diffère parce qu'il est faible : un identifiant généré à chaque chargement (deux
+enregistrements de Bien'ici donnent deux `label[for="<uuid>"]` différents) ou une position. L'élément
+est alors reconnu à ce que les deux enregistrements ont en commun : le même `data-testid`, un même
+locator CSS stable, ou la même balise avec le même nom accessible (`label` « Jardin »). Deux sélecteurs
+stables qui diffèrent restent deux éléments, et l'attribut `name` d'une case cochée, commun à tout son
+groupe, ne compte pas. Les autres paramètres (état coché, valeur saisie…) doivent toujours correspondre.
+Une étape métier créée sans locators (avant `create_business_step`) demande toujours le sélecteur exact.
+
 ### Variable Support
 When saving a test (via `stop_recording`), IziTest Agent automatically identifies variables (e.g., input values or list selections). You can override these during `run_test`:
 
