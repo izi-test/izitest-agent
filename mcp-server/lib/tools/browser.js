@@ -227,10 +227,11 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       text: z.string().optional().describe('Visible text content to find and click'),
       ref: z.string().optional().describe('Reference from a previous snapshot to click (e.g. @e5)'),
       tabId: z.number().optional(),
+      checked: z.boolean().optional().describe('For a checkbox, radio or switch (or its label): the state wanted. Not clicked when it is already in that state. Without it, the click toggles, and the result says the state it left (`checked`).'),
       intent: z.string().optional().describe('Functional description of this step (e.g. "Submit the login form"). Recorded as step intent during test recording.')
     },
-    async ({ profile, selector, text, ref, tabId, intent }) => {
-      const result = learnTarget(ref, await sendCommand(profile, 'click', { selector, text, ref, tabId }));
+    async ({ profile, selector, text, ref, tabId, checked, intent }) => {
+      const result = learnTarget(ref, await sendCommand(profile, 'click', { selector, text, ref, tabId, checked }));
       let screenshotBase64 = null;
       if (getRecording()?.use_vrt) {
         try {
@@ -238,7 +239,10 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
           if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
         } catch(e) {}
       }
-      const actionId = saveActionToHistory('click', { selector, text, tabId }, ref, screenshotBase64, intent);
+      // A checkbox is recorded with the state the click left it in: replay and generated code
+      // set that state, where replaying a click would toggle it whatever it was.
+      const state = typeof result?.checked === 'boolean' ? { checked: result.checked } : {};
+      const actionId = saveActionToHistory('click', { selector, text, tabId, ...state }, ref, screenshotBase64, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );

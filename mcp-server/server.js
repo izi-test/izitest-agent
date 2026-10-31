@@ -23,6 +23,7 @@ import { registerTestTools } from './lib/tools/test.js';
 import { instrumentTools, registerBenchTools } from './lib/bench.js';
 import { registerAgentTools } from './lib/agent/mcp-adapter.js';
 import { initDatabase } from './lib/db.js';
+import { seedAllProjectsStepDefinitions } from './lib/gherkin/step-definition-store.js';
 import { apiRouter } from './lib/api.js';
 import { parseAllowedOrigins, refuseBrowserRequest } from './lib/origin-guard.js';
 
@@ -83,6 +84,9 @@ const USE_STDIO = process.argv.includes('--stdio');
 // ─── Initialize Database & Start WebSocket Bridge ───────────────────
 
 initDatabase();
+// Built-in step definitions are seeded when a project is created: give older projects the
+// ones added since ("I check {string}"…).
+seedAllProjectsStepDefinitions();
 startWebSocketServer(WS_PORT);
 initLive();
 

@@ -1,6 +1,6 @@
 // Puppeteer-side helpers for element interaction.
 // page.evaluate callbacks are serialized — _find() is re-declared inline in each one.
-import type { Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
 
 export const IS_MAC = navigator.userAgent.includes('Macintosh');
 export const CMD_KEY = IS_MAC ? 'Meta' : 'Control';
@@ -123,6 +123,27 @@ export async function clickViaLocator(page: Page, locatorType: string, locatorVa
  * handle.evaluate uses Runtime.callFunctionOn with the element's RemoteObjectId,
  * which is the exact equivalent of typing el.click() in DevTools console.
  */
+/**
+ * Whether the checkbox, radio or switch a click on this element acts on is checked: the
+ * element itself, the custom control it sits in, or the control of its <label>. Null for
+ * anything else. Same rules as toggleOf in dom/toggle.ts, which recording uses; inlined,
+ * since page.evaluate serialises the function.
+ */
+export async function toggleStateOf(handle: ElementHandle<Element>): Promise<boolean | null> {
+  return handle.evaluate((el) => {
+    const label = el.closest('label') as HTMLLabelElement | null;
+    const candidates = [el, el.closest('[role="checkbox"], [role="radio"], [role="switch"]'), label?.control ?? null];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const type = candidate.tagName === 'INPUT' ? (candidate as HTMLInputElement).type : '';
+      if (type === 'checkbox' || type === 'radio') return (candidate as HTMLInputElement).checked;
+      const role = candidate.getAttribute('role');
+      if (role === 'checkbox' || role === 'radio' || role === 'switch') return candidate.getAttribute('aria-checked') === 'true';
+    }
+    return null;
+  });
+}
+
 export async function clickToggleViaHandle(handle: ElementHandle<Element>): Promise<void> {
   await handle.evaluate((el) => {
     el.scrollIntoView({ behavior: 'instant', block: 'center' });

@@ -18,6 +18,16 @@ interface ResolvedElement {
   scrolled?: boolean;
   /** Something else is on top of the element at (x, y); this names it. */
   coveredBy?: string;
+  /** The checkbox, radio or switch the click acts on, as it is before the click. */
+  toggle?: { kind: 'checkbox' | 'radio' | 'switch'; checked: boolean };
+}
+
+/** The state wanted from a step's `checked`: a boolean, or "true"/"false" once a variable is filled in. */
+export function wantedChecked(checked: unknown): boolean | undefined {
+  if (typeof checked === 'boolean') return checked;
+  if (checked === 'true') return true;
+  if (checked === 'false') return false;
+  return undefined;
 }
 
 const REF_SCROLL_SETTLE_MS = 50;
@@ -175,7 +185,7 @@ export async function cmdNavigate(
   return { tabId: targetTabId, windowId: updatedTab.windowId, url: updatedTab.url, title: updatedTab.title };
 }
 
-export async function cmdClick({ selector, tabId, sessionId, text, ref }: ClickParams) {
+export async function cmdClick({ selector, tabId, sessionId, text, ref, checked }: ClickParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
   const page = await getPage(resolvedTabId);
 
@@ -188,6 +198,13 @@ export async function cmdClick({ selector, tabId, sessionId, text, ref }: ClickP
     : await resolveElementBySelector(resolvedTabId, { selector, text });
 
   if (!ref && !selector && !text) throw new Error('Provide selector, text, or ref to click');
+
+  // A click toggles a checkbox: asked for a state it is already in, leave it there.
+  const wanted = wantedChecked(checked);
+  if (element.toggle && wanted !== undefined && element.toggle.checked === wanted) {
+    return { success: true, tag: element.tag, text: element.text, checked: wanted, changes: [`already ${wanted ? 'checked' : 'unchecked'}: not clicked`] };
+  }
+
   assertNotCovered(element, 'clicked');
   const target = await describeRefTarget(resolvedTabId, ref);
 
@@ -216,6 +233,9 @@ export async function cmdClick({ selector, tabId, sessionId, text, ref }: ClickP
     success: true,
     tag: element.tag,
     text: element.text,
+    // The state the click left a checkbox, radio or switch in: what a recording replays to,
+    // instead of toggling it again.
+    ...(element.toggle ? { checked: element.toggle.kind === 'radio' || !element.toggle.checked } : {}),
     ...(newTab ? { newTabId: newTab.tabId, newWindowId: newTab.windowId } : {}),
     // What the click did: so the agent does not need a screenshot to find out.
     changes,

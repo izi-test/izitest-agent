@@ -19,6 +19,11 @@ export interface ClickParams {
   sessionId?: string;
   text?: string;
   ref?: string;
+  /**
+   * For a checkbox, radio or switch (or its label): the state wanted. The click is skipped
+   * when the box is already in it. A string after a {{variable}} is replaced ("true"/"false").
+   */
+  checked?: boolean | string;
 }
 
 // 'keys'   — one keyDown/keyUp per character: human-like, but ~2 CDP round trips per char.

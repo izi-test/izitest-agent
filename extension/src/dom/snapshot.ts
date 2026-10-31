@@ -1,4 +1,5 @@
 import { describeBlocker, frameLevels, hitTestThroughFrames, type FrameLevel } from './hit-test';
+import { toggleOf, type ToggleState } from './toggle';
 
 export type SnapshotPurpose = 'fill' | 'click' | 'read';
 
@@ -238,6 +239,8 @@ export interface ClickTarget {
   scrolled?: boolean;
   /** Set when something else is on top of the target at (x, y): what it is. */
   coveredBy?: string;
+  /** The checkbox, radio or switch a click on the target acts on, as it is before the click. */
+  toggle?: ToggleState;
 }
 
 interface MeasureOptions {
@@ -287,11 +290,13 @@ function measureForClick(el: Element, { uncover = false }: MeasureOptions = {}):
   if (rect.width === 0 || rect.height === 0) return null;
 
   const { originX, originY } = levels[levels.length - 1];
+  const toggle = toggleOf(el);
   const target = {
     x: Math.round(originX + rect.x + rect.width / 2),
     y: Math.round(originY + rect.y + rect.height / 2),
     tag: el.tagName.toLowerCase(),
     text: el.textContent?.slice(0, 50) || '',
+    ...(toggle ? { toggle } : {}),
   };
 
   // Just scrolled on a first measurement: positions may still move. Let the caller settle

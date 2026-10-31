@@ -12,7 +12,7 @@ These tools are used for direct, real-time control of the browser.
 | `navigate` | Navigates to a URL. | `url`, `profile`, `tabId` |
 | `snapshot` | Scans the DOM and returns interactive elements with UIDs (@eX). | `purposeFilter` (fill/click/read), `searchText` |
 | `screenshot` | Takes an annotated screenshot with DOM mapping. | `annotate`, `purposeFilter`, `searchText` |
-| `click` | Clicks an element. | `ref` (@eX), `selector`, `text` |
+| `click` | Clicks an element. On a checkbox, radio or switch (or its label), returns the state it left (`checked`); with `checked`, sets that state and does not click when it is already so. | `ref` (@eX), `selector`, `text`, `checked` |
 | `fill` | Fills an input/textarea/select. | `ref` (@eX), `selector`, `value`, `clear` |
 | `extract` | Retrieves content (text, attributes) from the page. | `selector`, `attribute`, `multiple` |
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
@@ -172,6 +172,27 @@ telle quelle, même là où la phrase attend un `{int}`.
 Limite : enregistrer depuis l'onglet Gherkin reconstruit les étapes à partir des phrases. Le lien
 d'une étape à une variable de liste (`list_item`) et les intentions des étapes regroupées n'y
 survivent pas.
+
+#### Cases à cocher
+
+Un clic sur une case à cocher, un bouton radio ou un interrupteur (`role="switch"`), ou sur son
+`<label>`, est enregistré avec l'état où il l'a laissée : `{ "selector": "…", "checked": true }`.
+Rejouer un simple clic inverserait la case quel que soit son état : une case déjà cochée au départ
+(préférence mémorisée, case cochée par défaut) finirait décochée, et le test passerait quand même.
+Avec l'état enregistré :
+
+- **`run_test`** ne clique pas si la case est déjà dans l'état voulu (« already checked: not
+  clicked » dans le résultat de l'étape) ;
+- **`playwright-plain`** et les étapes métier génèrent `.check()` ou `.uncheck()`, qui laissent la
+  case dans l'état voulu, label compris : `page.locator('label', { hasText: 'Jardin' }).check()` ;
+- **Gherkin** : `When I check "…"`, `When I uncheck "…"` ;
+- **Variable** : `add_test_variable({ test_name, step, param: "checked", name: "jardin" })` fait de
+  l'état une variable (`"true"` ou `"false"`) : `When I set "…" checked to "{{jardin}}"` dans
+  l'onglet Gherkin, `setChecked(…)` dans le code généré.
+
+Une case cochée fait souvent aussi partie d'un groupe (les critères d'une recherche) : la détection
+de variables en fait alors une variable de liste, qui choisit *quelle* case ; l'état reste celui
+enregistré.
 
 ### Paramètres de `run_test`
 

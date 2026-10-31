@@ -73,6 +73,18 @@ When('I fill {string} with {string}', async function (selector, value) {
   await this.page.fill(selector, value);
 });
 
+When('I check {string}', async function (selector) {
+  await this.page.locator(selector).check();
+});
+
+When('I uncheck {string}', async function (selector) {
+  await this.page.locator(selector).uncheck();
+});
+
+When('I set {string} checked to {string}', async function (selector, checked) {
+  await this.page.locator(selector).setChecked(checked === 'true');
+});
+
 When('I press {string}', async function (key) {
   await this.page.keyboard.press(key);
 });
@@ -204,6 +216,12 @@ function commandToPlaywright(tpl, argNames) {
     case 'navigate':
       return `await this.page.goto(${resolve(params.url)});`;
     case 'click':
+      // A checkbox recorded with its state: check() leaves it so, where click() toggles.
+      if (typeof params.checked === 'boolean') return act(params.checked ? 'check' : 'uncheck');
+      if (params.checked != null) {
+        const t = target();
+        return withFixme(t, `await ${t.locator ?? `this.page.locator(${resolve(t.css)})`}.setChecked(${resolve(params.checked)} === 'true');`);
+      }
       return act('click');
     case 'fill':
       return act('fill', params.value);

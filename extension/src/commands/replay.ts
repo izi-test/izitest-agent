@@ -1,10 +1,10 @@
 // Replay engine: executes a recorded workflow step sequence.
 import { getPage, detachBrowser } from '../puppeteer-client';
 import { resolveTabId, delay, TOP_FRAME } from '../helpers';
-import { clickViaLocator, clickToggleViaHandle, focusViaLocator, clearAndType, isStaleContextError } from './page-helpers';
+import { clickViaLocator, clickToggleViaHandle, focusViaLocator, clearAndType, isStaleContextError, toggleStateOf } from './page-helpers';
 import { findElementWithLocators, type ElementCondition } from './locators';
 import { resolveVariableElement, type ReplayStep } from './variable-resolver';
-import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdKeyboard, cmdScroll } from './actions';
+import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdKeyboard, cmdScroll, wantedChecked } from './actions';
 import { cmdExecuteJs, cmdWait } from './queries';
 import type { ReplaySequenceParams, Locator } from '../types';
 import type { Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
@@ -107,6 +107,13 @@ export async function cmdReplaySequence(
     }
 
     try {
+      // A checkbox recorded with its state: replayed to that state, not toggled whatever
+      // it is now (a box the page remembers as checked would be unchecked).
+      const wanted = step.command === 'click' ? wantedChecked(baseParams.checked) : undefined;
+      const alreadySet = async (handle: Parameters<typeof toggleStateOf>[0]) =>
+        wanted !== undefined && (await toggleStateOf(handle).catch(() => null)) === wanted;
+      const alreadyDetail = wanted ? 'already checked: not clicked' : 'already unchecked: not clicked';
+
       // ─── Variable Resolution (list/box item selection) ───────
       let resolvedViaVariable = false;
       if (step.variableResolve && step.command === 'click') {
@@ -120,12 +127,15 @@ export async function cmdReplaySequence(
 
         if (varResult) {
           try {
-            console.log(`  🖱️ Clicking variable-resolved element...`);
-            await varResult.handle.click();
+            const skip = await alreadySet(varResult.handle);
+            if (!skip) {
+              console.log(`  🖱️ Clicking variable-resolved element...`);
+              await varResult.handle.click();
+            }
             await varResult.handle.dispose();
             console.log(`  ✅ Step ${i + 1} completed via variable resolve (${varResult.description})`);
             const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt,
-              { resolvedVia: 'variable', detail: varResult.description, tabId: currentTabId });
+              { resolvedVia: 'variable', detail: skip ? `${varResult.description}, ${alreadyDetail}` : varResult.description, tabId: currentTabId });
             results.push(stepResult);
             onProgress?.({ type: 'step_complete', stepResult });
             resolvedViaVariable = true;
@@ -161,6 +171,7 @@ export async function cmdReplaySequence(
           step.command === 'select' ? 'enabled' :
           'any';
 
+        let skippedClick = false;
         const executeWithLocators = async (page: Page) => {
           const { result, errors } = await findElementWithLocators(page, step.locators!, elementCondition);
           if (!result) throw new Error(`All ${step.locators!.length} locators failed:\n${errors.join('\n')}`);
@@ -168,7 +179,10 @@ export async function cmdReplaySequence(
           const { locatorUsed, locatorValue, handle } = result;
 
           try {
-            if (step.command === 'click') {
+            if (step.command === 'click' && await alreadySet(handle)) {
+              console.log(`  ☑️ ${alreadyDetail} (${locatorUsed}="${locatorValue}")`);
+              skippedClick = true;
+            } else if (step.command === 'click') {
               // Check if this is a toggle element (checkbox/radio/switch).
               // Custom component wrappers (Radix, Spark) double-toggle on mouse click
               // because pointer events bubble through nested handlers.
@@ -239,7 +253,7 @@ export async function cmdReplaySequence(
 
         console.log(`  ✅ Step ${i + 1} completed successfully (via ${locatorUsed})`);
         const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt,
-          { locator: locatorUsed, tabId: currentTabId });
+          { locator: locatorUsed, tabId: currentTabId, ...(skippedClick ? { detail: alreadyDetail } : {}) });
         results.push(stepResult);
         onProgress?.({ type: 'step_complete', stepResult });
       } else {

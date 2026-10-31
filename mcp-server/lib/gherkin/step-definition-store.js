@@ -65,6 +65,11 @@ export function deleteStepDefinition(id) {
   return result.changes > 0;
 }
 
+/** Add to every project the built-in definitions it lacks: those added since it was created. */
+export function seedAllProjectsStepDefinitions() {
+  for (const { id } of db.prepare('SELECT id FROM projects').all()) seedProjectStepDefinitions(id);
+}
+
 export function seedProjectStepDefinitions(projectId) {
   const insert = db.prepare(
     `INSERT OR IGNORE INTO step_definitions

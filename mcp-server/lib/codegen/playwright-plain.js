@@ -59,6 +59,12 @@ function renderStep(step) {
     case 'navigate':
       return `await page.goto(${jsLiteral(p.url ?? '')});`;
     case 'click':
+      // A checkbox recorded with its state: check() leaves it so, where click() toggles.
+      if (typeof p.checked === 'boolean') return act(target(), p.checked ? 'check' : 'uncheck');
+      if (p.checked != null) {
+        const t = target();
+        return withFixme(t, `await ${locatorOf(t)}.setChecked(${jsLiteral(p.checked)} === 'true');`);
+      }
       return act(target(), 'click');
     case 'fill':
       return act(target(), 'fill', p.value ?? '');
