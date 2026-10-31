@@ -29,6 +29,7 @@ const learnTarget = (ref, result) => {
 const saveActionToHistory = (...args) => recordAction(sess(), ...args);
 import { classifyWithLLM, detectListContext } from './classify.js';
 import { deriveVarNameFromLocators, uniqueVarName, listVariable } from './variable-detection.js';
+import { linkAssertionToVariables } from './test-variable.js';
 import { loadTest, saveTest } from './test-store.js';
 import { evaluateAssertion } from './test-execute.js';
 
@@ -677,8 +678,10 @@ function buildTools(sendCommand) {
           return `Assertion FAILED — NOT added.\n  Type: ${assertion_type}\n  Expected: ${result.expected}\n  Actual: ${result.actual}\nFix and try again.`;
         }
 
+        // Checked against what the test typed: replayed with other values, it checks those.
+        const { assertion: saved, linked } = linkAssertionToVariables(assertion, test.variables);
         const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
-        const newStep = { command: 'assert', params: {}, intent: intentText, assertion };
+        const newStep = { command: 'assert', params: {}, intent: intentText, assertion: saved };
 
         if (step_order && step_order > 0 && step_order <= test.steps.length + 1) {
           test.steps.splice(step_order - 1, 0, newStep);
@@ -687,7 +690,8 @@ function buildTools(sendCommand) {
         }
 
         saveTest(test);
-        return `Assertion PASSED and added at step ${step_order || test.steps.length}.\n  Expected: ${result.expected}\n  Actual: ${result.actual}`;
+        const link = linked.length ? `\n  Linked to ${linked.map(n => `{{${n}}}`).join(', ')}: saved as "${saved.expected}".` : '';
+        return `Assertion PASSED and added at step ${step_order || test.steps.length}.\n  Expected: ${result.expected}\n  Actual: ${result.actual}${link}`;
       },
     }),
   };

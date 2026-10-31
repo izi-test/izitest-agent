@@ -295,6 +295,8 @@ export const AGENT_TOOLS = [
       'the rest, typically a city or a budget inside a URL. The variable then shows in the dashboard (Data),',
       'run_test can override it, playwright-plain code reads it from VARS, and the Cucumber export makes it a',
       'column of a Scenario Outline. A business step grouping that step maps it with { "variable": "<name>" }.',
+      'A name the test already has reuses that variable: e.g. an assertion that checks the e-mail typed in step 2',
+      '(add_assertion links new assertions by itself).',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -316,11 +318,12 @@ export const AGENT_TOOLS = [
       if (result.error) return { error: result.error };
 
       saveTest(result.test);
-      log(`[Agent Tool] Added variable {{${name}}} to step ${step} of "${test_name}"`);
+      log(`[Agent Tool] ${result.reused ? 'Reused' : 'Added'} variable {{${name}}} in step ${step} of "${test_name}"`);
       const { params, assertion, command } = result.test.steps[step - 1];
       return {
         data: {
           variable: name,
+          reused: result.reused,
           defaultValue: result.test.variables[name].defaultValue,
           step: { number: step, command, [param]: (command === 'assert' ? assertion : params)[param] },
           variables: Object.keys(result.test.variables),

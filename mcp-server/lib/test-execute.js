@@ -263,8 +263,10 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   const applySubstitutions = (str) => {
     let result = str;
+    // Filled into the step's JSON: escaped, or a value with a quote or a backslash (a
+    // password, an expected text) made it invalid and the replay crashed.
     for (const [key, value] of Object.entries(mergedVariables)) {
-      result = result.replaceAll(`{{${key}}}`, value);
+      result = result.replaceAll(`{{${key}}}`, JSON.stringify(value).slice(1, -1));
     }
     if (substitutions) {
       for (const [oldVal, newVal] of Object.entries(substitutions)) {

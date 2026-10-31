@@ -40,7 +40,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. |
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. |
-| `add_assertion` | Adds a check (e.g., "element exists") to a saved test. |
+| `add_assertion` | Adds a check (e.g., "element exists") to a saved test. A value the test typed in it is saved as its `{{variable}}`. |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
@@ -181,6 +181,28 @@ Scenario Outline: recherche_bienici
 
 Dans l'onglet Gherkin du tableau de bord, la phrase garde `"{{ville}}"` et `{{budget}}`, et s'enregistre
 telle quelle, même là où la phrase attend un `{int}`.
+
+#### Assertions et variables
+
+Une assertion qui vérifie une valeur saisie dans le test doit suivre cette valeur : rejoué avec un autre
+e-mail, le test doit vérifier cet e-mail, pas celui de l'enregistrement. `add_assertion` le fait seul :
+toute valeur d'une variable de saisie (`text` ou `select`, 3 caractères au moins) présente dans
+`expected` y est remplacée par sa variable, et la réponse l'indique :
+
+```
+Linked to {{email}}: saved as ""email": "{{email}}"", so a replay with other values checks those values.
+```
+
+Pour une assertion ajoutée avant, `add_test_variable` avec le nom d'une variable existante la réutilise
+(sans `value`, ou avec sa valeur par défaut) :
+
+```javascript
+add_test_variable({ test_name: "izi_login", step: 7, param: "expected", name: "email" })
+// "email": "jane.doe@example.com"  →  "email": "{{email}}"
+```
+
+Au rejeu, une valeur contenant un guillemet ou une barre oblique inverse (`Pa"ss\word`) est prise telle
+quelle.
 
 Limite : enregistrer depuis l'onglet Gherkin reconstruit les étapes à partir des phrases. Le lien
 d'une étape à une variable de liste (`list_item`) et les intentions des étapes regroupées n'y

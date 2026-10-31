@@ -11,6 +11,7 @@ import {
 } from '../tests.js';
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
 import { deriveVarNameFromLocators, uniqueVarName, listVariable } from '../variable-detection.js';
+import { linkAssertionToVariables } from '../test-variable.js';
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -588,12 +589,14 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }
 
       // ─── Assertion passed — save it to the test ───
+      // Checked against what the test typed: replayed with other values, it checks those.
+      const { assertion: saved, linked } = linkAssertionToVariables(assertion, test.variables);
       const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
       const newStep = {
         command: 'assert',
         params: {},
         intent: intentText,
-        assertion
+        assertion: saved
       };
 
       if (step_order && step_order > 0 && step_order <= test.steps.length + 1) {
@@ -609,6 +612,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       if (selector) summary += `  Selector: ${selector}\n`;
       summary += `  Expected: ${result.expected}\n`;
       summary += `  Actual:   ${result.actual}`;
+      if (linked.length) {
+        summary += `\n  Linked to ${linked.map(n => `{{${n}}}`).join(', ')}: saved as "${saved.expected}", ` +
+          'so a replay with other values checks those values.';
+      }
       return { content: [{ type: 'text', text: summary }] };
     }
   );

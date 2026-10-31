@@ -50,7 +50,7 @@ test('a variable that cannot be declared says why', () => {
   const add = (opts) => addTestVariable(RECORDED, { step: 1, param: 'url', name: 'ville', ...opts }).error;
   assert.match(add({ step: 4 }), /Step 4 is out of range: test "recherche" has 3 step\(s\)/);
   assert.match(add({ name: '2ville' }), /"2ville" is not a usable variable name/);
-  assert.match(add({ name: 'option' }), /already has a variable "option"/);
+  assert.match(add({ name: 'option', value: 'antony-92160' }), /\{\{option\}\} already stands for "5": to use it here, give that value or none/);
   assert.match(add({ param: 'selector' }), /Step 1 \(navigate\) has no "selector" value \(it has: url, tabId\)/);
   assert.match(add({ value: 'paris' }), /"paris" is not in the "url" of step 1/);
   assert.match(addTestVariable(withCityAndBudget(), { step: 1, param: 'url', value: '{{ville}}', name: 'v' }).error, /already a variable/);
