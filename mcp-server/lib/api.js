@@ -20,11 +20,8 @@ import {
 import { serializeTestToFeature } from './gherkin/serialize.js';
 import { parseFeatureToSteps } from './gherkin/parse.js';
 import { loadTest, saveTest } from './test-store.js';
-import { generatePlaywrightPlain } from './codegen/playwright-plain.js';
-import { generatePlaywrightCucumber } from './codegen/playwright-cucumber.js';
+import { generateTestCode } from './codegen/index.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
-
-const CODEGEN_FRAMEWORKS = ['playwright-plain', 'playwright-cucumber'];
 
 // How long to wait for a reloaded extension to register again. A reload drops the socket
 // and the service worker reconnects after ~1s; this leaves room for a slow restart.
@@ -224,47 +221,20 @@ export async function apiRouter(req, res, url) {
     params = matchRoute(path, '/api/tests/:name/codegen');
     if (method === 'GET' && params) {
       const framework = url.searchParams.get('framework') || 'playwright-plain';
-      if (!CODEGEN_FRAMEWORKS.includes(framework)) {
-        return json(res, 400, {
-          error: `Unknown framework '${framework}'. Expected one of: ${CODEGEN_FRAMEWORKS.join(', ')}`,
-        });
-      }
-
       const test = loadTest(params.name);
       if (!test) return json(res, 404, { error: 'Test not found' });
 
       try {
-        if (framework === 'playwright-plain') {
-          const slug = (test.name || 'test')
-            .toLowerCase()
-            .trim()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '') || 'test';
-          const content = generatePlaywrightPlain(test);
-          return json(res, 200, {
-            framework,
-            files: [{ path: `tests/${slug}.spec.js`, content }],
-          });
-        }
-
-        // playwright-cucumber requires step definitions from the project.
-        const projectId = test.project_id;
-        if (!projectId) {
-          return json(res, 400, {
-            error: 'Test is not assigned to a project; assign it first to generate playwright-cucumber code',
-          });
-        }
-        const definitions = db
+        const result = generateTestCode(test, framework, (projectId) => db
           .prepare('SELECT * FROM step_definitions WHERE project_id = ?')
           .all(projectId)
           .map((r) => ({
             ...r,
             params_template: parseJson(r.params_template) || {},
             steps_template: parseJson(r.steps_template) || null,
-          }));
-
-        const bundle = generatePlaywrightCucumber(test, definitions);
-        return json(res, 200, { framework, files: bundle.files });
+          })));
+        if (result.error) return json(res, result.status, { error: result.error });
+        return json(res, 200, { framework, files: result.files });
       } catch (err) {
         return json(res, 500, { error: err.message });
       }

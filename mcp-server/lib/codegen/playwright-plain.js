@@ -2,6 +2,8 @@
 // test object. Pure: no DB access, no filesystem. Returns the file content as
 // a single string so the caller can write it to disk or bundle it in a zip.
 
+import { chooseTarget } from './locators.js';
+
 export function generatePlaywrightPlain(test) {
   const lines = [];
   lines.push(`import { test, expect } from '@playwright/test';`);
@@ -52,35 +54,42 @@ export function generatePlaywrightPlain(test) {
 
 function renderStep(step) {
   const p = step.params || {};
+  const target = () => chooseTarget(step, jsLiteral);
   switch (step.command) {
     case 'navigate':
       return `await page.goto(${jsLiteral(p.url ?? '')});`;
     case 'click':
-      return `await page.click(${jsLiteral(p.selector ?? '')});`;
+      return act(target(), 'click');
     case 'fill':
-      return `await page.fill(${jsLiteral(p.selector ?? '')}, ${jsLiteral(p.value ?? '')});`;
-    case 'type':
-      return `await page.locator(${jsLiteral(p.selector ?? '')}).type(${jsLiteral(p.value ?? '')});`;
+      return act(target(), 'fill', p.value ?? '');
+    case 'type': {
+      const t = target();
+      return withFixme(t, `await ${locatorOf(t)}.type(${jsLiteral(p.value ?? '')});`);
+    }
     case 'keyboard':
       return `await page.keyboard.press(${jsLiteral(p.key ?? '')});`;
     case 'press':
-      return `await page.press(${jsLiteral(p.selector ?? '')}, ${jsLiteral(p.key ?? '')});`;
+      return act(target(), 'press', p.key ?? '');
     case 'hover':
-      return `await page.hover(${jsLiteral(p.selector ?? '')});`;
+      return act(target(), 'hover');
     case 'scroll':
       if (p.selector) {
-        return `await page.locator(${jsLiteral(p.selector)}).scrollIntoViewIfNeeded();`;
+        const t = target();
+        return withFixme(t, `await ${locatorOf(t)}.scrollIntoViewIfNeeded();`);
       }
       return `await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));`;
     case 'select':
-      return `await page.selectOption(${jsLiteral(p.selector ?? '')}, ${jsLiteral(p.value ?? '')});`;
+      return act(target(), 'selectOption', p.value ?? '');
     case 'wait':
       if (p.ms != null && p.ms !== '') {
         const ms = Number(p.ms);
         return `await page.waitForTimeout(${Number.isFinite(ms) ? ms : 0});`;
       }
       if (p.selector) {
-        return `await page.waitForSelector(${jsLiteral(p.selector)});`;
+        const t = target();
+        return withFixme(t, t.locator
+          ? `await ${t.locator}.waitFor();`
+          : `await page.waitForSelector(${jsLiteral(t.css)});`);
       }
       return `// TODO: wait step without ms or selector`;
     case 'assert':
@@ -88,6 +97,25 @@ function renderStep(step) {
     default:
       return `// TODO: unsupported command '${step.command}'`;
   }
+}
+
+// `page.click(css)` for a CSS selector, as generated so far; `locator.click()` when the step
+// needs a Playwright locator instead (see codegen/locators.js).
+function act(target, method, ...args) {
+  const values = args.map(arg => jsLiteral(arg));
+  const call = target.locator
+    ? `await ${target.locator}.${method}(${values.join(', ')});`
+    : `await page.${method}(${[jsLiteral(target.css), ...values].join(', ')});`;
+  return withFixme(target, call);
+}
+
+function locatorOf(target) {
+  return target.locator ?? `page.locator(${jsLiteral(target.css)})`;
+}
+
+function withFixme(target, line) {
+  if (!target.fragile) return line;
+  return `// FIXME: this selector holds an ID the page generates at each load, and nothing stable was recorded: replace it.\n${line}`;
 }
 
 function renderAssertion(a) {

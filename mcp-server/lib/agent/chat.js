@@ -128,6 +128,7 @@ function executeTool(toolName, args, projectId, conversationMessages) {
 
   const result = def.handler(args);
   if (result.error) return { error: result.error };
+  if (result.text) return { text: result.text };
   return result.data || { success: true };
 }
 

@@ -15,6 +15,17 @@ import {
   createStepDefinition,
 } from '../gherkin/step-definition-store.js';
 import { log } from '../logger.js';
+import { CODEGEN_FRAMEWORKS, generateTestCode, formatCodeFiles } from '../codegen/index.js';
+
+function projectDefinitions(projectId) {
+  return db.prepare(
+    'SELECT * FROM step_definitions WHERE project_id = ?'
+  ).all(projectId).map(r => ({
+    ...r,
+    params_template: parseJson(r.params_template) || {},
+    steps_template: parseJson(r.steps_template) || null,
+  }));
+}
 
 // ─── Tool catalogue ─────────────────────────────���──────────────────
 
@@ -211,16 +222,39 @@ export const AGENT_TOOLS = [
       const test = loadTest(test_name);
       if (!test) return { error: `Test "${test_name}" not found` };
 
-      const definitions = db.prepare(
-        'SELECT * FROM step_definitions WHERE project_id = ?'
-      ).all(project_id).map(r => ({
-        ...r,
-        params_template: parseJson(r.params_template) || {},
-        steps_template: parseJson(r.steps_template) || null,
-      }));
-
-      const feature = serializeTestToFeatureWith(test, definitions);
+      const feature = serializeTestToFeatureWith(test, projectDefinitions(project_id));
       return { data: { feature } };
+    },
+  },
+
+  {
+    name: 'get_test_as_code',
+    description: [
+      'Generate Playwright code for a recorded test, to commit in the project under test: it runs with plain',
+      'Playwright, without the extension and without an LLM, in CI too.',
+      '"playwright-plain" (default): one tests/<name>.spec.js, run with `npx playwright test`.',
+      '"playwright-cucumber": a standalone project (.feature, step definitions, World, cucumber.js and its own',
+      'package.json); the test must belong to a project. Write it in a folder of its own (e.g. e2e/), never over',
+      'the repository\'s package.json.',
+      'Nothing is written on disk: the files come back as text, write them yourself.',
+    ].join(' '),
+    parameters: {
+      type: 'object',
+      properties: {
+        test_name: { type: 'string', description: 'Name of the test' },
+        framework: { type: 'string', enum: CODEGEN_FRAMEWORKS, description: '"playwright-plain" (default) or "playwright-cucumber"' },
+      },
+      required: ['test_name'],
+    },
+    handler({ test_name, framework = 'playwright-plain' }) {
+      const test = loadTest(test_name);
+      if (!test) return { error: `Test "${test_name}" not found` };
+
+      const result = generateTestCode(test, framework, projectDefinitions);
+      if (result.error) return { error: result.error };
+
+      const count = result.files.length;
+      return { text: `${count} file${count > 1 ? 's' : ''} for "${test_name}" (${framework}):\n\n${formatCodeFiles(result.files)}` };
     },
   },
 
