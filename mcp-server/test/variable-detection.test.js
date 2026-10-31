@@ -62,6 +62,19 @@ test('without a label: the submitted name, then the placeholder', () => {
   assert.equal(deriveVarNameFromLocators({}), null);
 });
 
+test('an accessible name that is only the placeholder ranks as the placeholder (izi_review)', () => {
+  const country = { locators: [{ type: 'css', value: '#country-input' }, { type: 'aria', value: 'Start typing...' }, { type: 'attribute', value: 'input[name="country"]' }, { type: 'placeholder', value: 'Start typing...' }] };
+  assert.equal(deriveVarNameFromLocators(country), 'country');
+  const tag = { locators: [{ type: 'css', value: '#tag-input' }, { type: 'aria', value: 'Add a tag...' }, { type: 'placeholder', value: 'Add a tag...' }] };
+  assert.equal(deriveVarNameFromLocators(tag), 'tag_input', 'its id, before the placeholder');
+});
+
+test('filled by selector, without locators: the id it names', () => {
+  assert.equal(deriveVarNameFromLocators({ params: { selector: '#inline-title' } }), 'inline_title');
+  assert.equal(deriveVarNameFromLocators({ params: { selector: '#r1' } }), null, 'a generated id names nothing');
+  assert.equal(deriveVarNameFromLocators({ params: { selector: 'div.inline-edit' } }), null);
+});
+
 test('names stay unique within a test', () => {
   const used = new Set();
   assert.deepEqual(['email', 'email', 'email'].map((n) => uniqueVarName(n, used)), ['email', 'email_2', 'email_3']);

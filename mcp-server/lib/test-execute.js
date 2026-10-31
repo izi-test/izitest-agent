@@ -563,6 +563,9 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       })),
       ...assertionStepResults
     ].sort((left, right) => (left.step || 0) - (right.step || 0));
+    // What this replay typed, and the tab it ended in: add_assertion links on them.
+    error.values = mergedVariables;
+    error.tabId = stepResults.findLast((sr) => sr.tabId != null)?.tabId;
     if (failedStepOrder) {
       const failedStepData = hydratedSteps[failedStepOrder - 1];
       error.failedStepCommand = failedStepData?.command;
@@ -571,7 +574,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     throw error;
   }
 
-  return { ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal };
+  return { ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables };
 }
 
 /**
@@ -670,7 +673,9 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
       js = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? el.textContent.trim() : null; })()`;
       break;
     case 'attribute_equals':
-      js = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? el.getAttribute(${JSON.stringify(assertion.attribute || '')}) : null; })()`;
+      // A field's "value" is what it holds now, as Playwright's toHaveValue reads it: the
+      // attribute is only the value it started with (null for a field the test filled).
+      js = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const attr = ${JSON.stringify(assertion.attribute || '')}; return attr === 'value' && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? el.value : el.getAttribute(attr); })()`;
       break;
     case 'url_equals':
     case 'url_contains':

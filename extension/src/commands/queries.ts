@@ -54,7 +54,12 @@ export async function cmdExtract({ selector, attribute, tabId, sessionId, multip
         ? docs.flatMap((doc) => Array.from(doc.querySelectorAll(sel)))
         : [docs.map((doc) => doc.querySelector(sel)).find(Boolean)].filter(Boolean) as Element[];
 
-      return elements.map(el => (attr ? el.getAttribute(attr) : el.outerHTML));
+      // A field's "value" is what it holds now; the attribute is only what it started with
+      // (null for a field filled since).
+      const read = (el: Element) => attr === 'value' && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)
+        ? (el as HTMLInputElement).value
+        : attr ? el.getAttribute(attr) : el.outerHTML;
+      return elements.map(read);
     },
     args: [selector, attribute || null, multiple ?? false]
   });

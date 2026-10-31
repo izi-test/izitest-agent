@@ -1,7 +1,7 @@
 // IziTest Agent — Content Script
 // Injected into every page to enable deep DOM interaction
 
-import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, selectOption } from './dom/snapshot';
+import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, selectOption, setInputValue } from './dom/snapshot';
 import FindSimilarElements from './utils/FindSimilarElements';
 import { announceToParent, listenForHops } from './dom/frame-hop';
 
@@ -106,6 +106,13 @@ import { announceToParent, listenForHops } from './dom/frame-hop';
         { ref: message.ref as string | undefined, selector: message.selector as string | undefined },
         message.value as string,
         (message.matchBy as 'text' | 'value' | undefined) ?? 'text'
+      ));
+    }
+
+    if (message.type === 'set_input_value') {
+      sendResponse(setInputValue(
+        { ref: message.ref as string | undefined, selector: message.selector as string | undefined },
+        message.value as string
       ));
     }
 

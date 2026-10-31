@@ -14,22 +14,32 @@ function slug(text) {
     .replace(/_+$/, '');
 }
 
+// The id a CSS selector names, when a developer wrote it: "#inline-title", not "#r1".
+const idOf = (selector) => /^#([A-Za-z][A-Za-z_-]*)$/.exec(selector ?? '')?.[1];
+
 // Where a field's name is read, best first: what a person reads next to it (its label, its
-// accessible name), then the name the form submits it under, then the placeholder last —
-// a placeholder is an example value: "you@example.com" made {{youexamplecom}}.
+// accessible name), then the name the form submits it under, then its id, then the
+// placeholder last — a placeholder is an example value: "you@example.com" made
+// {{youexamplecom}}. An accessible name that is only the placeholder (a field without a
+// label) ranks as the placeholder: "Start typing..." had made {{start_typing}} of a field
+// submitted as "country".
 const FIELD_NAME_SOURCES = [
   (l) => l.type === 'label' && l.value,
-  (l) => l.type === 'aria' && l.value,
+  (l, placeholders) => l.type === 'aria' && !placeholders.has(l.value) && l.value,
   (l) => l.type === 'attribute' && /\[name="([^"]+)"\]/.exec(l.value)?.[1],
+  (l) => l.type === 'css' && idOf(l.value),
   (l) => l.type === 'placeholder' && l.value,
 ];
 
 /** A variable name for the field a step fills, from its recorded locators; null without one. */
 export function deriveVarNameFromLocators(step) {
-  const locators = step.locators || [];
+  // A field filled by selector has no locators: its selector is all there is.
+  const locators = step.locators?.length ? step.locators
+    : step.params?.selector ? [{ type: 'css', value: step.params.selector }] : [];
+  const placeholders = new Set(locators.filter((l) => l.type === 'placeholder').map((l) => l.value));
   for (const source of FIELD_NAME_SOURCES) {
     for (const locator of locators) {
-      const text = source(locator);
+      const text = source(locator, placeholders);
       const name = text ? slug(text) : '';
       if (name.length >= 2 && !/^\d/.test(name)) return name;
     }

@@ -175,6 +175,21 @@ test('the role and name Chrome gave the element win over what the snapshot compu
   }), /await page\.getByRole\('switch', \{ name: 'Notifications', exact: true \}\)\.click\(\);/);
 });
 
+test('a role and name found more than once is looked for where it was clicked', () => {
+  // izitest-test.html has a "Clear" in the login form and one in the contact form.
+  const clear = (place) => render({
+    command: 'click',
+    params: { selector: '#login-form > div:nth-of-type(3) > button:nth-of-type(2)' },
+    locators: [{ type: 'aria', value: 'Clear' }, { type: 'role', value: 'button', name: 'Clear', ...place }],
+  });
+  assert.match(clear({ scope: { testid: 'login-form' } }),
+    /await page\.getByTestId\('login-form'\)\.getByRole\('button', \{ name: 'Clear', exact: true \}\)\.click\(\);/);
+  assert.match(clear({ scope: { css: '#contact' } }),
+    /await page\.locator\('#contact'\)\.getByRole\('button', \{ name: 'Clear', exact: true \}\)\.click\(\);/);
+  // No ancestor tells them apart: the rank.
+  assert.match(clear({ nth: 1 }), /await page\.getByRole\('button', \{ name: 'Clear', exact: true \}\)\.nth\(1\)\.click\(\);/);
+});
+
 test('a box styled away behind a separate <label for> is checked through that label', () => {
   const step = (id) => ({ command: 'click', params: { selector: `#${id}`, checked: true, viaLabel: true, labelFor: id }, locators: [{ type: 'aria', value: "J'accepte les CGU" }] });
   assert.match(render(step('cgu')), /await page\.check\('label\[for="cgu"\]'\);/);

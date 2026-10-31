@@ -62,6 +62,15 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // Recording state is per session (see tools/session-scope.js): two agents can record two
   // different tests at the same time without their steps interleaving.
   const sess = () => currentSession();
+
+  // The values a replay typed, by the tab it ended in: an assertion added on that tab
+  // (add_assertion's tabId) is linked to the variables through them, not the defaults.
+  const rememberReplay = (name, values, tabId) => {
+    if (!values || tabId == null) return;
+    const session = sess();
+    session.replays ??= new Map();
+    session.replays.set(tabId, { test: name, values });
+  };
   const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, sess().scope(params), ...rest);
   const getRecording = () => sess().recording;
   const setRecording = (value) => { sess().recording = value; };
@@ -367,6 +376,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       // Normal (non-debug) execution
       try {
         const res = await executeTest(name, variables, substitutions, start_step, new_window, sendCommand, 'mcp');
+        rememberReplay(name, res.values, res.results?.findLast?.((r) => r.tabId != null)?.tabId);
         let resultText = `Test "${name}" executed successfully (execution #${res.executionId}).`;
         if (res.assertionsTotal > 0) {
           resultText += `\n\nAssertions: ${res.assertionsPassed}/${res.assertionsTotal} passed`;
@@ -377,6 +387,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         resultText += `\n\n${JSON.stringify(res.results, null, 2)}`;
         return { content: [{ type: 'text', text: resultText }] };
       } catch (err) {
+        rememberReplay(name, err.values, err.tabId);
         const msg = err.message || String(err);
         const execId = err.executionId ? ` (execution #${err.executionId})` : '';
         const failedStep = err.failedStep || '?';
@@ -591,7 +602,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       // ─── Assertion passed — save it to the test ───
       // Checked against what the test typed: replayed with other values, it checks those.
-      const { assertion: saved, linked } = linkAssertionToVariables(assertion, test.variables);
+      // On the window of a replay of this test, what the page shows is what that replay typed.
+      const replay = tabId != null ? sess().replays?.get(tabId) : undefined;
+      const { assertion: saved, linked } = linkAssertionToVariables(
+        assertion, test.variables, replay?.test === test_name ? replay.values : undefined);
       const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
       const newStep = {
         command: 'assert',

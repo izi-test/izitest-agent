@@ -129,12 +129,22 @@ function renderAssertion(a) {
       return `await expect(page.locator('body')).toContainText(${jsLiteral(a.expected ?? '')});`;
     case 'text_not_contains':
       return `await expect(page.locator(${jsLiteral(a.selector ?? 'body')})).not.toContainText(${jsLiteral(a.expected ?? '')});`;
+    case 'text_equals':
+      return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toHaveText(${jsLiteral(a.expected ?? '')});`;
+    case 'attribute_equals':
+      // "value": what the field holds now, as the replay reads it — not the attribute.
+      return a.attribute === 'value'
+        ? `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toHaveValue(${jsLiteral(a.expected ?? '')});`
+        : `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toHaveAttribute(${jsLiteral(a.attribute ?? '')}, ${jsLiteral(a.expected ?? '')});`;
+    case 'element_count':
+      return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toHaveCount(${parseInt(a.expected, 10) || 0});`;
     case 'element_visible':
       return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toBeVisible();`;
     case 'element_hidden':
       return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toBeHidden();`;
     case 'element_exists':
-      return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toHaveCount(1);`;
+      // At least one, as the replay checks: toHaveCount(1) failed when two matched.
+      return `await expect(page.locator(${jsLiteral(a.selector ?? '')}).first()).toBeAttached();`;
     case 'element_not_exists':
       return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toHaveCount(0);`;
     case 'url_equals':

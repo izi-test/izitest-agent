@@ -33,6 +33,27 @@ test('the longest value wins, and a shorter one is not looked for inside its pla
   assert.deepEqual(linked, ['email', 'prenom']);
 });
 
+test('on the window of a replay run with other values, those values are linked', () => {
+  // izi_profile_fields replayed with date_of_birth=1985-11-30: the result shows that date.
+  const variables = { date_of_birth: { type: 'text', defaultValue: '1990-05-12', step: 5 }, volume: { type: 'text', defaultValue: '80', step: 7 } };
+  const check = { type: 'text_contains', selector: '#result-profile', expected: '"dob": "1985-11-30"' };
+  const { assertion, linked } = linkAssertionToVariables(check, variables, { date_of_birth: '1985-11-30', volume: '25' });
+  assert.equal(assertion.expected, '"dob": "{{date_of_birth}}"');
+  assert.deepEqual(linked, ['date_of_birth']);
+  assert.deepEqual(linkAssertionToVariables(check, variables).linked, [], 'the defaults are not on that page');
+});
+
+test('a value is linked whole, never as a piece of a word (izi_review)', () => {
+  // "Fra" typed, "France" picked in the suggestions: the result shows France.
+  const variables = { country: { type: 'text', defaultValue: 'Fra' }, tag: { type: 'text', defaultValue: 'playwright' } };
+  const country = { type: 'text_contains', selector: '#result-dynamic', expected: '"country": "France"' };
+  assert.deepEqual(linkAssertionToVariables(country, variables).linked, []);
+  const tags = { type: 'text_contains', selector: '#result-dynamic', expected: '"tags": "playwright,cucumber"' };
+  assert.equal(linkAssertionToVariables(tags, variables).assertion.expected, '"tags": "{{tag}},cucumber"');
+  const special = { type: 'text_contains', selector: '#r', expected: 'total: 1.5$ (x+y)' };
+  assert.equal(linkAssertionToVariables(special, { price: { type: 'text', defaultValue: '1.5$ (x+y)' } }).assertion.expected, 'total: {{price}}');
+});
+
 test('list variables, short values and assertions without text are left alone', () => {
   assert.deepEqual(linkAssertionToVariables({ type: 'text_contains', expected: 'Technology is on' }, VARIABLES).linked, []);
   const exists = { type: 'element_exists', selector: '#ok' };

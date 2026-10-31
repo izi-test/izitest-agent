@@ -41,12 +41,40 @@ async function isElementEnabled(handle: ElementHandle<Element>): Promise<boolean
   });
 }
 
+/** A role locator recorded with where it is: inside its scope, or the nth of its kind. */
+async function findPlaced(page: Page, locator: Locator, selector: string, options: { timeout: number; visible?: boolean }): Promise<ElementHandle<Element> | null> {
+  if (locator.scope) {
+    const scopeSelector = locator.scope.testid ? `[data-testid="${escapeCssString(locator.scope.testid)}"]` : locator.scope.css!;
+    const scope = await page.waitForSelector(scopeSelector, { timeout: options.timeout });
+    if (!scope) return null;
+    try {
+      return await scope.waitForSelector(selector, options);
+    } finally {
+      await scope.dispose().catch(() => {});
+    }
+  }
+  const first = await page.waitForSelector(selector, options);
+  if (!first) return null;
+  await first.dispose().catch(() => {});
+  const all = await page.$$(selector);
+  const chosen = all[locator.nth!] ?? null;
+  await Promise.all(all.filter((h) => h !== chosen).map((h) => h.dispose().catch(() => {})));
+  return chosen;
+}
+
 export async function findElementWithLocators(
   page: Page,
   locators: Locator[],
   condition: ElementCondition = 'any'
 ): Promise<{ result: LocatingResult | null, errors: string[] }> {
-  const sortedLocators = [...locators].sort((a, b) =>
+  // A role and name the page has more than once was recorded with where it is (scope, nth):
+  // the same name read alone (aria, text, label) finds the first of them — racing, it could
+  // win and click the login form's "Clear" for the contact form's.
+  const placed = locators.find((l) => l.type === 'role' && (l.scope || l.nth != null));
+  const usable = placed
+    ? locators.filter((l) => !(['aria', 'text', 'label'].includes(l.type) && l.value === placed.name))
+    : locators;
+  const sortedLocators = [...usable].sort((a, b) =>
     (LOCATOR_PRIORITY[a.type] ?? 5) - (LOCATOR_PRIORITY[b.type] ?? 5)
   );
 
@@ -61,11 +89,14 @@ export async function findElementWithLocators(
       : { timeout: 2000 };
 
     try {
-      let handle = await page.waitForSelector(selector, waitOptions).catch(() => null);
+      const find = (options: typeof waitOptions | { timeout: number }) => locator.type === 'role' && (locator.scope || locator.nth != null)
+        ? findPlaced(page, locator, selector, options)
+        : page.waitForSelector(selector, options);
+      let handle = await find(waitOptions).catch(() => null);
       let usedFallback = false;
 
       if (!handle && condition === 'visible') {
-        handle = await page.waitForSelector(selector, { timeout: 800 }).catch(() => null);
+        handle = await find({ timeout: 800 }).catch(() => null);
         if (handle) usedFallback = true;
       }
 

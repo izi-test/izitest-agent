@@ -107,6 +107,23 @@ test('a typed value is an Outline column too, and a test without variables is le
   assert.equal(toScenarioOutline(plain, {}), plain);
 });
 
+test('a value holding the quote around its <column> is escaped in Examples (izi_priorities)', () => {
+  // '"reason": "<reason>"' is in single quotes: "d'abord" closed it, the step was undefined.
+  const t = {
+    name: 'priorities',
+    variables: { reason: { defaultValue: "La performance d'abord" }, quote: { defaultValue: 'dit "oui"' } },
+    steps: [
+      { command: 'fill', params: { selector: '#why', value: '{{reason}}' } },
+      { command: 'assert', params: {}, assertion: { type: 'text_contains', selector: '#result', expected: '"reason": "{{reason}}"' } },
+      { command: 'fill', params: { selector: '#quote', value: '{{quote}}' } },
+    ],
+  };
+  const feature = toScenarioOutline(serializeTestToFeatureWith(t, DEFAULTS), t.variables);
+  assert.match(feature, /Then "#result" should contain '"reason": "<reason>"'/);
+  // Gherkin reads \\ in a cell as \, and {string} reads \' as '.
+  assert.match(feature, /\| La performance d\\\\'abord \| dit \\\\"oui\\\\" \|/);
+});
+
 test('plain Playwright code reads the variables from VARS', () => {
   const out = generatePlaywrightPlain(withCityAndBudget());
   assert.match(out, /ville: 'antony-92160',\n {2}budget: '500000',/);

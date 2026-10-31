@@ -13,15 +13,35 @@ These tools are used for direct, real-time control of the browser.
 | `snapshot` | Scans the DOM and returns interactive elements with UIDs (@eX). | `purposeFilter` (fill/click/read), `searchText` |
 | `screenshot` | Takes an annotated screenshot with DOM mapping. | `annotate`, `purposeFilter`, `searchText` |
 | `click` | Clicks an element. On a checkbox, radio or switch (or its label), returns the state it left (`checked`); with `checked`, sets that state and does not click when it is already so. | `ref` (@eX), `selector`, `text`, `checked` |
-| `fill` | Fills an input/textarea/select. | `ref` (@eX), `selector`, `value`, `clear` |
-| `extract` | Retrieves content (text, attributes) from the page. | `selector`, `attribute`, `multiple` |
+| `fill` | Fills an input/textarea/contenteditable. A date, time, colour or range input gets its value set instead of typed (see below). | `ref` (@eX), `selector`, `value`, `clear` |
+| `extract` | Retrieves content (text, attributes) from the page. `attribute: "value"` on a field reads what it holds now. | `selector`, `attribute`, `multiple` |
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
 | `get_page_info` | Detailed info (title, URL, element counts). | `tabId`, `profile` |
 | `scroll` | Scrolls the page or moves to an element. | `direction`, `amount`, `selector` |
 | `wait` | Pauses for a duration or until an element appears. | `ms`, `selector` |
-| `execute_js` | Runs arbitrary JavaScript in the page context. | `code` |
+| `execute_js` | Runs arbitrary JavaScript in the page context. Recorded as a step while a test records — to only read the page, use `extract` or `snapshot`, which are not. | `code` |
 | `keyboard` | Sends a key press event. | `key`, `modifiers` |
 | `get_cookies` | Retrieves cookies for a URL/domain. | `url`, `domain` |
+
+#### Champs particuliers
+
+- **Date, heure, couleur, curseur** (`date`, `time`, `datetime-local`, `month`, `week`, `color`,
+  `range`) : `fill` leur donne la valeur depuis la page, puis envoie `input` et `change`, comme
+  Playwright. La frappe ne marchait pas : la date restait vide (ses segments suivent l'ordre de la
+  langue du navigateur), la couleur ouvrait le sélecteur du système, le curseur allait où tombait le
+  clic. Le format attendu est celui du HTML : `1990-05-12`, `09:30`, `#ff5500`, un nombre sur un pas du
+  curseur. Une valeur que le champ refuserait (`12/05/1990`, `85` sur un pas de 10) est refusée avec
+  le format attendu, et le champ garde sa valeur.
+- **Texte éditable** (`contenteditable`) : listé comme `[textbox]` par la snapshot, avec son texte en
+  `value="…"`, et rempli comme un champ.
+- **Effacer avant de taper** : tout le texte est sélectionné, et la frappe le remplace. Retour arrière
+  ne sert plus que pour une valeur vide : sur un champ de tags vide, il supprimait le dernier tag.
+- **Nom d'un champ** : la valeur d'un champ n'est son nom que pour un bouton (`<input type="submit">`).
+  Une couleur, un curseur, un champ prérempli sans label n'ont plus pour nom `#6c5ce7` ou `60`, qui
+  changeaient au premier `fill`.
+- **Case ou radio en `display: none`** derrière un label visible (les étoiles d'une note) : listée
+  et manipulée par son label, avec sa valeur quand son nom ne la dit pas :
+  `[radio] "★" value="4" [unchecked]`.
 
 ### Recommended Workflow: The Element Discovery Protocol
 To ensure high reliability, follow this sequence when interacting with elements:
@@ -80,7 +100,14 @@ solide, dans cet ordre :
    d'accessibilité : `page.getByRole('button', { name, exact: true })` — le bouton « Sign in », pas le
    titre qui le dit aussi. C'est exactement ce que `getByRole` compare, là où le nom calculé par la
    snapshot peut différer (texte caché, `title` qui passe avant le contenu). Pour un clic enregistré
-   avant, le rôle déduit de la balise (bouton, lien, liste déroulante, titre) et le nom de la snapshot ;
+   avant, le rôle déduit de la balise (bouton, lien, liste déroulante, titre) et le nom de la snapshot.
+   Un rôle et un nom présents plusieurs fois sur la page (le « Clear » du formulaire de connexion et
+   celui du formulaire de contact) sont enregistrés avec l'endroit où ils sont : l'ancêtre le plus
+   proche qui n'en contient qu'un (`data-testid`, ou un id écrit à la main), sinon leur rang —
+   `page.getByTestId('login-form').getByRole('button', { name: 'Clear', exact: true })`, ou
+   `….nth(1)`. Seul, `getByRole` échouait sur le mode strict de Playwright. Le rejeu d'IziTest
+   cherche aussi dans cet ancêtre, et ne lance plus en parallèle le même nom lu seul (`aria`,
+   texte), qui pouvait gagner la course et cliquer l'autre bouton ;
 4. pour un `<label>` : `page.locator('label', { hasText: … })`, le label lui-même (les cases à
    cocher stylées cachent souvent le vrai `<input>`) ;
 5. pour un champ (`input`, `select`, `textarea`, ou une saisie) : `page.getByLabel(…)` ;
@@ -96,6 +123,7 @@ génériques : le `.feature` exporté leur donne la cible retenue, sous forme de
 
 ```gherkin
 When I click on 'role=button[name="Sign in"s]'
+And I click on '[data-testid="login-form"] >> role=button[name="Clear"s]'
 And I check 'label:has-text("Jardin")'
 And I uncheck 'label:has(input[name="darkMode"])'
 And I fill 'internal:label="E-mail"i' with "bob@corp"
@@ -166,7 +194,10 @@ run_test("my_test", { variables: { "user_email": "new@example.com" } })
 ```
 
 Une variable de saisie prend le nom du champ : son label (« Workspace name » → `workspace_name`),
-sinon le nom envoyé par le formulaire (`displayName` → `display_name`), le placeholder en dernier.
+sinon le nom envoyé par le formulaire (`displayName` → `display_name`), sinon son id
+(`#inline-title` → `inline_title`, pas un id généré comme `#r1`), le placeholder en dernier. Un nom
+accessible qui n'est que le placeholder (champ sans label) compte comme le placeholder : le champ
+`name="country"` au placeholder « Start typing... » donne `{{country}}`.
 
 Un clic devient une variable de liste quand l'élément cliqué fait partie d'éléments semblables. Un LLM
 en décide (clé OpenRouter, sinon la CLI `copilot`) ; sans LLM disponible, une règle prudente prend le
@@ -225,6 +256,12 @@ toute valeur d'une variable de saisie (`text` ou `select`, 3 caractères au moin
 Linked to {{email}}: saved as ""email": "{{email}}"", so a replay with other values checks those values.
 ```
 
+La valeur est cherchée entière, jamais au milieu d'un mot : « Fra », tapé pour que l'autocomplétion
+propose « France », ne lie pas `"country": "France"`. Sur l'onglet d'un rejeu (`tabId` rendu par
+`run_test`), ce sont les valeurs saisies par ce rejeu qui sont cherchées, pas celles de
+l'enregistrement : rejoué avec `date_of_birth: "1985-11-30"`, `"dob": "1985-11-30"` devient
+`"dob": "{{date_of_birth}}"`.
+
 Pour une assertion ajoutée avant, `add_test_variable` avec le nom d'une variable existante la réutilise
 (sans `value`, ou avec sa valeur par défaut) :
 
@@ -234,7 +271,9 @@ add_test_variable({ test_name: "izi_login", step: 7, param: "expected", name: "e
 ```
 
 Au rejeu, une valeur contenant un guillemet ou une barre oblique inverse (`Pa"ss\word`) est prise telle
-quelle.
+quelle. Dans les `Examples` d'un Scenario Outline exporté, une valeur qui contient le guillemet
+entourant sa colonne dans une étape (`d'abord` dans `'"reason": "<reason>"'`) y est échappée
+(`d\\'abord`) : sinon la chaîne se fermait au milieu de la valeur, et l'étape restait sans définition.
 
 #### Enregistrer depuis l'onglet Gherkin
 
@@ -251,6 +290,25 @@ compare donc les phrases éditées à celles du test :
 
 Seules les phrases modifiées ou ajoutées doivent correspondre à une step definition : une erreur
 cite leur ligne.
+
+#### Types d'assertion à l'export
+
+Chaque type d'assertion se rejoue, s'exporte en Playwright et a sa phrase Gherkin :
+
+| Type | Playwright | Gherkin |
+| :--- | :--- | :--- |
+| `text_contains` / `text_not_contains` | `toContainText` / `not.toContainText` | `"…" should contain "…"` / `should not contain` |
+| `text_equals` | `toHaveText` | `"…" should have text "…"` |
+| `attribute_equals` | `toHaveAttribute` ; `toHaveValue` pour `value` | `the "href" of "…" should be "…"` |
+| `element_count` | `toHaveCount` | `"…" should match 2 elements` |
+| `element_exists` / `element_not_exists` | `.first().toBeAttached()` / `toHaveCount(0)` | `"…" should exist` / `I should not see "…"` |
+| `element_visible` / `element_hidden` | `toBeVisible` / `toBeHidden` | `"…" should be visible` / `should be hidden` |
+| `url_equals` / `url_contains` | `toHaveURL` | `the URL should be "…"` / `should contain` |
+| `title_equals` / `title_contains` | `toHaveTitle` | `the title should be "…"` / `should contain` |
+
+Pour `attribute_equals`, l'attribut `value` d'un champ est ce qu'il contient au moment du contrôle,
+comme le lit `toHaveValue` : l'attribut HTML n'est que la valeur de départ (absent d'un champ rempli
+par le test).
 
 #### Cases à cocher
 

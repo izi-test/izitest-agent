@@ -25,6 +25,8 @@ interface ResolvedElement {
   viaLabel?: boolean;
   /** That label is a separate <label for>: the input's id. */
   labelFor?: string;
+  /** A date, time, colour or range input (its type): its value is set, not typed. */
+  picked?: string;
 }
 
 // Roles Playwright's getByRole finds by name.
@@ -43,23 +45,87 @@ interface AXNode {
   backendDOMNodeId?: number;
 }
 
+/** Where a role and name found more than once on the page is the one clicked (see accessibleAt). */
+export interface AccessibleTarget {
+  role: string;
+  name: string;
+  /** The closest ancestor (data-testid, or an id a developer wrote) holding only this one. */
+  scope?: { testid?: string; css?: string };
+  /** No such ancestor: its rank among the page's elements of that role and name, from 0. */
+  nth?: number;
+}
+
+// Run on the clicked element: its ancestors that can scope a locator, closest first —
+// described (pick < 0), or the one at `pick`. An id with 3 digits or more is taken as generated.
+const SCOPE_ANCESTORS = `function (pick) {
+  const found = [];
+  for (let el = this.parentElement; el && found.length < 8; el = el.parentElement) {
+    const testid = el.getAttribute('data-testid');
+    const id = /^[A-Za-z][\\w-]*$/.test(el.id) && !/\\d{3,}/.test(el.id) ? el.id : '';
+    if (testid || id) found.push({ el, scope: testid ? { testid } : { css: '#' + id } });
+  }
+  return pick < 0 ? found.map((f) => f.scope) : found[pick].el;
+}`;
+
+/**
+ * Where a role and name is in the page, when it is there more than once — the "Clear" of a
+ * login form and the "Clear" of a contact form: getByRole('button', { name: 'Clear' }) found
+ * both, and the generated test failed on Playwright's strict mode. Counted by Chrome, as
+ * getByRole counts: hidden elements (a wizard's other steps) are not in it.
+ */
+async function placeOf(cdp: CDPSession, backendNodeId: number, role: string, name: string): Promise<Pick<AccessibleTarget, 'scope' | 'nth'>> {
+  const count = async (root: { backendNodeId?: number; objectId?: string }) =>
+    ((await cdp.send('Accessibility.queryAXTree', { ...root, accessibleName: name, role })) as { nodes: AXNode[] }).nodes;
+  const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+  const same = await count({ backendNodeId: root.backendNodeId });
+  if (same.length <= 1) return {};
+
+  const objectGroup = 'izitest-place';
+  try {
+    const { object } = await cdp.send('DOM.resolveNode', { backendNodeId, objectGroup });
+    const call = (pick: number, returnByValue: boolean) => cdp.send('Runtime.callFunctionOn', {
+      objectId: object.objectId, functionDeclaration: SCOPE_ANCESTORS, arguments: [{ value: pick }], returnByValue, objectGroup,
+    });
+    const scopes = ((await call(-1, true)).result.value ?? []) as NonNullable<AccessibleTarget['scope']>[];
+    for (let i = 0; i < scopes.length; i++) {
+      const { result } = await call(i, false);
+      if ((await count({ objectId: result.objectId })).length === 1) return { scope: scopes[i] };
+    }
+  } finally {
+    await cdp.send('Runtime.releaseObjectGroup', { objectGroup }).catch(() => {});
+  }
+  const nth = same.findIndex((n) => n.backendDOMNodeId === backendNodeId);
+  return nth >= 0 ? { nth } : {};
+}
+
 /**
  * The role and accessible name Chrome gives the element at (x, y) — or the control it sits
  * in: the point is often on a text inside a button. What Playwright's getByRole matches,
  * where the name the snapshot computes can differ (hidden text, a title over the content).
  * Null when none is found, or Chrome takes too long: the click does not wait on it.
  */
-async function accessibleAt(page: Page, x: number, y: number): Promise<{ role: string; name: string } | null> {
+async function accessibleAt(page: Page, x: number, y: number): Promise<AccessibleTarget | null> {
   const lookup = (async () => {
     const cdp = (page as unknown as { _client(): CDPSession })._client();
-    const { backendNodeId } = await cdp.send('DOM.getNodeForLocation', { x, y, ignorePointerEventsNone: true });
+    // (x, y) is where the mouse goes, in the viewport; getNodeForLocation takes a point of
+    // the document: on a scrolled page it found nothing ("No node found at given location").
+    const { cssVisualViewport } = await cdp.send('Page.getLayoutMetrics');
+    const { backendNodeId } = await cdp.send('DOM.getNodeForLocation', {
+      x: Math.round(x + cssVisualViewport.pageX),
+      y: Math.round(y + cssVisualViewport.pageY),
+      ignorePointerEventsNone: true,
+    });
     const { nodes } = await cdp.send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: true }) as { nodes: AXNode[] };
     const byId = new Map(nodes.map((node) => [node.nodeId, node]));
     let node = nodes.find((n) => n.backendDOMNodeId === backendNodeId);
     for (let level = 0; node && level < 6; level++, node = node.parentId ? byId.get(node.parentId) : undefined) {
       const role = node.role?.value ?? '';
-      const name = (node.name?.value ?? '').trim();
-      if (!node.ignored && NAMED_ROLES.has(role) && name) return { role, name };
+      const raw = node.name?.value ?? '';
+      const name = raw.trim();
+      if (!node.ignored && NAMED_ROLES.has(role) && name) {
+        const place = node.backendDOMNodeId ? await placeOf(cdp, node.backendDOMNodeId, role, raw) : {};
+        return { role, name, ...place };
+      }
     }
     return null;
   })();
@@ -326,6 +392,10 @@ export async function cmdFill({ selector, value, tabId, sessionId, clear, ref, t
     // The click is what focuses the field: if it lands elsewhere, the typing goes there.
     assertNotCovered(element, 'filled');
     const target = await describeRefTarget(resolvedTabId, ref);
+    if (element.picked) {
+      await setPicked(resolvedTabId, { ref }, value);
+      return { success: true, selector: ref, ...(target ? { target } : {}) };
+    }
     await page.mouse.click(element.x, element.y);
     await clearAndType(page, value, shouldClear, typing);
     return { success: true, selector: ref, ...(target ? { target } : {}) };
@@ -339,6 +409,10 @@ export async function cmdFill({ selector, value, tabId, sessionId, clear, ref, t
   const located = await resolveElementBySelector(resolvedTabId, { selector }).catch(() => null);
   if (located) {
     assertNotCovered(located, 'filled');
+    if (located.picked) {
+      await setPicked(resolvedTabId, { selector }, value);
+      return { success: true, selector };
+    }
     await page.mouse.click(located.x, located.y);
     await clearAndType(page, value, shouldClear, typing);
     return { success: true, selector };
@@ -355,26 +429,41 @@ export async function cmdFill({ selector, value, tabId, sessionId, clear, ref, t
   return { success: true, selector };
 }
 
+/** Set a date, time, colour or range input from inside the page (see dom/picked-input.ts). */
+async function setPicked(tabId: number, by: { ref?: string; selector?: string }, value: string): Promise<void> {
+  const result = await askFrameOf(tabId, by, { type: 'set_input_value', ...by, value });
+  if (!result.success) throw new Error(result.error);
+}
+
+type PageAnswer = { success: boolean; error?: string };
+
+/**
+ * Send `message` to the frame that holds the element. A ref names its frame; a selector is
+ * looked for on the page first, then in cross-origin iframes — but only when the page says
+ * it is not there.
+ */
+async function askFrameOf<T extends PageAnswer>(tabId: number, by: { ref?: string; selector?: string }, message: Record<string, unknown>): Promise<T> {
+  const ask = (frameId: number) =>
+    sendToFrame<T>(tabId, frameId, message).then((r) => r ?? ({ success: false, error: 'No answer from the page' } as T));
+  let result = await ask(by.ref ? await frameOfRef(tabId, by.ref) : TOP_FRAME);
+  if (!by.ref && !result.success && /not found/i.test(result.error ?? '')) {
+    const found = await findInFrames(tabId, ask);
+    if (found) result = found.answer;
+  }
+  return result;
+}
+
 export async function cmdSelect({ selector, value, tabId, sessionId, ref, matchBy }: SelectParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
   if (!ref && !selector) throw new Error('Provide selector or ref to select');
 
   // Chosen from inside the page (see selectOption): it reaches selects inside same-origin
   // iframes, which the previous page.evaluate() — top frame only — could not.
-  type SelectAnswer = { success: boolean; error?: string; selectedValue?: string; selectedText?: string };
-  const message = { type: 'select_option', ref, selector, value, matchBy: matchBy || 'text' };
-  const ask = (frameId: number) =>
-    sendToFrame<SelectAnswer>(resolvedTabId, frameId, message).then((r) => r ?? { success: false, error: 'No answer from the page' });
-
+  type SelectAnswer = PageAnswer & { selectedValue?: string; selectedText?: string };
   await ensureContentScript(resolvedTabId);
   const target = await describeRefTarget(resolvedTabId, ref);
-  // A ref names its frame; a selector is looked for on the page first, then in
-  // cross-origin iframes — but only when the page says it is not there.
-  let result = await ask(ref ? await frameOfRef(resolvedTabId, ref) : TOP_FRAME);
-  if (!ref && !result.success && /not found/i.test(result.error ?? '')) {
-    const found = await findInFrames(resolvedTabId, ask);
-    if (found) result = found.answer;
-  }
+  const result = await askFrameOf<SelectAnswer>(resolvedTabId, { ref, selector },
+    { type: 'select_option', ref, selector, value, matchBy: matchBy || 'text' });
 
   if (!result.success) throw new Error(result.error);
   return {

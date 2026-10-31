@@ -6,10 +6,25 @@ import { findElementWithLocators, type ElementCondition } from './locators';
 import { resolveVariableElement, type ReplayStep } from './variable-resolver';
 import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdKeyboard, cmdScroll, wantedChecked } from './actions';
 import { cmdExecuteJs, cmdWait } from './queries';
+import { setPickedValue } from '../dom/picked-input';
 import type { ReplaySequenceParams, Locator } from '../types';
-import type { Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
 
 const STEP_DELAY_MS: Record<string, number> = { navigate: 300, click: 150 };
+
+// Locators whose value finds the element again in page.evaluate (see queryElementBox). A
+// role, a name, a text or a placeholder does not: looked up again as CSS, the role "button"
+// was the page's first button, and an accessible name only matched an aria-label.
+const SELECTOR_LOCATORS = new Set(['css', 'testid', 'attribute', 'xpath']);
+
+/** Click the middle of the element found, scrolled into view — inside iframes too. */
+async function clickAtHandle(page: Page, handle: ElementHandle<Element>): Promise<void> {
+  await handle.scrollIntoView().catch(() => {});
+  const box = await handle.boundingBox();
+  if (!box) throw new Error('The element found has no box to click');
+  console.log(`  🖱️ Clicking the element found at (${Math.round(box.x + box.width / 2)}, ${Math.round(box.y + box.height / 2)})`);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}
 const DEFAULT_STEP_DELAY_MS = 50;
 
 const COMMAND_DISPATCH: Record<string, (params: any) => Promise<any>> = {
@@ -202,6 +217,10 @@ export async function cmdReplaySequence(
               if (isToggle) {
                 console.log(`  🔘 Toggle element (${locatorUsed}="${locatorValue}") — using handle.evaluate(el.click())`);
                 await clickToggleViaHandle(handle);
+              } else if (!SELECTOR_LOCATORS.has(locatorUsed)) {
+                // Found by name or text: there is no selector to look it up again, the
+                // element found is the one clicked.
+                await clickAtHandle(page, handle);
               } else {
                 // Dispose handle — handle.click() uses stale context ID.
                 // page.evaluate uses Runtime.evaluate with the current frame context.
@@ -211,10 +230,19 @@ export async function cmdReplaySequence(
               }
             } else if (step.command === 'fill') {
               console.log(`  ⌨️ Filling with value: "${baseParams.value}"`);
-              await handle.dispose().catch(() => {});
-              await focusViaLocator(page, locatorUsed, locatorValue);
-              await delay(50);
-              await clearAndType(page, String(baseParams.value), baseParams.clear ?? true);
+              // A date, colour or range input is not typed into: its value is set.
+              const picked = await handle.evaluate(setPickedValue, String(baseParams.value));
+              if (picked && 'error' in picked) throw new Error(picked.error);
+              if (!picked) {
+                if (SELECTOR_LOCATORS.has(locatorUsed)) {
+                  await handle.dispose().catch(() => {});
+                  await focusViaLocator(page, locatorUsed, locatorValue);
+                } else {
+                  await clickAtHandle(page, handle);
+                }
+                await delay(50);
+                await clearAndType(page, String(baseParams.value), baseParams.clear ?? true);
+              }
             } else if (step.command === 'select') {
               console.log(`  📋 Selecting option: "${baseParams.value}"`);
               await handle.dispose().catch(() => {});

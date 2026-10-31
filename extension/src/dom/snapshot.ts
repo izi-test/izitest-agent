@@ -1,5 +1,6 @@
 import { describeBlocker, frameLevels, hitTestThroughFrames, type FrameLevel } from './hit-test';
 import { toggleOf, isToggleInput, styledAwayToggleLabel, textAround, type ToggleState } from './toggle';
+import { pickedInputType, setPickedValue } from './picked-input';
 
 export type SnapshotPurpose = 'fill' | 'click' | 'read';
 
@@ -168,20 +169,12 @@ export function selectOption(
   value: string,
   matchBy: 'text' | 'value' = 'text'
 ): { success: true; selectedValue: string; selectedText: string } | { success: false; error: string } {
-  let el: Element | null = null;
-  if (by.ref) {
-    el = window.__izitestRefMap?.get(by.ref) ?? null;
-    if (!el) return { success: false, error: `Ref not found: ${by.ref} — take a new snapshot` };
-  } else if (by.selector) {
-    for (const doc of searchableDocuments()) {
-      el = doc.querySelector(by.selector);
-      if (el) break;
-    }
-    if (!el) return { success: false, error: `Select element not found: ${by.selector}` };
-  }
+  const found = elementBy(by, 'Select element');
+  if ('error' in found) return { success: false, error: found.error };
+  const { el } = found;
   // A ref may point at a wrapper or at an option; the control is the nearest <select>.
-  const select = (el?.tagName === 'SELECT' ? el : el?.closest('select')) as HTMLSelectElement | null;
-  if (!select) return { success: false, error: `Element is not a <select>: ${el?.tagName ?? 'nothing'}` };
+  const select = (el.tagName === 'SELECT' ? el : el.closest('select')) as HTMLSelectElement | null;
+  if (!select) return { success: false, error: `Element is not a <select>: ${el.tagName}` };
 
   const options = Array.from(select.options);
   const exact = options.find((o) => matchBy === 'value'
@@ -203,6 +196,34 @@ export function selectOption(
   select.dispatchEvent(new Event('input', { bubbles: true }));
   select.dispatchEvent(new Event('change', { bubbles: true }));
   return { success: true, selectedValue: option.value, selectedText: option.text.trim() };
+}
+
+/**
+ * Give a date, time, colour or range input its value from inside the page (see
+ * picked-input.ts): such an input is not typed into.
+ */
+export function setInputValue(
+  by: { ref?: string; selector?: string },
+  value: string
+): { success: true; value: string } | { success: false; error: string } {
+  const found = elementBy(by, 'Input');
+  if ('error' in found) return { success: false, error: found.error };
+  const result = setPickedValue(found.el, value);
+  if (!result) return { success: false, error: `Not a date, time, colour or range input: <${found.el.tagName.toLowerCase()}>` };
+  return 'error' in result ? { success: false, error: result.error } : { success: true, value: result.value };
+}
+
+/** The element a ref names, or the first a selector matches in the page or its same-origin iframes. */
+function elementBy(by: { ref?: string; selector?: string }, what: string): { el: Element } | { error: string } {
+  if (by.ref) {
+    const el = window.__izitestRefMap?.get(by.ref);
+    return el ? { el } : { error: `Ref not found: ${by.ref} — take a new snapshot` };
+  }
+  for (const doc of by.selector ? searchableDocuments() : []) {
+    const el = doc.querySelector(by.selector!);
+    if (el) return { el };
+  }
+  return { error: `${what} not found: ${by.selector ?? 'no ref or selector given'}` };
 }
 
 /** This document and the documents of its same-origin iframes, recursively. */
@@ -245,6 +266,8 @@ export interface ClickTarget {
   viaLabel?: boolean;
   /** That label is a separate <label for>: the input's id. */
   labelFor?: string;
+  /** A date, time, colour or range input (its type): fill sets its value, it does not type. */
+  picked?: string;
 }
 
 interface MeasureOptions {
@@ -305,12 +328,14 @@ function measureForClick(el: Element, { uncover = false }: MeasureOptions = {}):
 
   const { originX, originY } = levels[levels.length - 1];
   const toggle = toggleOf(el);
+  const picked = pickedInputType(el);
   const target = {
     x: Math.round(originX + rect.x + rect.width / 2),
     y: Math.round(originY + rect.y + rect.height / 2),
     tag: el.tagName.toLowerCase(),
     text: el.textContent?.slice(0, 50) || '',
     ...(toggle ? { toggle } : {}),
+    ...(picked ? { picked } : {}),
   };
 
   // Just scrolled on a first measurement: positions may still move. Let the caller settle
@@ -617,7 +642,11 @@ function pageTools() {
       case 'dialog': return 'dialog';
       case 'details': return 'group';
       case 'summary': return 'button';
-      default: return 'generic';
+      default:
+        // An editing host (contenteditable) is a text field, as Chrome has it: listed with
+        // the fields to fill, not as a "generic" only found among things to click.
+        if ((el as HTMLElement).isContentEditable && !(el.parentElement as HTMLElement | null)?.isContentEditable) return 'textbox';
+        return 'generic';
     }
   };
 
@@ -668,11 +697,17 @@ function pageTools() {
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
       const placeholder = el.getAttribute('placeholder');
       if (placeholder) return placeholder;
+      // Only a button's value is its name, as Chrome has it. Any other input's value is what
+      // it holds — "on" for a checkbox, "#6c5ce7" for a colour, "60" for a slider — and goes
+      // the moment the input is filled: the locator recorded from it found nothing on replay.
       const val = (el as HTMLInputElement).value;
-      // A checkbox's or radio's value is what it submits ("on" by default), not its name.
       const type = (el as HTMLInputElement).type;
-      if (val && type !== 'checkbox' && type !== 'radio') return val;
+      if (val && ['submit', 'reset', 'button'].includes(type)) return val;
     }
+
+    // What an editing host holds is its value (shown as such), not its name: the name went
+    // with the first edit, like an input's value did.
+    if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA' && getRole(el) === 'textbox') return '';
 
     // Check direct text nodes first (to avoid grabbing massive child text globally)
     let directText = '';
@@ -1209,8 +1244,10 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     if (depth > options.maxDepth!) return;
 
     if (!options.includeHidden) {
-      // display:none truly hides the entire subtree — skip completely
-      if (isSubtreeHidden(el)) return;
+      // display:none truly hides the entire subtree — skip completely. Except a checkbox or
+      // radio hidden that way behind a label that shows: it has no subtree, and it is used
+      // through that label — the stars of a rating are <input display:none> + <label for>.
+      if (isSubtreeHidden(el) && !styledAwayToggleLabel(el)) return;
     }
 
     const tag = el.tagName.toLowerCase();
@@ -1356,9 +1393,16 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       if (tag === 'textarea') {
         if (htmlEl.placeholder) line += ` placeholder="${truncate(htmlEl.placeholder)}"`;
         if (htmlEl.value) line += ` value="${truncate(htmlEl.value)}"`;
+      } else if (role === 'textbox' && tag !== 'input') {
+        const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (text) line += ` value="${truncate(text)}"`;
       }
       
       if (role === 'checkbox' || role === 'radio') {
+        // Its value, when its name does not say it: five stars all named "★" are told
+        // apart by value="1" … value="5". Not "on" (the default), not "high" under "High".
+        const value = tag === 'input' ? htmlEl.value : '';
+        if (value && value !== 'on' && !label.toLowerCase().includes(value.toLowerCase())) line += ` value="${truncate(value)}"`;
         line += htmlEl.checked ? ` [checked]` : ` [unchecked]`;
       }
       

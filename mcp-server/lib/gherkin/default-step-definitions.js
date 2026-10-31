@@ -31,4 +31,10 @@ export const DEFAULT_STEP_DEFINITIONS = [
   { keyword: 'Then',  pattern: 'the URL should be {string}',             command: 'assert', params_template: { type: 'url_equals', expected: '{0}' } },
   { keyword: 'Then',  pattern: 'the URL should contain {string}',        command: 'assert', params_template: { type: 'url_contains', expected: '{0}' } },
   { keyword: 'Then',  pattern: 'the title should be {string}',           command: 'assert', params_template: { type: 'title_equals', expected: '{0}' } },
+  { keyword: 'Then',  pattern: 'the title should contain {string}',      command: 'assert', params_template: { type: 'title_contains', expected: '{0}' } },
+  { keyword: 'Then',  pattern: '{string} should exist',                  command: 'assert', params_template: { type: 'element_exists', selector: '{0}' } },
+  { keyword: 'Then',  pattern: '{string} should be hidden',              command: 'assert', params_template: { type: 'element_hidden', selector: '{0}' } },
+  { keyword: 'Then',  pattern: '{string} should have text {string}',     command: 'assert', params_template: { type: 'text_equals', selector: '{0}', expected: '{1}' } },
+  { keyword: 'Then',  pattern: 'the {string} of {string} should be {string}', command: 'assert', params_template: { type: 'attribute_equals', attribute: '{0}', selector: '{1}', expected: '{2}' } },
+  { keyword: 'Then',  pattern: '{string} should match {int} elements',   command: 'assert', params_template: { type: 'element_count', selector: '{0}', expected: '{1}' } },
 ];

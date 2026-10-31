@@ -249,8 +249,11 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       };
       // Chrome's role and accessible name for what was clicked: what getByRole matches, where
       // the name the snapshot computes can differ (hidden text, a title over the content).
-      const { role, name } = result?.accessible ?? {};
-      const roleLocator = role && name && name.length < 100 ? [{ type: 'role', value: role, name }] : [];
+      // Found more than once on the page, it comes with where it is (scope or nth).
+      const { role, name, scope, nth } = result?.accessible ?? {};
+      const roleLocator = role && name && name.length < 100
+        ? [{ type: 'role', value: role, name, ...(scope ? { scope } : {}), ...(Number.isInteger(nth) ? { nth } : {}) }]
+        : [];
       const actionId = saveActionToHistory('click', { selector, text, tabId, ...state }, ref, screenshotBase64, intent, roleLocator);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
@@ -603,7 +606,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
   // --- Tool: execute_js ---
   server.tool(
     'execute_js',
-    'Execute arbitrary JavaScript code in the active tab. Use for advanced interactions. Pass `frame` to run it inside an iframe (cross-origin ones included).',
+    'Execute arbitrary JavaScript code in the active tab. Use for advanced interactions. Pass `frame` to run it inside an iframe (cross-origin ones included). While a test is recording, the code is recorded as a step and runs again on every replay: to only read the page (a value, a text), use extract or snapshot, which are not recorded.',
     {
       code: z.string().describe('JavaScript code to execute in the page context'),
       profile: z.string().optional(),

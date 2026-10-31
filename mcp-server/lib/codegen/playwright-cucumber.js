@@ -55,11 +55,25 @@ export function toScenarioOutline(feature, variables = {}) {
   });
   if (!used.length) return feature;
 
-  const cell = (value) => String(value ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n');
+  // The quote around each <name> in the steps. Cucumber puts the value in before it reads
+  // the {string}: a value holding that quote — "d'abord" in '"reason": "<reason>"' — closed
+  // the string early, and the step was undefined. Escaped (\'), {string} reads it back as '.
+  const enclosing = {};
+  for (const line of outline.split('\n').filter(l => /^\s*(Given|When|Then|And|But)\b/.test(l))) {
+    for (const m of line.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)) {
+      const quote = m[1] !== undefined ? '"' : "'";
+      for (const [, name] of (m[1] ?? m[2]).matchAll(/<([A-Za-z_]\w*)>/g)) (enclosing[name] ??= new Set()).add(quote);
+    }
+  }
+  const cell = (name) => {
+    let value = String(variables?.[name]?.defaultValue ?? '');
+    for (const quote of enclosing[name] ?? []) value = value.replaceAll(quote, `\\${quote}`);
+    return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n');
+  };
   return outline.replace(/^(\s*)Scenario:/m, '$1Scenario Outline:').trimEnd() + '\n\n' +
     '    Examples:\n' +
     `      | ${used.join(' | ')} |\n` +
-    `      | ${used.map(name => cell(variables?.[name]?.defaultValue)).join(' | ')} |\n`;
+    `      | ${used.map(cell).join(' | ')} |\n`;
 }
 
 // ─── Templates ──────────────────────────────────────────────────────
@@ -149,6 +163,33 @@ Then('the URL should contain {string}', async function (expected) {
 
 Then('the title should be {string}', async function (expected) {
   await expect(this.page).toHaveTitle(expected);
+});
+
+Then('the title should contain {string}', async function (expected) {
+  await expect.poll(() => this.page.title()).toContain(expected);
+});
+
+Then('{string} should exist', async function (selector) {
+  await expect(this.page.locator(selector).first()).toBeAttached();
+});
+
+Then('{string} should be hidden', async function (selector) {
+  await expect(this.page.locator(selector)).toBeHidden();
+});
+
+Then('{string} should have text {string}', async function (selector, expected) {
+  await expect(this.page.locator(selector)).toHaveText(expected);
+});
+
+// "value": what the field holds now, as the replay reads it — not the attribute.
+Then('the {string} of {string} should be {string}', async function (attribute, selector, expected) {
+  const target = this.page.locator(selector);
+  if (attribute === 'value') await expect(target).toHaveValue(expected);
+  else await expect(target).toHaveAttribute(attribute, expected);
+});
+
+Then('{string} should match {int} elements', async function (selector, count) {
+  await expect(this.page.locator(selector)).toHaveCount(count);
 });
 `;
 
@@ -282,8 +323,20 @@ function assertionToPlaywright(params, argNames) {
       return `await expect(this.page.locator('body')).toContainText(${resolve(params.expected)});`;
     case 'text_not_contains':
       return `await expect(this.page.locator(${resolve(params.selector ?? 'body')})).not.toContainText(${resolve(params.expected)});`;
+    case 'text_equals':
+      return `await expect(this.page.locator(${resolve(params.selector)})).toHaveText(${resolve(params.expected)});`;
+    case 'attribute_equals':
+      return params.attribute === 'value'
+        ? `await expect(this.page.locator(${resolve(params.selector)})).toHaveValue(${resolve(params.expected)});`
+        : `await expect(this.page.locator(${resolve(params.selector)})).toHaveAttribute(${resolve(params.attribute)}, ${resolve(params.expected)});`;
+    case 'element_count':
+      return `await expect(this.page.locator(${resolve(params.selector)})).toHaveCount(Number(${resolve(params.expected)}));`;
     case 'element_visible':
       return `await expect(this.page.locator(${resolve(params.selector)})).toBeVisible();`;
+    case 'element_hidden':
+      return `await expect(this.page.locator(${resolve(params.selector)})).toBeHidden();`;
+    case 'element_exists':
+      return `await expect(this.page.locator(${resolve(params.selector)}).first()).toBeAttached();`;
     case 'element_not_exists':
       return `await expect(this.page.locator(${resolve(params.selector)})).toHaveCount(0);`;
     case 'url_equals':
@@ -292,6 +345,8 @@ function assertionToPlaywright(params, argNames) {
       return `await expect(this.page).toHaveURL(new RegExp(${resolve(params.expected)}));`;
     case 'title_equals':
       return `await expect(this.page).toHaveTitle(${resolve(params.expected)});`;
+    case 'title_contains':
+      return `await expect.poll(() => this.page.title()).toContain(${resolve(params.expected)});`;
     default:
       return `// Unsupported assertion type: ${params.type}`;
   }

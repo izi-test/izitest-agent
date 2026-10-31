@@ -36,6 +36,13 @@ test('generic steps get the stable target, as a selector string page.locator() t
   assert.doesNotMatch(feature, /nth-of-type|92595267|:r4:/);
 });
 
+test('a role and name found more than once: chained to its scope, or ranked', () => {
+  const clear = (place) => exported({ steps: [{ command: 'click', params: { selector: '#login-form > div:nth-of-type(3) > button:nth-of-type(2)' },
+    locators: [{ type: 'role', value: 'button', name: 'Clear', ...place }] }] });
+  assert.match(clear({ scope: { testid: 'login-form' } }), /I click on '\[data-testid="login-form"\] >> role=button\[name="Clear"s\]'/);
+  assert.match(clear({ nth: 1 }), /I click on 'role=button\[name="Clear"s\] >> nth=1'/);
+});
+
 test('the feature IziTest edits keeps the recorded selectors, which its replay needs', () => {
   const feature = serializeTestToFeatureWith({ name: 't', steps: STEPS }, DEFAULTS);
   assert.match(feature, /When I click on "#login-form > div:nth-of-type\(3\) > button:nth-of-type\(1\)"/);

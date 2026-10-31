@@ -170,7 +170,10 @@ export async function clearAndType(page: Page, value: string, clear = true, typi
     await page.keyboard.down(CMD_KEY);
     await page.keyboard.press('a', { commands: ['SelectAll'] });
     await page.keyboard.up(CMD_KEY);
-    await page.keyboard.press('Backspace');
+    // What is typed next replaces the selection: Backspace is only for an empty value. On an
+    // empty field it is not a no-op — a tags input removes its last tag on Backspace, and
+    // typing a second tag deleted the first.
+    if (value === '') await page.keyboard.press('Backspace');
   }
   if (typing === 'insert') {
     await page.keyboard.sendCharacter(value); // single Input.insertText

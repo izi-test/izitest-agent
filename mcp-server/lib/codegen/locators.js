@@ -125,11 +125,18 @@ export function chooseTarget(step, literal, page = 'page') {
 
   // The role and name Chrome gave the element when it was clicked: exactly what getByRole
   // matches. "Sign in" the button, not the heading that says it too (getByText finds both).
+  // Found more than once on the page, it was recorded with where it is: inside the closest
+  // ancestor that holds only this one, or else its rank — getByRole alone failed on strict
+  // mode with the "Clear" of two forms.
   const recorded = locators.find(l => l.type === 'role' && l.value && l.name);
   if (recorded) {
+    const { testid, css } = recorded.scope ?? {};
+    const within = testid ? `${page}.getByTestId(${literal(testid)})` : css ? `${page}.locator(${literal(css)})` : page;
+    const withinSelector = testid ? `[data-testid=${quoted(testid)}] >> ` : css ? `${css} >> ` : '';
+    const nth = Number.isInteger(recorded.nth) && !recorded.scope ? recorded.nth : null;
     return {
-      locator: `${page}.getByRole('${recorded.value}', { name: ${literal(recorded.name)}, exact: true })`,
-      selector: `role=${recorded.value}[name=${quoted(recorded.name)}s]`,
+      locator: `${within}.getByRole('${recorded.value}', { name: ${literal(recorded.name)}, exact: true })${nth !== null ? `.nth(${nth})` : ''}`,
+      selector: `${withinSelector}role=${recorded.value}[name=${quoted(recorded.name)}s]${nth !== null ? ` >> nth=${nth}` : ''}`,
     };
   }
 

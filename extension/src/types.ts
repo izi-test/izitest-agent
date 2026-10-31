@@ -194,6 +194,10 @@ export interface Locator {
   value: string;
   /** For `role`: the accessible name, as Chrome computes it (value is the role). */
   name?: string;
+  /** For `role`, when that role and name is on the page more than once: the ancestor holding only this one… */
+  scope?: { testid?: string; css?: string };
+  /** …or, without one, its rank among them (from 0). */
+  nth?: number;
 }
 
 export interface ListContext {
