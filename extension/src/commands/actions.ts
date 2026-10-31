@@ -7,6 +7,7 @@ import { attachNetworkCapture } from './network';
 import { adoptOpenedWindow, rememberOwnedWindow } from '../owned-windows';
 import { armEffects } from '../effects';
 import type { NavigateParams, ClickParams, FillParams, SelectParams, KeyboardParams, ScrollParams } from '../types';
+import type { CDPSession, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
 
 // ─── Ref resolution (content script element map) ────────────────────
 
@@ -22,6 +23,48 @@ interface ResolvedElement {
   toggle?: { kind: 'checkbox' | 'radio' | 'switch'; checked: boolean };
   /** A checkbox or radio styled away: the click goes to its label. */
   viaLabel?: boolean;
+  /** That label is a separate <label for>: the input's id. */
+  labelFor?: string;
+}
+
+// Roles Playwright's getByRole finds by name.
+const NAMED_ROLES = new Set([
+  'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+  'option', 'combobox', 'textbox', 'searchbox', 'heading', 'slider', 'spinbutton', 'treeitem',
+]);
+const ACCESSIBLE_LOOKUP_MS = 400;
+
+interface AXNode {
+  nodeId: string;
+  ignored?: boolean;
+  role?: { value?: string };
+  name?: { value?: string };
+  parentId?: string;
+  backendDOMNodeId?: number;
+}
+
+/**
+ * The role and accessible name Chrome gives the element at (x, y) — or the control it sits
+ * in: the point is often on a text inside a button. What Playwright's getByRole matches,
+ * where the name the snapshot computes can differ (hidden text, a title over the content).
+ * Null when none is found, or Chrome takes too long: the click does not wait on it.
+ */
+async function accessibleAt(page: Page, x: number, y: number): Promise<{ role: string; name: string } | null> {
+  const lookup = (async () => {
+    const cdp = (page as unknown as { _client(): CDPSession })._client();
+    const { backendNodeId } = await cdp.send('DOM.getNodeForLocation', { x, y, ignorePointerEventsNone: true });
+    const { nodes } = await cdp.send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: true }) as { nodes: AXNode[] };
+    const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+    let node = nodes.find((n) => n.backendDOMNodeId === backendNodeId);
+    for (let level = 0; node && level < 6; level++, node = node.parentId ? byId.get(node.parentId) : undefined) {
+      const role = node.role?.value ?? '';
+      const name = (node.name?.value ?? '').trim();
+      if (!node.ignored && NAMED_ROLES.has(role) && name) return { role, name };
+    }
+    return null;
+  })();
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), ACCESSIBLE_LOOKUP_MS));
+  return Promise.race([lookup.catch(() => null), timeout]);
 }
 
 /** The state wanted from a step's `checked`: a boolean, or "true"/"false" once a variable is filled in. */
@@ -203,13 +246,16 @@ export async function cmdClick({ selector, tabId, sessionId, text, ref, checked 
 
   // A click toggles a checkbox: asked for a state it is already in, leave it there.
   const wanted = wantedChecked(checked);
-  const via = element.viaLabel ? { viaLabel: true } : {};
+  const via = element.viaLabel ? { viaLabel: true, ...(element.labelFor ? { labelFor: element.labelFor } : {}) } : {};
   if (element.toggle && wanted !== undefined && element.toggle.checked === wanted) {
     return { success: true, tag: element.tag, text: element.text, checked: wanted, ...via, changes: [`already ${wanted ? 'checked' : 'unchecked'}: not clicked`] };
   }
 
   assertNotCovered(element, 'clicked');
   const target = await describeRefTarget(resolvedTabId, ref);
+  // Before the click, which may take the element away. A box clicked through its label has
+  // its own way out (viaLabel): the label's role says nothing of it.
+  const accessible = element.viaLabel ? null : await accessibleAt(page, element.x, element.y);
 
   const effects = await armEffects(resolvedTabId);
   const openedTab = watchForNewTab(resolvedTabId);
@@ -240,6 +286,7 @@ export async function cmdClick({ selector, tabId, sessionId, text, ref, checked 
     // instead of toggling it again.
     ...(element.toggle ? { checked: element.toggle.kind === 'radio' || !element.toggle.checked } : {}),
     ...via,
+    ...(accessible ? { accessible } : {}),
     ...(newTab ? { newTabId: newTab.tabId, newWindowId: newTab.windowId } : {}),
     // What the click did: so the agent does not need a screenshot to find out.
     changes,

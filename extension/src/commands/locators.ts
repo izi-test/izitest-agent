@@ -15,13 +15,15 @@ export type ElementCondition = 'any' | 'visible' | 'enabled';
 const LOCATOR_PRIORITY: Record<string, number> = {
   css: 0, testid: 0,
   attribute: 1, placeholder: 1,
-  aria: 2, label: 2,
+  role: 2, aria: 2, label: 2,
   xpath: 3,
   text: 4,
 };
 
 export function locatorToPuppeteerSelector(locator: Locator): string {
   if (locator.type === 'text') return `::-p-text(${locator.value})`;
+  // Read as CSS, the role alone ("button") would find the page's first button.
+  if (locator.type === 'role') return `aria/${locator.name ?? ''}[role="${escapeCssString(locator.value)}"]`;
   if (locator.type === 'aria' || locator.type === 'label') return `aria/${locator.value}`;
   if (locator.type === 'xpath') return `::-p-xpath(${locator.value})`;
   if (locator.type === 'placeholder') return `[placeholder="${escapeCssString(locator.value)}"]`;

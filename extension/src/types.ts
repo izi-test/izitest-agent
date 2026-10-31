@@ -190,8 +190,10 @@ export interface NetworkSearchParams {
 // ─── Command Results ────────────────────────────────────────────────
 
 export interface Locator {
-  type: 'text' | 'css' | 'testid' | 'placeholder' | 'label' | 'aria' | 'attribute' | 'xpath';
+  type: 'text' | 'css' | 'testid' | 'placeholder' | 'label' | 'aria' | 'attribute' | 'xpath' | 'role';
   value: string;
+  /** For `role`: the accessible name, as Chrome computes it (value is the role). */
+  name?: string;
 }
 
 export interface ListContext {

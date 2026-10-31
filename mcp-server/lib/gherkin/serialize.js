@@ -158,6 +158,9 @@ function sameElement(tpl, step, tplSelector, stepSelector) {
   const testid = valueOf(ours, 'testid');
   if (testid && testid === valueOf(theirs, 'testid')) return true;
 
+  const role = ours.find(l => l.type === 'role' && l.name);
+  if (role && theirs.some(l => l.type === 'role' && l.value === role.value && l.name === role.name)) return true;
+
   const isToggle = step.params?.checked !== undefined || tpl.params?.checked !== undefined;
   const stableCss = (locators) => locators
     .filter(l => ['css', 'attribute'].includes(l.type) && l.value && !isWeakSelector(l.value) && !(isToggle && /\[name=/.test(l.value)))

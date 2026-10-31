@@ -157,3 +157,27 @@ test('a box styled away is checked through the label that holds it', () => {
   const out = render({ command: 'click', params: { selector: 'input[name="darkMode"]', checked: false, viaLabel: true } });
   assert.match(out, /await page\.locator\('label', \{ has: page\.locator\('input\[name="darkMode"\]'\) \}\)\.uncheck\(\);/);
 });
+
+test('the role and name Chrome gave the element win over what the snapshot computed', () => {
+  // <button><span style="display:none">caché</span>Valider</button>: the snapshot reads the
+  // hidden text, Chrome's accessible name does not.
+  const out = render({
+    command: 'click',
+    params: { selector: '#form > div:nth-of-type(2) > button' },
+    locators: [{ type: 'aria', value: 'cachéValider' }, { type: 'role', value: 'button', name: 'Valider' }],
+  });
+  assert.match(out, /await page\.getByRole\('button', \{ name: 'Valider', exact: true \}\)\.click\(\);/);
+  // A <div role="switch">: no tag says it is one, Chrome does.
+  assert.match(render({
+    command: 'click',
+    params: { selector: '#prefs > div:nth-of-type(3)' },
+    locators: [{ type: 'role', value: 'switch', name: 'Notifications' }],
+  }), /await page\.getByRole\('switch', \{ name: 'Notifications', exact: true \}\)\.click\(\);/);
+});
+
+test('a box styled away behind a separate <label for> is checked through that label', () => {
+  const step = (id) => ({ command: 'click', params: { selector: `#${id}`, checked: true, viaLabel: true, labelFor: id }, locators: [{ type: 'aria', value: "J'accepte les CGU" }] });
+  assert.match(render(step('cgu')), /await page\.check\('label\[for="cgu"\]'\);/);
+  // The id is generated: the label by its text instead.
+  assert.match(render(step('3e100fe7-d4c2-11f1-941e-2bb1b8b86cc4')), /await page\.locator\('label', \{ hasText: 'J\\'accepte les CGU' \}\)\.check\(\);/);
+});

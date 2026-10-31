@@ -226,7 +226,7 @@ function commandToPlaywright(tpl, argNames) {
   // A box styled away was clicked through its label: so is the generated step.
   const target = () => {
     const t = chooseTarget(tpl, resolve, 'this.page');
-    return tpl.command === 'click' && params.viaLabel ? throughLabel(t, resolve, 'this.page') : t;
+    return tpl.command === 'click' && params.viaLabel ? throughLabel(t, resolve, 'this.page', tpl) : t;
   };
   const act = (method, ...values) => {
     const t = target();

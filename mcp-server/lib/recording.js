@@ -71,7 +71,7 @@ function deriveIntent(command, params, locators) {
  * Record one executed action in `session`'s history, and append it to that session's
  * recording when one is active. Returns the action id handed back to the agent.
  */
-export function recordAction(session, command, params, refKey, screenshotBase64, agentIntent) {
+export function recordAction(session, command, params, refKey, screenshotBase64, agentIntent, extraLocators = []) {
   let locators = null;
   const recordParams = { ...params };
 
@@ -85,6 +85,8 @@ export function recordAction(session, command, params, refKey, screenshotBase64,
       }
     }
   }
+  // Locators the action itself learned (the role and name Chrome gives a clicked element).
+  if (extraLocators.length) locators = [...(locators ?? []), ...extraLocators];
 
   const id = session.putAction({ command, params: recordParams, locators });
 

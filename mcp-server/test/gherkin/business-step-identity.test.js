@@ -83,3 +83,14 @@ test('a business step built before locators were kept still needs the exact sele
   assert.equal(readsAsBusiness(recording('3e100fe7-d4c2-11f1-941e-2bb1b8b86cc4'), definition), false);
   assert.equal(readsAsBusiness(recording('92595267-d4c1-11f1-9672-93f1a5382911'), definition), true);
 });
+
+test('the role and name Chrome gave both clicks identify the element too', () => {
+  const click = (nth) => ({
+    command: 'click',
+    params: { selector: `#app > div:nth-of-type(${nth}) > div` },
+    locators: [{ type: 'role', value: 'switch', name: 'Notifications' }],
+  });
+  const { steps_template } = buildBusinessStep({ name: 'a', steps: [click(2)] }, { from_step: 1, to_step: 1, pattern: "j'active les notifications" });
+  const definition = { id: 103, keyword: 'When', pattern: "j'active les notifications", command: 'composite', params_template: {}, steps_template, is_default: 0 };
+  assert.match(serializeTestToFeatureWith({ name: 'b', steps: [click(5)] }, [...DEFAULTS, definition]), /When j'active les notifications/);
+});

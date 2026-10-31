@@ -123,10 +123,20 @@ export function chooseTarget(step, literal, page = 'page') {
     && !(isToggle && /\[name=/.test(l.value)));
   if (stableCss) return { css: stableCss.value };
 
+  // The role and name Chrome gave the element when it was clicked: exactly what getByRole
+  // matches. "Sign in" the button, not the heading that says it too (getByText finds both).
+  const recorded = locators.find(l => l.type === 'role' && l.value && l.name);
+  if (recorded) {
+    return {
+      locator: `${page}.getByRole('${recorded.value}', { name: ${literal(recorded.name)}, exact: true })`,
+      selector: `role=${recorded.value}[name=${quoted(recorded.name)}s]`,
+    };
+  }
+
   const name = valueOf('aria') ?? valueOf('label');
   const tag = tagOf(step);
-  // What a person reads, as Playwright advises: "Sign in" the button, not the heading
-  // that says it too (getByText would find both).
+  // Recorded before Chrome's role was kept: the role the tag implies, and the name the
+  // snapshot computed — the same as Chrome's for a button or a link named by its text.
   const role = ROLE_OF_TAG[tag];
   if (name && role) {
     return {
@@ -163,10 +173,20 @@ export function chooseTarget(step, literal, page = 'page') {
 }
 
 /**
- * A checkbox or radio styled away (opacity 0, no size), operated through the <label> that
- * holds it: check() on the input itself times out. Recorded as `viaLabel` by the click.
+ * A checkbox or radio styled away (opacity 0, no size), operated through its <label>:
+ * check() on the input itself times out. Recorded as `viaLabel` by the click — with
+ * `labelFor`, the input's id, when the label is a separate <label for> rather than one
+ * holding the input: that label then, or the one with its text when the id is generated.
  */
-export function throughLabel(target, literal, page = 'page') {
+export function throughLabel(target, literal, page = 'page', step = {}) {
+  const labelFor = step.params?.labelFor;
+  if (labelFor) {
+    const css = `label[for=${quoted(labelFor)}]`;
+    if (!isFragileSelector(css)) return { css };
+    const name = (step.locators ?? []).find(l => l.type === 'aria')?.value;
+    if (name) return { locator: `${page}.locator('label', { hasText: ${literal(name)} })`, selector: `label:has-text(${quoted(name)})` };
+    return { css, fragile: true };
+  }
   const inner = target.locator ?? `${page}.locator(${literal(target.css)})`;
   return {
     fragile: target.fragile,
@@ -182,7 +202,7 @@ export function throughLabel(target, literal, page = 'page') {
  */
 export function selectorFor(step) {
   const chosen = chooseTarget(step, quoted);
-  const target = step.command === 'click' && step.params?.viaLabel ? throughLabel(chosen, quoted) : chosen;
+  const target = step.command === 'click' && step.params?.viaLabel ? throughLabel(chosen, quoted, 'page', step) : chosen;
   return target.css ?? target.selector ?? step.params?.selector;
 }
 

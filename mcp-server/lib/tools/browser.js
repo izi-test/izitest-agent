@@ -245,8 +245,13 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       const state = {
         ...(typeof result?.checked === 'boolean' ? { checked: result.checked } : {}),
         ...(result?.viaLabel ? { viaLabel: true } : {}),
+        ...(result?.labelFor ? { labelFor: result.labelFor } : {}),
       };
-      const actionId = saveActionToHistory('click', { selector, text, tabId, ...state }, ref, screenshotBase64, intent);
+      // Chrome's role and accessible name for what was clicked: what getByRole matches, where
+      // the name the snapshot computes can differ (hidden text, a title over the content).
+      const { role, name } = result?.accessible ?? {};
+      const roleLocator = role && name && name.length < 100 ? [{ type: 'role', value: role, name }] : [];
+      const actionId = saveActionToHistory('click', { selector, text, tabId, ...state }, ref, screenshotBase64, intent, roleLocator);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );

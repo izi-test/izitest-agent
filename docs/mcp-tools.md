@@ -76,8 +76,11 @@ solide, dans cet ordre :
    celui d'avant) ;
 2. un `data-testid`, puis un autre locator CSS du même genre — pas `input[name="interests"]` pour
    une case d'un groupe : toutes les cases le partagent ;
-3. pour un bouton, un lien, une liste déroulante, un titre : `page.getByRole('button', { name, exact: true })`
-   — le bouton « Sign in », pas le titre qui le dit aussi ;
+3. le rôle et le nom accessible que **Chrome** donne à l'élément, lus au clic dans son arbre
+   d'accessibilité : `page.getByRole('button', { name, exact: true })` — le bouton « Sign in », pas le
+   titre qui le dit aussi. C'est exactement ce que `getByRole` compare, là où le nom calculé par la
+   snapshot peut différer (texte caché, `title` qui passe avant le contenu). Pour un clic enregistré
+   avant, le rôle déduit de la balise (bouton, lien, liste déroulante, titre) et le nom de la snapshot ;
 4. pour un `<label>` : `page.locator('label', { hasText: … })`, le label lui-même (les cases à
    cocher stylées cachent souvent le vrai `<input>`) ;
 5. pour un champ (`input`, `select`, `textarea`, ou une saisie) : `page.getByLabel(…)` ;
@@ -270,7 +273,9 @@ Un interrupteur dessiné en CSS cache souvent la vraie case (`opacity: 0`, taill
 `<label>`, avec son texte à côté (`<label class="toggle"><input …></label> Dark mode`). La snapshot le
 liste quand même, nommé par ce texte (`[checkbox] "Dark mode" [checked]`) ; un clic sur sa ref va au
 label, le résultat le signale (`viaLabel`) et le code généré passe aussi par lui :
-`page.locator('label', { has: page.locator('input[name="darkMode"]') }).uncheck()`.
+`page.locator('label', { has: page.locator('input[name="darkMode"]') }).uncheck()`. Un `<label for>`
+séparé de la case est noté aussi (`labelFor`, l'id de la case) : le code vise alors ce label,
+`page.check('label[for="notif"]')`, ou le label par son texte si l'id est généré.
 
 Une case cochée fait souvent aussi partie d'un groupe (les critères d'une recherche) : la détection
 de variables en fait alors une variable de liste, qui choisit *quelle* case ; l'état reste celui

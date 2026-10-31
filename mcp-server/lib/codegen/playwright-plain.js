@@ -59,7 +59,7 @@ function renderStep(step) {
     case 'navigate':
       return `await page.goto(${jsLiteral(p.url ?? '')});`;
     case 'click': {
-      const t = p.viaLabel ? throughLabel(target(), jsLiteral) : target();
+      const t = p.viaLabel ? throughLabel(target(), jsLiteral, 'page', step) : target();
       // A checkbox recorded with its state: check() leaves it so, where click() toggles.
       if (typeof p.checked === 'boolean') return act(t, p.checked ? 'check' : 'uncheck');
       if (p.checked != null) {

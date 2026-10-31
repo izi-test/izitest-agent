@@ -243,6 +243,8 @@ export interface ClickTarget {
   toggle?: ToggleState;
   /** The target was a checkbox or radio styled away: its label is what was measured. */
   viaLabel?: boolean;
+  /** That label is a separate <label for>: the input's id. */
+  labelFor?: string;
 }
 
 interface MeasureOptions {
@@ -255,11 +257,14 @@ interface MeasureOptions {
 }
 
 function measureForClick(el: Element, { uncover = false }: MeasureOptions = {}): ClickTarget | null {
-  // A checkbox or radio styled away is clicked where it shows: on its label.
+  // A checkbox or radio styled away is clicked where it shows: on its label. A separate
+  // <label for> is named by the input's id: generated code goes to that label, not to a
+  // label holding the input, which there is none of.
   const label = styledAwayToggleLabel(el);
   if (label) {
     const target = measureForClick(label, { uncover });
-    return target && { ...target, viaLabel: true };
+    const labelFor = !label.contains(el) && (el as HTMLInputElement).id ? (el as HTMLInputElement).id : undefined;
+    return target && { ...target, viaLabel: true, ...(labelFor ? { labelFor } : {}) };
   }
 
   // An element inside a same-origin iframe measures itself against that iframe, so its
