@@ -4,7 +4,6 @@
 import { AstBuilder, GherkinClassicTokenMatcher, Parser } from '@cucumber/gherkin';
 import { IdGenerator } from '@cucumber/messages';
 import { CucumberExpression, ParameterType, ParameterTypeRegistry } from '@cucumber/cucumber-expressions';
-import { db, parseJson } from '../db.js';
 
 const gherkinParser = new Parser(
   new AstBuilder(IdGenerator.uuid()),
@@ -22,64 +21,74 @@ for (const [type, regexps] of Object.entries(NUMERIC_OR_VARIABLE)) {
 }
 const withVariableArgs = (pattern) => pattern.replace(/\{(int|float)\}/g, '{izitest_$1}');
 
-export function parseFeatureToSteps(featureText, projectId) {
-  const definitions = db.prepare(
-    'SELECT * FROM step_definitions WHERE project_id = ?'
-  ).all(projectId).map(r => ({
-    ...r,
-    params_template: parseJson(r.params_template) || {},
-    steps_template: parseJson(r.steps_template) || null,
-  }));
-  return parseFeatureToStepsWith(featureText, definitions);
+// Takes the definitions loaded by the caller. A test's own feature, edited, goes through
+// reconcile.js instead, which keeps the steps of the phrases left as they were.
+export function parseFeatureToStepsWith(featureText, definitions) {
+  const compiled = compileDefinitions(definitions);
+  const testSteps = [];
+  const errors = [];
+  let lastResolvedKeyword = null;
+
+  for (const { text: phrase, keyword: rawKeyword, line } of featurePhrases(featureText)) {
+    const parsed = stepsForPhrase(phrase, effectiveKeyword(rawKeyword, lastResolvedKeyword), compiled, testSteps.length);
+    if (!parsed) {
+      errors.push(unresolved(line, rawKeyword, phrase));
+      continue;
+    }
+    for (const s of parsed.steps) testSteps.push(s);
+    lastResolvedKeyword = parsed.keyword;
+  }
+
+  if (errors.length) throw unresolvedError(errors);
+  return testSteps;
 }
 
-// Pure version — takes pre-loaded definitions. Used by tests and by callers
-// that already have the catalogue in memory.
-export function parseFeatureToStepsWith(featureText, definitions) {
+/** The scenario's phrases as written: text, keyword ("Given", "And"…), line. */
+export function featurePhrases(featureText) {
   const doc = gherkinParser.parse(featureText);
   const feature = doc.feature;
   if (!feature) throw new Error('No Feature found in document');
 
   const scenarioChild = feature.children.find(c => c.scenario);
   if (!scenarioChild) throw new Error('No Scenario found in Feature');
-  const scenario = scenarioChild.scenario;
+  return scenarioChild.scenario.steps.map(step => ({
+    text: step.text,
+    keyword: step.keyword.trim(),
+    line: step.location.line,
+  }));
+}
 
-  const compiled = definitions.map(d => ({
+export function compileDefinitions(definitions) {
+  return definitions.map(d => ({
     def: d,
     expression: new CucumberExpression(withVariableArgs(d.pattern), registry),
   }));
+}
 
-  const testSteps = [];
-  const errors = [];
-  let lastResolvedKeyword = null;
+/** "And", "But" and "*" carry on the keyword before them. */
+export function effectiveKeyword(rawKeyword, lastResolvedKeyword) {
+  return (rawKeyword === 'And' || rawKeyword === 'But' || rawKeyword === '*') ? lastResolvedKeyword : rawKeyword;
+}
 
-  for (let i = 0; i < scenario.steps.length; i++) {
-    const step = scenario.steps[i];
-    const phrase = step.text;
-    const rawKeyword = step.keyword.trim(); // "Given", "When", "Then", "And", "But"
-    const effectiveKeyword = (rawKeyword === 'And' || rawKeyword === 'But' || rawKeyword === '*')
-      ? lastResolvedKeyword
-      : rawKeyword;
+/**
+ * The test steps one phrase stands for, and the keyword of the definition it matched;
+ * null when no definition matches it.
+ */
+export function stepsForPhrase(phrase, keyword, compiled, startIndex = 0) {
+  const match = findMatchingDefinition(phrase, compiled, keyword);
+  if (!match) return null;
+  return { steps: buildTestSteps(match.def, match.args, phrase, startIndex), keyword: match.def.keyword };
+}
 
-    const match = findMatchingDefinition(phrase, compiled, effectiveKeyword);
-    if (!match) {
-      errors.push(`Line ${step.location.line}: no step definition matches "${rawKeyword} ${phrase}"`);
-      continue;
-    }
+export function unresolved(line, rawKeyword, phrase) {
+  return `Line ${line}: no step definition matches "${rawKeyword} ${phrase}"`;
+}
 
-    const expanded = buildTestSteps(match.def, match.args, phrase, testSteps.length);
-    for (const s of expanded) testSteps.push(s);
-    lastResolvedKeyword = match.def.keyword;
-  }
-
-  if (errors.length) {
-    const err = new Error(`Unresolved Gherkin steps:\n${errors.join('\n')}`);
-    err.code = 'GHERKIN_UNRESOLVED';
-    err.errors = errors;
-    throw err;
-  }
-
-  return testSteps;
+export function unresolvedError(errors) {
+  const err = new Error(`Unresolved Gherkin steps:\n${errors.join('\n')}`);
+  err.code = 'GHERKIN_UNRESOLVED';
+  err.errors = errors;
+  return err;
 }
 
 function findMatchingDefinition(phrase, compiled, effectiveKeyword) {

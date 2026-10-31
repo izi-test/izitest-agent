@@ -18,7 +18,7 @@ import {
   deleteStepDefinition,
 } from './gherkin/step-definition-store.js';
 import { serializeTestToFeature } from './gherkin/serialize.js';
-import { parseFeatureToSteps } from './gherkin/parse.js';
+import { stepsForEditedFeature } from './gherkin/reconcile.js';
 import { loadTest, saveTest } from './test-store.js';
 import { generateTestCode } from './codegen/index.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
@@ -35,6 +35,18 @@ const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 function json(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
+}
+
+/** A project's step definitions, in the order the Gherkin parser and serializer read them. */
+function projectDefinitions(projectId) {
+  return db
+    .prepare('SELECT * FROM step_definitions WHERE project_id = ?')
+    .all(projectId)
+    .map((r) => ({
+      ...r,
+      params_template: parseJson(r.params_template) || {},
+      steps_template: parseJson(r.steps_template) || null,
+    }));
 }
 
 async function readBody(req) {
@@ -205,7 +217,8 @@ export async function apiRouter(req, res, url) {
 
       let steps;
       try {
-        steps = parseFeatureToSteps(featureText, projectId);
+        // Unchanged phrases keep their steps whole: list variables, intents, locators.
+        steps = stepsForEditedFeature(featureText, projectDefinitions(projectId), existing);
       } catch (err) {
         if (err.code === 'GHERKIN_UNRESOLVED') {
           return json(res, 422, { error: err.message, errors: err.errors });
@@ -225,14 +238,7 @@ export async function apiRouter(req, res, url) {
       if (!test) return json(res, 404, { error: 'Test not found' });
 
       try {
-        const result = generateTestCode(test, framework, (projectId) => db
-          .prepare('SELECT * FROM step_definitions WHERE project_id = ?')
-          .all(projectId)
-          .map((r) => ({
-            ...r,
-            params_template: parseJson(r.params_template) || {},
-            steps_template: parseJson(r.steps_template) || null,
-          })));
+        const result = generateTestCode(test, framework, projectDefinitions);
         if (result.error) return json(res, result.status, { error: result.error });
         return json(res, 200, { framework, files: result.files });
       } catch (err) {

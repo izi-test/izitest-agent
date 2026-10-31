@@ -211,9 +211,21 @@ add_test_variable({ test_name: "izi_login", step: 7, param: "expected", name: "e
 Au rejeu, une valeur contenant un guillemet ou une barre oblique inverse (`Pa"ss\word`) est prise telle
 quelle.
 
-Limite : enregistrer depuis l'onglet Gherkin reconstruit les étapes à partir des phrases. Le lien
-d'une étape à une variable de liste (`list_item`) et les intentions des étapes regroupées n'y
-survivent pas.
+#### Enregistrer depuis l'onglet Gherkin
+
+Une phrase ne dit pas tout d'une étape : ni ses locators, ni son intention, ni sa variable de liste,
+ni ce que seul l'enregistrement sait (case cliquée par son label, capture VRT). Enregistrer la feature
+compare donc les phrases éditées à celles du test :
+
+- une phrase **inchangée** garde ses étapes telles quelles — y compris une étape qu'aucune phrase ne
+  décrit (`execute_js`, vérification visuelle), qui ne s'enregistrait pas du tout jusqu'ici ;
+- une phrase **modifiée** est relue ; si sa commande et sa cible (sélecteur, URL) n'ont pas changé,
+  elle garde les locators, l'intention et la variable de liste de l'étape qu'elle remplace (une
+  variable de saisie, tant que son `{{nom}}` y figure encore) ;
+- une phrase **ajoutée** est relue, une phrase **supprimée** disparaît ; les autres ne bougent pas.
+
+Seules les phrases modifiées ou ajoutées doivent correspondre à une step definition : une erreur
+cite leur ligne.
 
 #### Cases à cocher
 

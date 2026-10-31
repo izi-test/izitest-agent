@@ -17,6 +17,29 @@ export function serializeTestToFeature(test, projectId) {
 // Pure version — takes pre-loaded definitions. Used by tests and by the
 // API layer when definitions are already in memory.
 export function serializeTestToFeatureWith(test, definitions) {
+  const lines = [];
+  lines.push(`Feature: ${test.name}`);
+  if (test.description) {
+    for (const l of String(test.description).split('\n')) lines.push(`  ${l}`);
+  }
+  lines.push('');
+  lines.push(`  Scenario: ${test.name}`);
+
+  let lastKeyword = null;
+  for (const { keyword, phrase } of scenarioPhrases(test, definitions)) {
+    lines.push(`    ${keyword === lastKeyword ? 'And' : keyword} ${phrase}`);
+    lastKeyword = keyword;
+  }
+
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * The scenario's phrases, in order, each with the test steps it stands for: one step, or
+ * the run of steps a business step groups. Saving an edited feature uses it to give an
+ * unchanged phrase back its steps (see reconcile.js).
+ */
+export function scenarioPhrases(test, definitions) {
   // Split into composite and single definitions.
   const composites = definitions.filter(d => d.steps_template);
   const singles = definitions.filter(d => !d.steps_template);
@@ -35,38 +58,26 @@ export function serializeTestToFeatureWith(test, definitions) {
     (a, b) => b.steps_template.length - a.steps_template.length
   );
 
-  const lines = [];
-  lines.push(`Feature: ${test.name}`);
-  if (test.description) {
-    for (const l of String(test.description).split('\n')) lines.push(`  ${l}`);
-  }
-  lines.push('');
-  lines.push(`  Scenario: ${test.name}`);
-
   const steps = test.steps || [];
-  let lastKeyword = null;
+  const phrases = [];
   let i = 0;
 
   while (i < steps.length) {
     // Try composite match first — check if next N steps match a composite definition.
     const composite = tryMatchComposite(steps, i, sortedComposites);
     if (composite) {
-      const keyword = (composite.keyword === lastKeyword) ? 'And' : composite.keyword;
-      lines.push(`    ${keyword} ${composite.phrase}`);
-      lastKeyword = composite.keyword;
+      phrases.push({ keyword: composite.keyword, phrase: composite.phrase, steps: steps.slice(i, i + composite.consumed) });
       i += composite.consumed;
       continue;
     }
 
     // Fall back to single-step matching.
     const rendered = renderStepPhrase(steps[i], sortedSingles);
-    const keyword = (rendered.keyword === lastKeyword) ? 'And' : rendered.keyword;
-    lines.push(`    ${keyword} ${rendered.phrase}`);
-    lastKeyword = rendered.keyword;
+    phrases.push({ keyword: rendered.keyword, phrase: rendered.phrase, steps: [steps[i]] });
     i++;
   }
 
-  return lines.join('\n') + '\n';
+  return phrases;
 }
 
 function tryMatchComposite(steps, startIndex, composites) {
