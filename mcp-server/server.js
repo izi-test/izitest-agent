@@ -24,6 +24,7 @@ import { instrumentTools, registerBenchTools } from './lib/bench.js';
 import { registerAgentTools } from './lib/agent/mcp-adapter.js';
 import { initDatabase } from './lib/db.js';
 import { apiRouter } from './lib/api.js';
+import { parseAllowedOrigins, refuseBrowserRequest } from './lib/origin-guard.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
@@ -40,6 +41,9 @@ const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 // D'où le défaut loopback, et le refus de démarrer sur une autre interface sans jeton.
 const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
 const MCP_TOKEN = process.env.IZITEST_TOKEN || '';
+// Sans jeton, les pages hors de la machine (Poste de pilotage hébergé…) qui ont le droit
+// de lire les réponses du serveur. Voir lib/origin-guard.js.
+const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.IZITEST_ALLOWED_ORIGINS);
 const LOOPBACK = ['127.0.0.1', '::1', 'localhost'];
 const WILDCARD = ['0.0.0.0', '::', ''];
 
@@ -145,14 +149,33 @@ if (USE_STDIO) {
   const handleRequest = async (req, res) => {
     const url = new URL(req.url, `http://${MCP_HOST}:${MCP_PORT}`);
 
-    // Sans jeton, le serveur est local et garde son CORS ouvert (interface web incluse).
+    // Sans jeton, le serveur ne demande rien aux clients locaux, mais une page visitée par le
+    // Chrome piloté peut elle aussi joindre 127.0.0.1 : seules les pages locales (le tableau
+    // de bord) et IZITEST_ALLOWED_ORIGINS passent, et seulement avec un Host local (DNS
+    // rebinding). Le détail est dans lib/origin-guard.js.
+    if (!MCP_TOKEN) {
+      const refused = refuseBrowserRequest(req.headers, ALLOWED_ORIGINS);
+      if (refused) {
+        log(`Requête refusée (${refused}) sur ${url.pathname}`);
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Requête refusée : ${refused}` }));
+        return;
+      }
+    }
+
     // Avec jeton, il est joignable à distance : une page visitée par le Chrome piloté
     // ne doit pas pouvoir lui parler au nom de l'utilisateur.
     // Live view is the exception for GET: the cockpit runs on another origin, every route
     // still wants the token, and a GET there changes nothing.
     // (OPTIONS too: the preflight of a GET that sends the token as an Authorization header.)
+    // Without a token, the origin has just been checked: it is echoed back, never '*'.
     const liveRead = ['GET', 'OPTIONS'].includes(req.method) && url.pathname.startsWith('/live/');
-    res.setHeader('Access-Control-Allow-Origin', MCP_TOKEN && !liveRead ? 'null' : '*');
+    if (MCP_TOKEN) {
+      res.setHeader('Access-Control-Allow-Origin', liveRead ? '*' : 'null');
+    } else if (req.headers.origin) {
+      res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
+      res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 

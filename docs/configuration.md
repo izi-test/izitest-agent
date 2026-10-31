@@ -20,6 +20,16 @@ export MCP_PORT=3459
 node mcp-server/server.js
 ```
 
+### Accès et sécurité
+
+| Variable | Défaut | Description |
+|----------|--------|-------------|
+| `MCP_HOST` | `127.0.0.1` | Interface d'écoute du serveur HTTP/SSE. Une interface autre que la boucle locale exige `IZITEST_TOKEN` |
+| `IZITEST_TOKEN` | aucun | Jeton exigé sur toutes les routes (`Authorization: Bearer …` ou `?token=…`), sauf `/health` |
+| `IZITEST_ALLOWED_ORIGINS` | aucune | Sans jeton : origines supplémentaires, séparées par des virgules, dont les pages peuvent lire les réponses du serveur (ex. un Poste de pilotage hébergé). Les pages locales passent toujours |
+
+Voir [security.md](security.md).
+
 ### Vue en direct
 
 | Variable | Défaut | Description |

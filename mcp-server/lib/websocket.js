@@ -3,6 +3,7 @@
 import { WebSocketServer } from 'ws';
 import { EventEmitter } from 'events';
 import { log } from './logger.js';
+import { isExtensionOrigin } from './origin-guard.js';
 
 const profiles = new Map();       // profileId → ws
 
@@ -44,7 +45,18 @@ export function closeWebSocket() {
 // behaviour here (lsof | xargs kill -9) made two agents starting in parallel kill each
 // other's bridge, which is exactly what parallel sessions must not do.
 export function startWebSocketServer(port) {
-  wss = new WebSocketServer({ port, host: '127.0.0.1' });
+  wss = new WebSocketServer({
+    port,
+    host: '127.0.0.1',
+    // Any page open in the piloted Chrome can open a WebSocket to 127.0.0.1. Registered as
+    // a profile, it would receive the commands meant for the extension (values typed,
+    // cookies read) and answer them. See origin-guard.js.
+    verifyClient: ({ origin }) => {
+      if (isExtensionOrigin(origin)) return true;
+      log(`WebSocket refused: origin "${origin}" is not an extension`);
+      return false;
+    },
+  });
 
   wss.on('listening', () => {
     log(`WebSocket bridge listening on port ${port}`);

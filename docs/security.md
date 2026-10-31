@@ -7,10 +7,19 @@ IziTest Agent is designed to run locally and give you full control over your bro
 ### 1. Localhost Only
 The WebSocket bridge and MCP server listen **exclusively** on `127.0.0.1` (localhost). No ports are exposed to the public internet by default. This ensures that only your local AI (Claude Desktop/Code) can communicate with your browser instances.
 
-### 2. Cookie Masking
+### 2. Websites You Visit Cannot Drive It
+Localhost is not a wall against the browser IziTest Agent pilots: any page open in that Chrome can send requests to `127.0.0.1`. Left unchecked, a site you merely visit could open an MCP session and call `execute_js` or `get_cookies` with your real sessions. So:
+
+- **WebSocket bridge (port 3466), always**: only a Chrome extension may connect (`Origin: chrome-extension://…`). A web page is refused, whatever its origin. Clients that are not browsers (tests, tools) send no `Origin` and pass.
+- **HTTP server (port 3467), without `IZITEST_TOKEN`**: a browser request is refused unless it comes from a local page (`http://localhost:*`, `http://127.0.0.1:*`: the dashboard and its Vite dev server) or from an origin listed in `IZITEST_ALLOWED_ORIGINS`. `Origin: null` (sandboxed iframes, `file://`) is refused. The `Host` header must be local too, which stops DNS rebinding. CORS echoes the accepted origin, never `*`. Local MCP clients, `curl` and scripts send no `Origin` and are not affected.
+- **HTTP server with `IZITEST_TOKEN`**: every route except `/health` requires the token, so a page without it gets nothing. Required as soon as `MCP_HOST` is not loopback.
+
+A refused request answers `403` and leaves a line in `mcp-server/data/server.log`.
+
+### 3. Cookie Masking
 When using the `get_cookies` tool, IziTest Agent **masks** sensitive cookie values. It only returns the first 50 characters of a cookie's value to the AI, preventing full session tokens from being sent to external LLM providers (Anthropic, OpenAI, etc.) while still allowing the AI to verify if a cookie exists.
 
-### 3. Execution Context
+### 4. Execution Context
 JavaScript executed via the `execute_js` tool runs within the **Chrome extension's sandbox** or the **page context**. It does not have access to your local file system, environmental variables, or other sensitive system data outside the browser.
 
 ---

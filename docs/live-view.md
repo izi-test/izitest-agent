@@ -111,9 +111,16 @@ Les images déjà gardées ne sont pas effacées ; elles disparaissent au bout d
 
 ## CORS
 
-Le Poste de pilotage tourne sur une autre origine. Les GET sous `/live/` répondent donc
-`Access-Control-Allow-Origin: *`, même quand un jeton est défini. Ils exigent toujours le
-jeton et ne modifient rien. Les autres routes gardent leur politique.
+Le Poste de pilotage tourne sur une autre origine. Avec un jeton, les GET sous `/live/`
+répondent donc `Access-Control-Allow-Origin: *`. Ils exigent toujours le jeton et ne
+modifient rien. Les autres routes gardent leur politique.
+
+Sans jeton, seules les pages locales et les origines de `IZITEST_ALLOWED_ORIGINS` peuvent
+lire `/live/` : ces images montrent les onglets de l'utilisateur, et n'importe quel site
+ouvert dans le Chrome piloté pourrait sinon les lire. Un Poste de pilotage hébergé ailleurs
+doit être ajouté à cette liste (`IZITEST_ALLOWED_ORIGINS=https://pilotage.example.com`).
+Un `<img src>` sur le flux MJPEG, qui n'envoie pas d'`Origin`, s'affiche toujours. Voir
+[security.md](security.md).
 
 ## Limites
 
