@@ -241,7 +241,11 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       }
       // A checkbox is recorded with the state the click left it in: replay and generated code
       // set that state, where replaying a click would toggle it whatever it was.
-      const state = typeof result?.checked === 'boolean' ? { checked: result.checked } : {};
+      // A box styled away was clicked through its label: generated code goes there too.
+      const state = {
+        ...(typeof result?.checked === 'boolean' ? { checked: result.checked } : {}),
+        ...(result?.viaLabel ? { viaLabel: true } : {}),
+      };
       const actionId = saveActionToHistory('click', { selector, text, tabId, ...state }, ref, screenshotBase64, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }

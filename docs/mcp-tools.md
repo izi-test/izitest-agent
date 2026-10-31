@@ -40,7 +40,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. |
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. |
-| `add_assertion` | Adds a check (e.g., "element exists") to a saved test. A value the test typed in it is saved as its `{{variable}}`. |
+| `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
@@ -67,16 +67,23 @@ sur `GET /api/tests/:name/codegen?framework=…`.
 
 Le rejeu d'IziTest essaie tous les locators enregistrés d'une étape ; le code Playwright n'en
 garde qu'un. Un sélecteur bâti sur un identifiant que la page génère à chaque chargement (UUID
-dans un `id` ou un `for`, `:r1:` de React, classes CSS-in-JS) y casserait au premier passage. En
-`playwright-plain`, chaque étape prend donc le premier locator stable, dans cet ordre :
+dans un `id` ou un `for`, `:r1:` de React, classes CSS-in-JS) y casserait au premier passage ; un
+sélecteur positionnel (`#login-form > div:nth-of-type(3) > button:nth-of-type(1)`) tient tant que
+la mise en page ne bouge pas. En `playwright-plain`, chaque étape prend donc le premier locator
+solide, dans cet ordre :
 
-1. le sélecteur enregistré, s'il ne contient rien de généré (le code est alors celui d'avant) ;
-2. un `data-testid`, puis un autre locator CSS sans rien de généré ;
-3. pour un `<label>` : `page.locator('label', { hasText: … })`, le label lui-même (les cases à
+1. le sélecteur enregistré, s'il ne contient ni rien de généré ni position (le code est alors
+   celui d'avant) ;
+2. un `data-testid`, puis un autre locator CSS du même genre — pas `input[name="interests"]` pour
+   une case d'un groupe : toutes les cases le partagent ;
+3. pour un bouton, un lien, une liste déroulante, un titre : `page.getByRole('button', { name, exact: true })`
+   — le bouton « Sign in », pas le titre qui le dit aussi ;
+4. pour un `<label>` : `page.locator('label', { hasText: … })`, le label lui-même (les cases à
    cocher stylées cachent souvent le vrai `<input>`) ;
-4. pour un champ (`input`, `select`, `textarea`, ou une saisie) : `page.getByLabel(…)` ;
-5. `page.getByPlaceholder(…)`, puis `page.getByText(…, { exact: true })` quand le texte visible
-   est le nom accessible.
+5. pour un champ (`input`, `select`, `textarea`, ou une saisie) : `page.getByLabel(…)` ;
+6. `page.getByPlaceholder(…)`, puis `page.getByText(…, { exact: true })` quand le texte visible
+   est le nom accessible ;
+7. le sélecteur positionnel, faute de mieux.
 
 Sans alternative stable, le sélecteur d'origine reste, précédé d'un commentaire `// FIXME`. En
 `playwright-cucumber`, le même choix vaut pour les étapes métier (ci-dessous) ; une étape restée
@@ -224,6 +231,12 @@ Avec l'état enregistré :
 - **Variable** : `add_test_variable({ test_name, step, param: "checked", name: "jardin" })` fait de
   l'état une variable (`"true"` ou `"false"`) : `When I set "…" checked to "{{jardin}}"` dans
   l'onglet Gherkin, `setChecked(…)` dans le code généré.
+
+Un interrupteur dessiné en CSS cache souvent la vraie case (`opacity: 0`, taille nulle) derrière son
+`<label>`, avec son texte à côté (`<label class="toggle"><input …></label> Dark mode`). La snapshot le
+liste quand même, nommé par ce texte (`[checkbox] "Dark mode" [checked]`) ; un clic sur sa ref va au
+label, le résultat le signale (`viaLabel`) et le code généré passe aussi par lui :
+`page.locator('label', { has: page.locator('input[name="darkMode"]') }).uncheck()`.
 
 Une case cochée fait souvent aussi partie d'un groupe (les critères d'une recherche) : la détection
 de variables en fait alors une variable de liste, qui choisit *quelle* case ; l'état reste celui

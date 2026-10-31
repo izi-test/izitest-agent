@@ -26,6 +26,7 @@ export const DEFAULT_STEP_DEFINITIONS = [
   { keyword: 'Then',  pattern: 'I should not see {string}',              command: 'assert', params_template: { type: 'element_not_exists', selector: '{0}' } },
   { keyword: 'Then',  pattern: '{string} should be visible',             command: 'assert', params_template: { type: 'element_visible', selector: '{0}' } },
   { keyword: 'Then',  pattern: '{string} should contain {string}',       command: 'assert', params_template: { type: 'text_contains', selector: '{0}', expected: '{1}' } },
+  { keyword: 'Then',  pattern: '{string} should not contain {string}',   command: 'assert', params_template: { type: 'text_not_contains', selector: '{0}', expected: '{1}' } },
   { keyword: 'Then',  pattern: 'the URL should be {string}',             command: 'assert', params_template: { type: 'url_equals', expected: '{0}' } },
   { keyword: 'Then',  pattern: 'the URL should contain {string}',        command: 'assert', params_template: { type: 'url_contains', expected: '{0}' } },
   { keyword: 'Then',  pattern: 'the title should be {string}',           command: 'assert', params_template: { type: 'title_equals', expected: '{0}' } },

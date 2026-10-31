@@ -2,7 +2,7 @@
 // test object. Pure: no DB access, no filesystem. Returns the file content as
 // a single string so the caller can write it to disk or bundle it in a zip.
 
-import { chooseTarget, withFixme } from './locators.js';
+import { chooseTarget, throughLabel, withFixme } from './locators.js';
 
 export function generatePlaywrightPlain(test) {
   const lines = [];
@@ -58,14 +58,15 @@ function renderStep(step) {
   switch (step.command) {
     case 'navigate':
       return `await page.goto(${jsLiteral(p.url ?? '')});`;
-    case 'click':
+    case 'click': {
+      const t = p.viaLabel ? throughLabel(target(), jsLiteral) : target();
       // A checkbox recorded with its state: check() leaves it so, where click() toggles.
-      if (typeof p.checked === 'boolean') return act(target(), p.checked ? 'check' : 'uncheck');
+      if (typeof p.checked === 'boolean') return act(t, p.checked ? 'check' : 'uncheck');
       if (p.checked != null) {
-        const t = target();
         return withFixme(t, `await ${locatorOf(t)}.setChecked(${jsLiteral(p.checked)} === 'true');`);
       }
-      return act(target(), 'click');
+      return act(t, 'click');
+    }
     case 'fill':
       return act(target(), 'fill', p.value ?? '');
     case 'type': {
@@ -126,6 +127,8 @@ function renderAssertion(a) {
         return `await expect(page.locator(${jsLiteral(a.selector)})).toContainText(${jsLiteral(a.expected ?? '')});`;
       }
       return `await expect(page.locator('body')).toContainText(${jsLiteral(a.expected ?? '')});`;
+    case 'text_not_contains':
+      return `await expect(page.locator(${jsLiteral(a.selector ?? 'body')})).not.toContainText(${jsLiteral(a.expected ?? '')});`;
     case 'element_visible':
       return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toBeVisible();`;
     case 'element_hidden':

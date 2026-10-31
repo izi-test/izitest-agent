@@ -21,13 +21,23 @@ async function load() {
   await build({ entryPoints: [SRC], outfile, bundle: true, format: 'esm', platform: 'neutral', logLevel: 'silent' });
   return import(outfile);
 }
-const { toggleOf } = await load();
+const { toggleOf, isToggleInput, styledAwayToggleLabel, textAround } = await load();
 
-/** A node with just what toggleOf reads: tag, attributes, ancestors, a label's control. */
-function node(tag, { attrs = {}, parent = null, ...props } = {}) {
+/**
+ * A node with just what the toggle helpers read: tag, attributes, ancestors, a label's
+ * control, its box and computed style, its text children.
+ */
+function node(tag, { attrs = {}, parent = null, box = { width: 20, height: 20 }, style = {}, texts = [], labels, ...props } = {}) {
+  const view = { getComputedStyle: (el) => ({ opacity: '1', visibility: 'visible', ...el.style }) };
   const n = {
     tagName: tag.toUpperCase(),
     parent,
+    parentElement: parent,
+    style,
+    labels,
+    ownerDocument: { defaultView: view },
+    getBoundingClientRect: () => box,
+    childNodes: texts.map((text) => ({ nodeType: 3, textContent: text })),
     getAttribute: (name) => attrs[name] ?? null,
     // Enough of closest() for the selectors toggleOf uses.
     closest(selector) {
@@ -67,4 +77,44 @@ test('anything else is no toggle: a button, a text field and its label', () => {
   assert.equal(toggleOf(field), undefined);
   assert.equal(toggleOf(node('label', { control: field })), undefined);
   assert.equal(toggleOf(node('label', { control: null })), undefined);
+});
+
+// izitest-test.html's "Dark mode" toggle: <div class="toggle-wrap"><label class="toggle">
+// <input type="checkbox" style="opacity:0;width:0;height:0">…</label> Dark mode</div>
+function darkModeToggle() {
+  const wrap = node('div', { texts: ['\n  ', ' Dark mode\n'] });
+  const label = node('label', { parent: wrap, texts: ['\n   '] });
+  const input = node('input', { parent: label, type: 'checkbox', checked: true, box: { width: 0, height: 0 }, style: { opacity: '0' } });
+  return { wrap, label, input };
+}
+
+test('a toggle input is a checkbox or a radio input, nothing else', () => {
+  assert.equal(isToggleInput(node('input', { type: 'checkbox' })), true);
+  assert.equal(isToggleInput(node('input', { type: 'radio' })), true);
+  assert.equal(isToggleInput(node('input', { type: 'text' })), false);
+  assert.equal(isToggleInput(node('div', { attrs: { role: 'checkbox' } })), false);
+});
+
+test('a box styled away behind a label that shows is operated through that label', () => {
+  const { label, input } = darkModeToggle();
+  assert.equal(styledAwayToggleLabel(input), label);
+});
+
+test('a box that shows, or with no label that shows, is clicked itself', () => {
+  const shown = node('input', { type: 'checkbox', parent: node('label') });
+  assert.equal(styledAwayToggleLabel(shown), null);
+  const hiddenLabel = node('label', { box: { width: 0, height: 0 } });
+  assert.equal(styledAwayToggleLabel(node('input', { type: 'checkbox', parent: hiddenLabel, style: { opacity: '0' } })), null);
+  assert.equal(styledAwayToggleLabel(node('input', { type: 'checkbox', style: { opacity: '0' } })), null);
+});
+
+test('a separate <label for> counts too', () => {
+  const label = node('label');
+  const input = node('input', { type: 'radio', labels: [label], box: { width: 0, height: 0 } });
+  assert.equal(styledAwayToggleLabel(input), label);
+});
+
+test('a control with no name is named by the text next to it', () => {
+  assert.equal(textAround(darkModeToggle().input), 'Dark mode');
+  assert.equal(textAround(node('input', { parent: node('div', { parent: node('div', { parent: node('div', { parent: node('div', { texts: ['far'] }) }) }) }) })), '');
 });

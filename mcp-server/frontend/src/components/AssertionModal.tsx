@@ -13,6 +13,7 @@ const ASSERTION_TYPES = [
   { value: 'element_hidden', label: 'Element Hidden', needsSelector: true, needsExpected: false },
   { value: 'text_equals', label: 'Text Equals', needsSelector: true, needsExpected: true },
   { value: 'text_contains', label: 'Text Contains', needsSelector: true, needsExpected: true },
+  { value: 'text_not_contains', label: 'Text Does Not Contain', needsSelector: true, needsExpected: true },
   { value: 'attribute_equals', label: 'Attribute Equals', needsSelector: true, needsExpected: true, needsAttribute: true },
   { value: 'url_equals', label: 'URL Equals', needsSelector: false, needsExpected: true },
   { value: 'url_contains', label: 'URL Contains', needsSelector: false, needsExpected: true },

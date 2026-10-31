@@ -61,15 +61,36 @@ export function isFragileSelector(selector) {
   return false;
 }
 
+/**
+ * True when the selector finds the element by its position among its siblings
+ * (`#login-form > div:nth-of-type(3) > button:nth-of-type(1)`): it holds as long as the
+ * layout does. Better than a generated ID, worse than a role and a name.
+ */
+export function isPositionalSelector(selector) {
+  return /:nth-(of-type|child|last-of-type|last-child)\(/.test(String(selector ?? ''));
+}
+
 const FIELD_COMMANDS = new Set(['fill', 'type', 'press', 'select']);
 const FIELD_TAGS = new Set(['input', 'select', 'textarea']);
+// Roles getByRole finds by a tag a recorded selector ends with. Inputs are left out: their
+// role depends on their type, which a selector rarely says; fields go by their label.
+const ROLE_OF_TAG = {
+  button: 'button', summary: 'button', a: 'link', select: 'combobox', textarea: 'textbox',
+  h1: 'heading', h2: 'heading', h3: 'heading', h4: 'heading', h5: 'heading', h6: 'heading',
+};
 
-/** The tag a recorded selector starts with ("label" for `label[for=…]`), lowercased. */
+/** The tag of the element a selector ends on ("button" in `#f > div > button.btn`), lowercased. */
+function lastTag(selector) {
+  const compounds = String(selector ?? '').replace(/\[[^\]]*\]/g, '[]').split(/\s*[>+~]\s*|\s+/).filter(Boolean);
+  return /^([a-z][a-z0-9-]*)/i.exec(compounds.at(-1) ?? '')?.[1]?.toLowerCase() ?? null;
+}
+
+/** The tag of a step's element, from the recorded selector or its CSS locators. */
 function tagOf(step) {
   const selectors = [step.params?.selector, ...(step.locators ?? []).filter(l => l.type === 'css').map(l => l.value)];
   for (const selector of selectors) {
-    const tag = /^\s*([a-z][a-z0-9-]*)/i.exec(selector ?? '')?.[1];
-    if (tag) return tag.toLowerCase();
+    const tag = lastTag(selector);
+    if (tag) return tag;
   }
   return null;
 }
@@ -81,7 +102,8 @@ function tagOf(step) {
  */
 export function chooseTarget(step, literal, page = 'page') {
   const selector = step.params?.selector ?? '';
-  if (!isFragileSelector(selector)) return { css: selector };
+  const sound = (css) => !isFragileSelector(css) && !isPositionalSelector(css);
+  if (!selector || sound(selector)) return { css: selector };
 
   const locators = Array.isArray(step.locators) ? step.locators : [];
   const valueOf = (type) => locators.find(l => l.type === type)?.value;
@@ -89,11 +111,21 @@ export function chooseTarget(step, literal, page = 'page') {
   const testid = valueOf('testid');
   if (testid) return { css: testid };
 
-  const stableCss = locators.find(l => ['css', 'attribute'].includes(l.type) && l.value && !isFragileSelector(l.value));
+  // A box of a group shares its name attribute with the others (name="interests"): that
+  // selector finds all of them.
+  const isToggle = step.params?.checked !== undefined;
+  const stableCss = locators.find(l => ['css', 'attribute'].includes(l.type) && l.value && sound(l.value)
+    && !(isToggle && /\[name=/.test(l.value)));
   if (stableCss) return { css: stableCss.value };
 
   const name = valueOf('aria') ?? valueOf('label');
   const tag = tagOf(step);
+  // What a person reads, as Playwright advises: "Sign in" the button, not the heading
+  // that says it too (getByText would find both).
+  const role = ROLE_OF_TAG[tag];
+  if (name && role) {
+    return { locator: `${page}.getByRole('${role}', { name: ${literal(name)}, exact: true })` };
+  }
   // The <label> itself, not the control it names: custom checkboxes hide the real <input>
   // (Bien'ici moves it out of the viewport) and only the label can be clicked.
   if (name && tag === 'label') {
@@ -109,7 +141,22 @@ export function chooseTarget(step, literal, page = 'page') {
   const text = valueOf('text');
   if (name && text && text === name) return { locator: `${page}.getByText(${literal(text)}, { exact: true })` };
 
+  // Nothing better recorded: a position holds from one page load to the next, a generated
+  // ID does not.
+  if (!isFragileSelector(selector)) return { css: selector };
+  const positional = locators.find(l => l.type === 'css' && l.value && !isFragileSelector(l.value));
+  if (positional) return { css: positional.value };
+
   return { css: selector, fragile: true };
+}
+
+/**
+ * A checkbox or radio styled away (opacity 0, no size), operated through the <label> that
+ * holds it: check() on the input itself times out. Recorded as `viaLabel` by the click.
+ */
+export function throughLabel(target, literal, page = 'page') {
+  const inner = target.locator ?? `${page}.locator(${literal(target.css)})`;
+  return { fragile: target.fragile, locator: `${page}.locator('label', { has: ${inner} })` };
 }
 
 /** `line` preceded by a FIXME comment when the step's target is a fragile selector kept as is. */

@@ -536,7 +536,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       test_name: z.string().describe('Name of the test to add the assertion to'),
       assertion_type: z.enum([
         'element_exists', 'element_not_exists', 'element_visible', 'element_hidden',
-        'text_equals', 'text_contains', 'attribute_equals',
+        'text_equals', 'text_contains', 'text_not_contains', 'attribute_equals',
         'url_equals', 'url_contains', 'title_equals', 'title_contains',
         'element_count'
       ]).describe('Type of assertion'),
@@ -544,20 +544,21 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       expected: z.string().optional().describe('Expected value for comparison assertions'),
       attribute: z.string().optional().describe('Attribute name for attribute_equals assertion'),
       description: z.string().optional().describe('Human-readable description of what this assertion verifies'),
-      step_order: z.number().optional().describe('Position to insert (1-indexed). If omitted, appends at the end.')
+      step_order: z.number().optional().describe('Position to insert (1-indexed). If omitted, appends at the end.'),
+      tabId: z.number().optional().describe('Tab to check the assertion in: e.g. the tabId run_test reports, to assert on the page a replay ended on. Default: this session\'s window.')
     },
-    async ({ test_name, assertion_type, selector, expected, attribute, description, step_order }) => {
+    async ({ test_name, assertion_type, selector, expected, attribute, description, step_order, tabId }) => {
       const assertion = { type: assertion_type };
       if (selector) assertion.selector = selector;
       if (expected !== undefined) assertion.expected = expected;
       if (attribute) assertion.attribute = attribute;
 
       // Validate required fields
-      const needsSelector = ['element_exists', 'element_not_exists', 'element_visible', 'element_hidden', 'text_equals', 'text_contains', 'attribute_equals', 'element_count'];
+      const needsSelector = ['element_exists', 'element_not_exists', 'element_visible', 'element_hidden', 'text_equals', 'text_contains', 'text_not_contains', 'attribute_equals', 'element_count'];
       if (needsSelector.includes(assertion_type) && !selector) {
         return { content: [{ type: 'text', text: `Assertion type "${assertion_type}" requires a CSS selector.` }] };
       }
-      const needsExpected = ['text_equals', 'text_contains', 'attribute_equals', 'url_equals', 'url_contains', 'title_equals', 'title_contains', 'element_count'];
+      const needsExpected = ['text_equals', 'text_contains', 'text_not_contains', 'attribute_equals', 'url_equals', 'url_contains', 'title_equals', 'title_contains', 'element_count'];
       if (needsExpected.includes(assertion_type) && expected === undefined) {
         return { content: [{ type: 'text', text: `Assertion type "${assertion_type}" requires an expected value.` }] };
       }
@@ -573,7 +574,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       // ─── Evaluate assertion live against the current browser page ───
       let result;
       try {
-        result = await evaluateAssertion(sendCommand, assertion);
+        result = await evaluateAssertion(sendCommand, assertion, tabId);
       } catch (err) {
         return { content: [{ type: 'text', text: `Assertion evaluation error: ${err.message}\nThe assertion was NOT added. Fix the issue and try again.` }] };
       }

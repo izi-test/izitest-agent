@@ -1,5 +1,5 @@
 import { describeBlocker, frameLevels, hitTestThroughFrames, type FrameLevel } from './hit-test';
-import { toggleOf, type ToggleState } from './toggle';
+import { toggleOf, isToggleInput, styledAwayToggleLabel, textAround, type ToggleState } from './toggle';
 
 export type SnapshotPurpose = 'fill' | 'click' | 'read';
 
@@ -241,6 +241,8 @@ export interface ClickTarget {
   coveredBy?: string;
   /** The checkbox, radio or switch a click on the target acts on, as it is before the click. */
   toggle?: ToggleState;
+  /** The target was a checkbox or radio styled away: its label is what was measured. */
+  viaLabel?: boolean;
 }
 
 interface MeasureOptions {
@@ -253,6 +255,13 @@ interface MeasureOptions {
 }
 
 function measureForClick(el: Element, { uncover = false }: MeasureOptions = {}): ClickTarget | null {
+  // A checkbox or radio styled away is clicked where it shows: on its label.
+  const label = styledAwayToggleLabel(el);
+  if (label) {
+    const target = measureForClick(label, { uncover });
+    return target && { ...target, viaLabel: true };
+  }
+
   // An element inside a same-origin iframe measures itself against that iframe, so its
   // position is shifted by every frame it sits in. levels carries those offsets.
   let levels = frameLevels(el as never, document as never);
@@ -655,7 +664,9 @@ function pageTools() {
       const placeholder = el.getAttribute('placeholder');
       if (placeholder) return placeholder;
       const val = (el as HTMLInputElement).value;
-      if (val) return val;
+      // A checkbox's or radio's value is what it submits ("on" by default), not its name.
+      const type = (el as HTMLInputElement).type;
+      if (val && type !== 'checkbox' && type !== 'radio') return val;
     }
 
     // Check direct text nodes first (to avoid grabbing massive child text globally)
@@ -1231,6 +1242,13 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       }
     }
 
+    // A checkbox or radio styled away (opacity 0, no size) behind a label that shows: it is
+    // operated through that label, so it is listed (a click goes to the label, see
+    // measureForClick). Without a name of its own — the text sits next to the label, not in
+    // it — the text around it names it, where its value ("on") used to.
+    const styledToggle = styledAwayToggleLabel(el);
+    if ((styledToggle || isToggleInput(el)) && !label) label = textAround(el);
+
     if (options.textDigest && digest.length < DIGEST_MAX_ITEMS) {
       const isHeading = role === 'heading' && ['h1', 'h2', 'h3'].includes(tag);
       const isAnnouncement = ['alert', 'status', 'dialog', 'alertdialog'].includes(role);
@@ -1245,7 +1263,7 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     // Element-level visibility: don't render this node but still traverse children.
     // Handles aria-hidden, opacity:0, visibility:hidden on wrapper elements
     // whose children may still be visually visible (drawers, modals, transitions).
-    if (!options.includeHidden && !isVisible(el)) {
+    if (!options.includeHidden && !isVisible(el) && !styledToggle) {
       skipNodeRender = true;
     }
 

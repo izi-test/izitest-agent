@@ -666,6 +666,7 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
       js = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? el.textContent.trim() : null; })()`;
       break;
     case 'text_contains':
+    case 'text_not_contains':
       js = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? el.textContent.trim() : null; })()`;
       break;
     case 'attribute_equals':
@@ -701,6 +702,10 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
       return { passed: actual === expected, expected, actual: actual ?? '(element not found)', type };
     case 'text_contains':
       return { passed: typeof actual === 'string' && actual.includes(expected), expected: `contains "${expected}"`, actual: actual ?? '(element not found)', type };
+    // The element has to be there: a result panel that never showed up contains nothing,
+    // and passing on it would hide the failure.
+    case 'text_not_contains':
+      return { passed: typeof actual === 'string' && !actual.includes(expected), expected: `does not contain "${expected}"`, actual: actual ?? '(element not found)', type };
     case 'attribute_equals':
       return { passed: actual === expected, expected, actual: actual ?? '(element/attribute not found)', type };
     case 'url_equals':

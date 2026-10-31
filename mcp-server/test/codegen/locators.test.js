@@ -124,3 +124,36 @@ test('locator-based scroll, hover, press and wait use the locator API', () => {
   assert.match(out, new RegExp(`await ${label}\\.scrollIntoViewIfNeeded\\(\\);`));
   assert.match(out, new RegExp(`await ${label}\\.waitFor\\(\\);`));
 });
+
+// Recorded on izitest-test.html: positional selectors that hold only while the layout does.
+const SIGN_IN = {
+  command: 'click',
+  params: { selector: '#login-form > div:nth-of-type(3) > button:nth-of-type(1)' },
+  locators: [{ type: 'aria', value: 'Sign in' }, { type: 'text', value: 'Sign in' }, { type: 'css', value: '#login-form > div:nth-of-type(3) > button:nth-of-type(1)' }],
+};
+const TECHNOLOGY = {
+  command: 'click',
+  params: { selector: '#profile-form > div:nth-of-type(4) > div > label:nth-of-type(1) > input', checked: true },
+  locators: [{ type: 'aria', value: 'Technology' }, { type: 'attribute', value: 'input[name="interests"]' }, { type: 'css', value: '#profile-form > div:nth-of-type(4) > div > label:nth-of-type(1) > input' }],
+};
+
+test('a positional button is found by its role and name, not by a text the heading shares', () => {
+  assert.match(render(SIGN_IN), /await page\.getByRole\('button', \{ name: 'Sign in', exact: true \}\)\.click\(\);/);
+});
+
+test('a box of a group by its label, not by the name attribute all the boxes share', () => {
+  const out = render(TECHNOLOGY);
+  assert.match(out, /await page\.getByLabel\('Technology'\)\.check\(\);/);
+  assert.doesNotMatch(out, /interests/);
+});
+
+test('with nothing better recorded, the positional selector stays, without a FIXME', () => {
+  const out = render({ command: 'click', params: { selector: '#list > li:nth-of-type(3)' } });
+  assert.match(out, /await page\.click\('#list > li:nth-of-type\(3\)'\);/);
+  assert.doesNotMatch(out, /FIXME/);
+});
+
+test('a box styled away is checked through the label that holds it', () => {
+  const out = render({ command: 'click', params: { selector: 'input[name="darkMode"]', checked: false, viaLabel: true } });
+  assert.match(out, /await page\.locator\('label', \{ has: page\.locator\('input\[name="darkMode"\]'\) \}\)\.uncheck\(\);/);
+});

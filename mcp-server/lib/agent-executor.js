@@ -646,7 +646,7 @@ function buildTools(sendCommand) {
         test_name: z.string(),
         assertion_type: z.enum([
           'element_exists', 'element_not_exists', 'element_visible', 'element_hidden',
-          'text_equals', 'text_contains', 'attribute_equals',
+          'text_equals', 'text_contains', 'text_not_contains', 'attribute_equals',
           'url_equals', 'url_contains', 'title_equals', 'title_contains', 'element_count'
         ]),
         selector: z.string().optional(),
@@ -661,9 +661,9 @@ function buildTools(sendCommand) {
         if (expected !== undefined) assertion.expected = expected;
         if (attribute) assertion.attribute = attribute;
 
-        const needsSelector = ['element_exists', 'element_not_exists', 'element_visible', 'element_hidden', 'text_equals', 'text_contains', 'attribute_equals', 'element_count'];
+        const needsSelector = ['element_exists', 'element_not_exists', 'element_visible', 'element_hidden', 'text_equals', 'text_contains', 'text_not_contains', 'attribute_equals', 'element_count'];
         if (needsSelector.includes(assertion_type) && !selector) return `"${assertion_type}" requires a CSS selector.`;
-        const needsExpected = ['text_equals', 'text_contains', 'attribute_equals', 'url_equals', 'url_contains', 'title_equals', 'title_contains', 'element_count'];
+        const needsExpected = ['text_equals', 'text_contains', 'text_not_contains', 'attribute_equals', 'url_equals', 'url_contains', 'title_equals', 'title_contains', 'element_count'];
         if (needsExpected.includes(assertion_type) && expected === undefined) return `"${assertion_type}" requires an expected value.`;
         if (assertion_type === 'attribute_equals' && !attribute) return '"attribute_equals" requires an attribute name.';
 

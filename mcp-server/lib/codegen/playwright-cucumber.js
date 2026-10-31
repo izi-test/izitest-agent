@@ -4,7 +4,7 @@
 // Pure: no DB, no filesystem. Returns `{ files: [{ path, content }] }`.
 
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
-import { chooseTarget, withFixme } from './locators.js';
+import { chooseTarget, throughLabel, withFixme } from './locators.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
@@ -119,6 +119,10 @@ Then('{string} should contain {string}', async function (selector, expected) {
   await expect(this.page.locator(selector)).toContainText(expected);
 });
 
+Then('{string} should not contain {string}', async function (selector, expected) {
+  await expect(this.page.locator(selector)).not.toContainText(expected);
+});
+
 Then('the URL should be {string}', async function (expected) {
   await expect(this.page).toHaveURL(expected);
 });
@@ -203,7 +207,11 @@ function commandToPlaywright(tpl, argNames) {
   const resolve = (val) => resolveTemplateValue(val, argNames);
   // A sub-step built from a recording (create_business_step) carries its locators: the
   // same stable choice as plain Playwright code. Without them, the selector as before.
-  const target = () => chooseTarget(tpl, resolve, 'this.page');
+  // A box styled away was clicked through its label: so is the generated step.
+  const target = () => {
+    const t = chooseTarget(tpl, resolve, 'this.page');
+    return tpl.command === 'click' && params.viaLabel ? throughLabel(t, resolve, 'this.page') : t;
+  };
   const act = (method, ...values) => {
     const t = target();
     const args = values.map(resolve);
@@ -254,6 +262,8 @@ function assertionToPlaywright(params, argNames) {
         return `await expect(this.page.locator(${resolve(params.selector)})).toContainText(${resolve(params.expected)});`;
       }
       return `await expect(this.page.locator('body')).toContainText(${resolve(params.expected)});`;
+    case 'text_not_contains':
+      return `await expect(this.page.locator(${resolve(params.selector ?? 'body')})).not.toContainText(${resolve(params.expected)});`;
     case 'element_visible':
       return `await expect(this.page.locator(${resolve(params.selector)})).toBeVisible();`;
     case 'element_not_exists':

@@ -20,6 +20,8 @@ interface ResolvedElement {
   coveredBy?: string;
   /** The checkbox, radio or switch the click acts on, as it is before the click. */
   toggle?: { kind: 'checkbox' | 'radio' | 'switch'; checked: boolean };
+  /** A checkbox or radio styled away: the click goes to its label. */
+  viaLabel?: boolean;
 }
 
 /** The state wanted from a step's `checked`: a boolean, or "true"/"false" once a variable is filled in. */
@@ -201,8 +203,9 @@ export async function cmdClick({ selector, tabId, sessionId, text, ref, checked 
 
   // A click toggles a checkbox: asked for a state it is already in, leave it there.
   const wanted = wantedChecked(checked);
+  const via = element.viaLabel ? { viaLabel: true } : {};
   if (element.toggle && wanted !== undefined && element.toggle.checked === wanted) {
-    return { success: true, tag: element.tag, text: element.text, checked: wanted, changes: [`already ${wanted ? 'checked' : 'unchecked'}: not clicked`] };
+    return { success: true, tag: element.tag, text: element.text, checked: wanted, ...via, changes: [`already ${wanted ? 'checked' : 'unchecked'}: not clicked`] };
   }
 
   assertNotCovered(element, 'clicked');
@@ -236,6 +239,7 @@ export async function cmdClick({ selector, tabId, sessionId, text, ref, checked 
     // The state the click left a checkbox, radio or switch in: what a recording replays to,
     // instead of toggling it again.
     ...(element.toggle ? { checked: element.toggle.kind === 'radio' || !element.toggle.checked } : {}),
+    ...via,
     ...(newTab ? { newTabId: newTab.tabId, newWindowId: newTab.windowId } : {}),
     // What the click did: so the agent does not need a screenshot to find out.
     changes,
