@@ -10,7 +10,7 @@ import {
   updateTestStep, evaluateAssertion
 } from '../tests.js';
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
-import { deriveVarNameFromLocators, uniqueVarName, listVariable } from '../variable-detection.js';
+import { uniqueVarName, listVariable, variabilizeInput } from '../variable-detection.js';
 import { linkAssertionToVariables } from '../test-variable.js';
 
 
@@ -74,7 +74,6 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, sess().scope(params), ...rest);
   const getRecording = () => sess().recording;
   const setRecording = (value) => { sess().recording = value; };
-  const getLastRefMap = () => sess().refMap;
   const getAction = (id) => sess().getAction(id);
   const saveActionToHistory = (...args) => recordAction(sess(), ...args);
 
@@ -192,7 +191,6 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       recording.steps = cleanRecoverySteps(recording.steps);
 
       log(`Batch variable detection for ${recording.steps.length} steps...`);
-      const lastRefMap = getLastRefMap();
       const usedVarNames = new Set();
 
       // ─── Batch variable detection ─────────────────────────────────
@@ -203,14 +201,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
           continue; // already variabilized
         }
 
-        // Auto-variabilize FILL steps (smart naming from locators)
-        if (step.command === 'fill' && step.params.value) {
-          const baseName = deriveVarNameFromLocators(step) || ('input_' + (i + 1));
-          const varName = uniqueVarName(baseName, usedVarNames);
-          const originalValue = step.params.value;
-          step.params.value = `{{${varName}}}`;
-          step.variable = { name: varName, type: 'text', defaultValue: originalValue };
-          log(`Auto-variabilized fill step ${i + 1}: {{${varName}}} = "${originalValue}"`);
+        // What was typed (fill) or picked in a <select>: a variable named after the field.
+        if (variabilizeInput(step, i, usedVarNames)) {
+          log(`Auto-variabilized ${step.command} step ${i + 1}: {{${step.variable.name}}} = "${step.variable.defaultValue}"`);
           continue;
         }
 
@@ -236,18 +229,6 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
             }
           }
           continue;
-        }
-
-        // Auto-variabilize SELECT interactions
-        if (step.command === 'fill' && !step.variable) {
-          const refKey = step.params.ref ? String(step.params.ref).replace('@', '') : null;
-          if (refKey && lastRefMap[refKey] && lastRefMap[refKey].role === 'combobox') {
-            const baseName = 'select_' + (i + 1);
-            const varName = uniqueVarName(baseName, usedVarNames);
-            const originalValue = step.params.value;
-            step.params.value = `{{${varName}}}`;
-            step.variable = { name: varName, type: 'select', defaultValue: originalValue };
-          }
         }
       }
 
@@ -604,7 +585,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       // Checked against what the test typed: replayed with other values, it checks those.
       // On the window of a replay of this test, what the page shows is what that replay typed.
       const replay = tabId != null ? sess().replays?.get(tabId) : undefined;
-      const { assertion: saved, linked } = linkAssertionToVariables(
+      const { assertion: saved, linked, ambiguous } = linkAssertionToVariables(
         assertion, test.variables, replay?.test === test_name ? replay.values : undefined);
       const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
       const newStep = {
@@ -630,6 +611,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       if (linked.length) {
         summary += `\n  Linked to ${linked.map(n => `{{${n}}}`).join(', ')}: saved as "${saved.expected}", ` +
           'so a replay with other values checks those values.';
+      }
+      for (const { name, value, found } of ambiguous) {
+        summary += `\n  Not linked to {{${name}}}: "${value}" is found ${found} times in the expected text, ` +
+          'so which one it is cannot be told. Give an expected text where it is found once to link it.';
       }
       return { content: [{ type: 'text', text: summary }] };
     }

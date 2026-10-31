@@ -54,6 +54,20 @@ test('a value is linked whole, never as a piece of a word (izi_review)', () => {
   assert.equal(linkAssertionToVariables(special, { price: { type: 'text', defaultValue: '1.5$ (x+y)' } }).assertion.expected, 'total: {{price}}');
 });
 
+test('a short number or code is linked when it is found once (izi_profile_fields)', () => {
+  const variables = { volume: { type: 'text', defaultValue: '80' }, country: { type: 'select', defaultValue: 'FR' }, court: { type: 'text', defaultValue: 'on' } };
+  const volume = { type: 'text_contains', selector: '#result-profile', expected: '"volume": "25"' };
+  assert.equal(linkAssertionToVariables(volume, variables, { volume: '25' }).assertion.expected, '"volume": "{{volume}}"');
+  assert.equal(linkAssertionToVariables({ ...volume, expected: 'Pays : FR' }, variables).assertion.expected, 'Pays : {{country}}');
+  // Not inside a longer number, and not when it is there twice: which one is the volume?
+  assert.deepEqual(linkAssertionToVariables({ ...volume, expected: 'en 2025' }, variables, { volume: '25' }).linked, []);
+  const twice = linkAssertionToVariables({ ...volume, expected: '"volume": "25", "max": "25"' }, variables, { volume: '25' });
+  assert.deepEqual([twice.linked, twice.ambiguous], [[], [{ name: 'volume', value: '25', found: 2 }]]);
+  assert.equal(twice.assertion.expected, '"volume": "25", "max": "25"');
+  // A small lowercase word is in any sentence: never linked.
+  assert.deepEqual(linkAssertionToVariables({ ...volume, expected: 'notifications on' }, variables).linked, []);
+});
+
 test('list variables, short values and assertions without text are left alone', () => {
   assert.deepEqual(linkAssertionToVariables({ type: 'text_contains', expected: 'Technology is on' }, VARIABLES).linked, []);
   const exists = { type: 'element_exists', selector: '#ok' };

@@ -177,9 +177,13 @@ export function selectOption(
   if (!select) return { success: false, error: `Element is not a <select>: ${el.tagName}` };
 
   const options = Array.from(select.options);
+  // By text, the option's value comes next, as Playwright's selectOption takes either: a
+  // step is recorded by value, and a Gherkin phrase read back ("I select "pro" in …") has
+  // lost which one it was.
   const exact = options.find((o) => matchBy === 'value'
     ? o.value === value
-    : o.text.trim() === value || o.textContent?.trim() === value);
+    : o.text.trim() === value || o.textContent?.trim() === value)
+    ?? (matchBy === 'text' ? options.find((o) => o.value === value && value !== '') : undefined);
   const lower = value.toLowerCase();
   const partial = !exact && matchBy === 'text'
     ? options.find((o) => o.text.trim().toLowerCase().includes(lower) || o.textContent?.trim().toLowerCase().includes(lower))

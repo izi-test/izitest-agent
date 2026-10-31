@@ -199,6 +199,14 @@ sinon le nom envoyé par le formulaire (`displayName` → `display_name`), sinon
 accessible qui n'est que le placeholder (champ sans label) compte comme le placeholder : le champ
 `name="country"` au placeholder « Start typing... » donne `{{country}}`.
 
+Une option choisie dans un `<select>` (outil `select`) devient aussi une variable, de type `select`,
+nommée de la même façon : `{{plan}}`. L'étape garde la `value` de l'option (`pro`), ce que le
+formulaire envoie, et non son libellé (`Pro — 25 members ($29/mo)`) : une assertion sur la valeur
+envoyée (`"plan": "pro"`) s'y lie seule, et un libellé reformulé ou traduit se rejoue encore. En
+Playwright : ``selectOption('#ws-plan', `${VARS.plan}`)`` ; en Gherkin : `I select "<plan>" in "#ws-plan"`.
+Un `select` par texte (phrase Gherkin relue) essaie la `value` des options avant une correspondance
+partielle du libellé, comme `selectOption` de Playwright.
+
 Un clic devient une variable de liste quand l'élément cliqué fait partie d'éléments semblables. Un LLM
 en décide (clé OpenRouter, sinon la CLI `copilot`) ; sans LLM disponible, une règle prudente prend le
 relais :
@@ -249,7 +257,7 @@ telle quelle, même là où la phrase attend un `{int}`.
 
 Une assertion qui vérifie une valeur saisie dans le test doit suivre cette valeur : rejoué avec un autre
 e-mail, le test doit vérifier cet e-mail, pas celui de l'enregistrement. `add_assertion` le fait seul :
-toute valeur d'une variable de saisie (`text` ou `select`, 3 caractères au moins) présente dans
+toute valeur d'une variable de saisie (`text` ou `select`, 2 caractères au moins) présente dans
 `expected` y est remplacée par sa variable, et la réponse l'indique :
 
 ```
@@ -261,6 +269,10 @@ propose « France », ne lie pas `"country": "France"`. Sur l'onglet d'un rejeu 
 `run_test`), ce sont les valeurs saisies par ce rejeu qui sont cherchées, pas celles de
 l'enregistrement : rejoué avec `date_of_birth: "1985-11-30"`, `"dob": "1985-11-30"` devient
 `"dob": "{{date_of_birth}}"`.
+
+Une valeur de 2 caractères n'est liée que si c'est un nombre ou un code (`25`, `FR`, `XL`) — un petit
+mot en minuscules (`on`, `in`) se trouve dans n'importe quelle phrase — et seulement si elle n'apparaît
+qu'une fois : sinon, la réponse le dit (`Not linked to {{volume}}: "25" is found 2 times…`).
 
 Pour une assertion ajoutée avant, `add_test_variable` avec le nom d'une variable existante la réutilise
 (sans `value`, ou avec sa valeur par défaut) :

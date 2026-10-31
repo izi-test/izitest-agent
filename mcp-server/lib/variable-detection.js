@@ -47,6 +47,23 @@ export function deriveVarNameFromLocators(step) {
   return null;
 }
 
+// The variable type of what a step puts in a field.
+const INPUT_TYPES = { fill: 'text', select: 'select' };
+
+/**
+ * Turn what a step typed (fill) or picked in a <select> into a {{variable}} of the test,
+ * named after the field. A <select> was left out: its option stayed fixed, run_test could
+ * not change it, and its Examples column was missing. False for any other step.
+ */
+export function variabilizeInput(step, index, usedNames) {
+  const type = INPUT_TYPES[step.command];
+  if (!type || !step.params?.value) return false;
+  const name = uniqueVarName(deriveVarNameFromLocators(step) || `${step.command === 'select' ? 'select' : 'input'}_${index + 1}`, usedNames);
+  step.variable = { name, type, defaultValue: step.params.value };
+  step.params.value = `{{${name}}}`;
+  return true;
+}
+
 export function uniqueVarName(baseName, usedNames) {
   if (!usedNames.has(baseName)) {
     usedNames.add(baseName);

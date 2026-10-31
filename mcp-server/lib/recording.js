@@ -68,6 +68,15 @@ function deriveIntent(command, params, locators) {
 }
 
 /**
+ * The params a select step is kept with: the option's value, what the form sends — an
+ * assertion on it is then linked to the variable the step becomes, and a label reworded or
+ * translated still replays. As asked when the page gave no value back.
+ */
+export function selectParams(result, value, matchBy) {
+  return result?.selectedValue ? { value: result.selectedValue, matchBy: 'value' } : { value, ...(matchBy ? { matchBy } : {}) };
+}
+
+/**
  * Record one executed action in `session`'s history, and append it to that session's
  * recording when one is active. Returns the action id handed back to the agent.
  */

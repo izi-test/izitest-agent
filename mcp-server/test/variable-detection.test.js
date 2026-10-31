@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyHeuristically } from '../lib/classify.js';
-import { deriveVarNameFromLocators, itemLabel, listVariable, uniqueVarName } from '../lib/variable-detection.js';
+import { deriveVarNameFromLocators, itemLabel, listVariable, uniqueVarName, variabilizeInput } from '../lib/variable-detection.js';
+import { selectParams } from '../lib/recording.js';
 
 const SIGN_IN = { type: 'box', totalItems: 4, selectedIndex: 0, selectedText: 'Sign in', itemTexts: ['Sign in', 'Clear', 'Send message', 'Clear'], itemXpath: "div/form/div/button[contains(@class,'btn')]" };
 const SAVE_PROFILE = { type: 'list', totalItems: 3, selectedIndex: 0, selectedText: 'Save profile', itemTexts: ['Save profile', 'Discard', 'Delete account'], itemXpath: "button[contains(@class,'btn')]" };
@@ -73,6 +74,29 @@ test('filled by selector, without locators: the id it names', () => {
   assert.equal(deriveVarNameFromLocators({ params: { selector: '#inline-title' } }), 'inline_title');
   assert.equal(deriveVarNameFromLocators({ params: { selector: '#r1' } }), null, 'a generated id names nothing');
   assert.equal(deriveVarNameFromLocators({ params: { selector: 'div.inline-edit' } }), null);
+});
+
+test('what a <select> picked is a variable too, named after the field (izi_wizard_full)', () => {
+  const used = new Set();
+  const plan = { command: 'select', params: { selector: '#ws-plan', value: 'enterprise', matchBy: 'value' }, locators: [{ type: 'aria', value: 'Plan' }] };
+  assert.equal(variabilizeInput(plan, 2, used), true);
+  assert.deepEqual([plan.params.value, plan.variable], ['{{plan}}', { name: 'plan', type: 'select', defaultValue: 'enterprise' }]);
+  const role = { command: 'select', params: { selector: '#ws-role', value: 'admin' } };
+  variabilizeInput(role, 7, used);
+  assert.equal(role.variable.name, 'ws_role', 'by its id without locators');
+  const fill = { command: 'fill', params: { selector: '#ws-name', value: 'Acme QA' }, locators: [{ type: 'label', value: 'Workspace name' }] };
+  variabilizeInput(fill, 1, used);
+  assert.deepEqual(fill.variable, { name: 'workspace_name', type: 'text', defaultValue: 'Acme QA' });
+  assert.equal(variabilizeInput({ command: 'click', params: { selector: '#go' } }, 3, used), false);
+  assert.equal(variabilizeInput({ command: 'select', params: { selector: '#x', value: '' } }, 4, used), false);
+});
+
+test('a select is kept by the value of its option, what the form sends', () => {
+  const picked = { success: true, selectedValue: 'enterprise', selectedText: 'Enterprise — Unlimited ($99/mo)' };
+  assert.deepEqual(selectParams(picked, 'Enterprise — Unlimited ($99/mo)'), { value: 'enterprise', matchBy: 'value' });
+  // No value back from the page: as asked.
+  assert.deepEqual(selectParams({ success: true }, 'Admin', 'text'), { value: 'Admin', matchBy: 'text' });
+  assert.deepEqual(selectParams(undefined, 'Admin'), { value: 'Admin' });
 });
 
 test('names stay unique within a test', () => {

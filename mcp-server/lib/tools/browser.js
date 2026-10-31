@@ -7,7 +7,7 @@ import { currentSession, listSessions, closeNamedSession, forgetTabsEverywhere }
 
 /** Session ids the extension should treat as still working (see CloseWindowParams). */
 const liveSessionIds = () => listSessions().map((s) => s.id);
-import { recordAction } from '../recording.js';
+import { recordAction, selectParams } from '../recording.js';
 import { captureActionFrame, LIVE_ACTIONS } from '../live.js';
 
 // How text is typed into fields. Default is per-character key events (human-like, slow:
@@ -309,7 +309,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
           if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
         } catch(e) {}
       }
-      const actionId = saveActionToHistory('select', { selector, value, tabId, matchBy }, ref, screenshotBase64, intent);
+      const actionId = saveActionToHistory('select', { selector, ...selectParams(result, value, matchBy), tabId }, ref, screenshotBase64, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );

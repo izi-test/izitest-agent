@@ -5,7 +5,7 @@ import { generateText, tool, stepCountIs } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { log } from './logger.js';
-import { recordAction } from './recording.js';
+import { recordAction, selectParams } from './recording.js';
 import { currentSession, runInSession, createAdHocSession, destroySession } from './session.js';
 
 // The dashboard agent gets its own session like any other agent, so a run from the web UI
@@ -13,7 +13,6 @@ import { currentSession, runInSession, createAdHocSession, destroySession } from
 const sess = () => currentSession();
 const getRecording = () => sess().recording;
 const setRecording = (value) => { sess().recording = value; };
-const getLastRefMap = () => sess().refMap;
 // Refs outlive a snapshot (an element keeps its @eN while it stays on the page), so the
 // map grows with each snapshot — a filtered one returns only some refs — and starts over
 // when the extension reports a new page.
@@ -28,7 +27,7 @@ const learnTarget = (ref, result) => {
 };
 const saveActionToHistory = (...args) => recordAction(sess(), ...args);
 import { classifyWithLLM, detectListContext } from './classify.js';
-import { deriveVarNameFromLocators, uniqueVarName, listVariable } from './variable-detection.js';
+import { uniqueVarName, listVariable, variabilizeInput } from './variable-detection.js';
 import { linkAssertionToVariables } from './test-variable.js';
 import { loadTest, saveTest } from './test-store.js';
 import { evaluateAssertion } from './test-execute.js';
@@ -344,7 +343,7 @@ function buildTools(sendCommand) {
           if (getRecording()?.use_vrt) {
             try { const s = await sendCommand(undefined, 'screenshot', { annotate: false }); if (s?.dataUrl) screenshotBase64 = s.dataUrl; } catch(e) {}
           }
-          saveActionToHistory('select', { selector, value, matchBy }, ref, screenshotBase64, intent);
+          saveActionToHistory('select', { selector, ...selectParams(result, value, matchBy) }, ref, screenshotBase64, intent);
           return JSON.stringify(result);
         } catch (err) { return formatToolError(err, 'select'); }
       },
@@ -555,21 +554,13 @@ function buildTools(sendCommand) {
         recording.steps = cleanRecoverySteps(recording.steps);
         log(`[Agent] Batch variable detection for ${recording.steps.length} steps...`);
 
-        const lastRefMap = getLastRefMap();
         const usedVarNames = new Set();
 
         for (let i = 0; i < recording.steps.length; i++) {
           const step = recording.steps[i];
           if (step.variable) { usedVarNames.add(step.variable.name); continue; }
 
-          if (step.command === 'fill' && step.params.value) {
-            const baseName = deriveVarNameFromLocators(step) || ('input_' + (i + 1));
-            const varName = uniqueVarName(baseName, usedVarNames);
-            const originalValue = step.params.value;
-            step.params.value = `{{${varName}}}`;
-            step.variable = { name: varName, type: 'text', defaultValue: originalValue };
-            continue;
-          }
+          if (variabilizeInput(step, i, usedVarNames)) continue;
 
           if (step.command === 'click') {
             const cssLocator = (step.locators || []).find(l => l.type === 'css');
@@ -590,16 +581,6 @@ function buildTools(sendCommand) {
               }
             }
             continue;
-          }
-
-          if (step.command === 'fill' && !step.variable) {
-            const refKey = step.params.ref ? String(step.params.ref).replace('@', '') : null;
-            if (refKey && lastRefMap[refKey] && lastRefMap[refKey].role === 'combobox') {
-              const baseName = 'select_' + (i + 1);
-              const varName = uniqueVarName(baseName, usedVarNames);
-              step.params.value = `{{${varName}}}`;
-              step.variable = { name: varName, type: 'select', defaultValue: step.params.value };
-            }
           }
         }
 
@@ -679,7 +660,7 @@ function buildTools(sendCommand) {
         }
 
         // Checked against what the test typed: replayed with other values, it checks those.
-        const { assertion: saved, linked } = linkAssertionToVariables(assertion, test.variables);
+        const { assertion: saved, linked, ambiguous } = linkAssertionToVariables(assertion, test.variables);
         const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
         const newStep = { command: 'assert', params: {}, intent: intentText, assertion: saved };
 
@@ -690,7 +671,8 @@ function buildTools(sendCommand) {
         }
 
         saveTest(test);
-        const link = linked.length ? `\n  Linked to ${linked.map(n => `{{${n}}}`).join(', ')}: saved as "${saved.expected}".` : '';
+        const link = (linked.length ? `\n  Linked to ${linked.map(n => `{{${n}}}`).join(', ')}: saved as "${saved.expected}".` : '') +
+          ambiguous.map(({ name, value, found }) => `\n  Not linked to {{${name}}}: "${value}" is found ${found} times in the expected text.`).join('');
         return `Assertion PASSED and added at step ${step_order || test.steps.length}.\n  Expected: ${result.expected}\n  Actual: ${result.actual}${link}`;
       },
     }),
