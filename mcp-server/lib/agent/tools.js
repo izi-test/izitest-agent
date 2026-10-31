@@ -17,6 +17,7 @@ import {
 import { log } from '../logger.js';
 import { CODEGEN_FRAMEWORKS, generateTestCode, formatCodeFiles } from '../codegen/index.js';
 import { buildBusinessStep } from '../gherkin/business-step.js';
+import { addTestVariable } from '../test-variable.js';
 
 function projectDefinitions(projectId) {
   return db.prepare(
@@ -231,15 +232,15 @@ export const AGENT_TOOLS = [
         pattern: { type: 'string', description: 'The business phrase as a Cucumber expression, e.g. "I keep only houses with a garden" or "I look for a house in {string}"' },
         args: {
           type: 'array',
-          description: 'One per parameter of the pattern, in order. { step, param } takes the whole recorded value (e.g. { "step": 3, "param": "value" }); { step, param, value } only that part of it (e.g. { "step": 1, "param": "url", "value": "antony-92160" }).',
+          description: 'One per parameter of the pattern, in order. { step, param } takes the whole recorded value (e.g. { "step": 3, "param": "value" }); { step, param, value } only that part of it (e.g. { "step": 1, "param": "url", "value": "antony-92160" }); { variable } a variable of the test (e.g. { "variable": "ville" }), which the Cucumber export turns into a Scenario Outline column. Every variable the grouped steps use needs one.',
           items: {
             type: 'object',
             properties: {
               step: { type: 'number' },
               param: { type: 'string' },
               value: { type: 'string' },
+              variable: { type: 'string' },
             },
-            required: ['step', 'param'],
           },
         },
       },
@@ -283,6 +284,48 @@ export const AGENT_TOOLS = [
         }
         return { error: err.message };
       }
+    },
+  },
+
+  {
+    name: 'add_test_variable',
+    description: [
+      'Turn a value recorded in a step into a variable of the test: {{name}} replaces it in the step, and the',
+      'recorded value becomes its default. Recording only detects typed values and list choices; use this for',
+      'the rest, typically a city or a budget inside a URL. The variable then shows in the dashboard (Data),',
+      'run_test can override it, playwright-plain code reads it from VARS, and the Cucumber export makes it a',
+      'column of a Scenario Outline. A business step grouping that step maps it with { "variable": "<name>" }.',
+    ].join(' '),
+    parameters: {
+      type: 'object',
+      properties: {
+        test_name: { type: 'string', description: 'Name of the recorded test' },
+        step: { type: 'number', description: 'Step holding the value, numbered from 1' },
+        param: { type: 'string', description: 'Parameter of that step, e.g. "url" or "value"' },
+        value: { type: 'string', description: 'The part of the recorded value to replace, e.g. "antony-92160" in the URL. Omit it for the whole value.' },
+        name: { type: 'string', description: 'Variable name: letters, digits and _, e.g. "ville"' },
+        description: { type: 'string', description: 'What the variable stands for (shown in the dashboard)' },
+      },
+      required: ['test_name', 'step', 'param', 'name'],
+    },
+    handler({ test_name, step, param, value, name, description }) {
+      const test = loadTest(test_name);
+      if (!test) return { error: `Test "${test_name}" not found` };
+
+      const result = addTestVariable(test, { step, param, value, name, description });
+      if (result.error) return { error: result.error };
+
+      saveTest(result.test);
+      log(`[Agent Tool] Added variable {{${name}}} to step ${step} of "${test_name}"`);
+      const { params, assertion, command } = result.test.steps[step - 1];
+      return {
+        data: {
+          variable: name,
+          defaultValue: result.test.variables[name].defaultValue,
+          step: { number: step, command, [param]: (command === 'assert' ? assertion : params)[param] },
+          variables: Object.keys(result.test.variables),
+        },
+      };
     },
   },
 

@@ -9,15 +9,33 @@
 
 const PATTERN_PARAMETER = /\{(string|int|float|word)\}/g;
 
-// Where a step ran, not what it does: navigate always records its tab. Kept in the
-// template, it would make the business step match only the test it was built from.
-const RUNTIME_PARAMS = ['tabId'];
+// Where a step ran and what it left behind, not what it does: navigate always records its
+// tab, a recording with VRT the path of its baseline screenshot. Kept in the template,
+// they would make the business step match only the test it was built from.
+const RUNTIME_PARAMS = ['tabId', 'baselinePath'];
+
+const VARIABLE = /\{\{\s*([A-Za-z_]\w*)\s*\}\}/g;
+
+function replaceDeep(value, search, replacement) {
+  if (typeof value === 'string') return value.replaceAll(search, replacement);
+  if (Array.isArray(value)) return value.map(v => replaceDeep(v, search, replacement));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, replaceDeep(v, search, replacement)]));
+  }
+  return value;
+}
+
+function variablesIn(value, found = new Set()) {
+  if (typeof value === 'string') for (const [, name] of value.matchAll(VARIABLE)) found.add(name);
+  else if (value && typeof value === 'object') for (const v of Object.values(value)) variablesIn(v, found);
+  return found;
+}
 
 /**
  * `{ steps_template }`, or `{ error }`. Steps are numbered from 1, both ends included.
  * Each entry of `args` maps a parameter of the pattern, in order, to a recorded value:
  * `{ step, param }` takes the whole value of `param` in that step, `{ step, param, value }`
- * only that part of it (a city inside a URL).
+ * only that part of it (a city inside a URL), `{ variable }` a variable of the test.
  */
 export function buildBusinessStep(test, { from_step, to_step, pattern, args = [] }) {
   const steps = test.steps || [];
@@ -42,6 +60,20 @@ export function buildBusinessStep(test, { from_step, to_step, pattern, args = []
   });
 
   for (const [i, arg] of args.entries()) {
+    // A variable of the test ({{ville}}) becomes this parameter wherever the steps use it.
+    if (arg?.variable != null) {
+      const placeholder = `{{${arg.variable}}}`;
+      const users = steps_template.filter(tpl => variablesIn(tpl.params).has(arg.variable));
+      if (!users.length) {
+        return { error: `Arg ${i + 1}: none of the grouped steps (${from_step}–${to_step}) uses {{${arg.variable}}}` };
+      }
+      for (const tpl of users) {
+        tpl.params = replaceDeep(tpl.params, placeholder, `{${i}}`);
+        if (String(tpl.params.selector ?? '').includes(`{${i}}`)) delete tpl.locators;
+      }
+      continue;
+    }
+
     const { step, param, value } = arg || {};
     if (!Number.isInteger(step) || step < from_step || step > to_step) {
       return { error: `Arg ${i + 1}: step ${step} is not one of the grouped steps (${from_step}–${to_step})` };
@@ -58,6 +90,17 @@ export function buildBusinessStep(test, { from_step, to_step, pattern, args = []
     // The locators describe the element recorded with one value: a parameterised selector
     // points at another one each time.
     if (param === 'selector') delete tpl.locators;
+  }
+
+  // A variable left in a sub-step would be typed as "{{name}}" by the generated code.
+  const unmapped = new Set();
+  for (const tpl of steps_template) variablesIn(tpl.params, unmapped);
+  if (unmapped.size) {
+    const names = [...unmapped];
+    return {
+      error: `The grouped steps use ${names.map(n => `{{${n}}}`).join(', ')}: give the phrase a parameter for ` +
+        `each and map it with ${names.map(n => `{ "variable": "${n}" }`).join(', ')}`,
+    };
   }
 
   return { steps_template };

@@ -8,7 +8,7 @@ import { chooseTarget, withFixme } from './locators.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
-  const feature = serializeTestToFeatureWith(test, definitions);
+  const feature = toScenarioOutline(serializeTestToFeatureWith(test, definitions), test.variables);
 
   const composites = definitions.filter(d => d.steps_template);
   const files = [
@@ -27,6 +27,27 @@ export function generatePlaywrightCucumber(test, definitions) {
   }
 
   return { files };
+}
+
+/**
+ * Variables of the test ({{ville}} in the feature IziTest edits) as a Scenario Outline:
+ * <ville> in the steps, one Examples row of default values. Cucumber puts the value in
+ * before matching, so an {int} parameter still matches; left as is, "{{ville}}" would
+ * have been typed into the page.
+ */
+export function toScenarioOutline(feature, variables = {}) {
+  const used = [];
+  const outline = feature.replace(/\{\{\s*([A-Za-z_]\w*)\s*\}\}/g, (_, name) => {
+    if (!used.includes(name)) used.push(name);
+    return `<${name}>`;
+  });
+  if (!used.length) return feature;
+
+  const cell = (value) => String(value ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n');
+  return outline.replace(/^(\s*)Scenario:/m, '$1Scenario Outline:').trimEnd() + '\n\n' +
+    '    Examples:\n' +
+    `      | ${used.join(' | ')} |\n` +
+    `      | ${used.map(name => cell(variables?.[name]?.defaultValue)).join(' | ')} |\n`;
 }
 
 // ─── Templates ──────────────────────────────────────────────────────

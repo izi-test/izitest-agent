@@ -46,6 +46,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
 | `get_test_as_code` | Returns a saved test as Playwright code to commit in the project under test (see below). |
 | `create_business_step` | Groups a run of steps of a recorded test into one business Gherkin step (see below). |
+| `add_test_variable` | Turns a recorded value (e.g. a city inside a URL) into a `{{variable}}` of the test (see below). |
 
 ### Export Playwright : `get_test_as_code`
 
@@ -108,7 +109,7 @@ fonctionne aussi.
 | `from_step`, `to_step` | number | Étapes à regrouper, numérotées à partir de 1, bornes comprises |
 | `keyword` | string | `Given`, `When` ou `Then` |
 | `pattern` | string | La phrase, en Cucumber expression. `( )` et `/` y ont un sens (texte optionnel, alternatives) : à éviter |
-| `args` | array | Un par paramètre de la phrase (`{string}`, `{int}`…), dans l'ordre. `{ step, param }` prend toute la valeur enregistrée, `{ step, param, value }` seulement cette partie |
+| `args` | array | Un par paramètre de la phrase (`{string}`, `{int}`…), dans l'ordre. `{ step, param }` prend toute la valeur enregistrée, `{ step, param, value }` seulement cette partie, `{ variable }` une variable du test (voir plus bas) |
 
 Exemple paramétré : la ville et le budget, pris dans l'URL de l'étape 1.
 
@@ -131,6 +132,46 @@ When saving a test (via `stop_recording`), IziTest Agent automatically identifie
 ```javascript
 run_test("my_test", { variables: { "user_email": "new@example.com" } })
 ```
+
+#### Déclarer une variable : `add_test_variable`
+
+La détection ne couvre que ce qui est saisi (`fill`) ou choisi dans une liste : une ville ou un budget
+dans une URL reste en dur. `add_test_variable` remplace une valeur enregistrée, ou une partie, par
+`{{nom}}` ; la valeur enregistrée devient sa valeur par défaut.
+
+```javascript
+add_test_variable({ test_name: "recherche_bienici", step: 1, param: "url", value: "antony-92160", name: "ville" })
+add_test_variable({ test_name: "recherche_bienici", step: 1, param: "url", value: "500000", name: "budget" })
+// étape 1 : https://www.bienici.com/recherche/achat/{{ville}}/maisonvilla?prix-max={{budget}}
+```
+
+La variable apparaît alors partout :
+
+- **Tableau de bord** : onglet Data ;
+- **`run_test`** : `run_test("recherche_bienici", { variables: { ville: "massy-91300", budget: "600000" } })` ;
+- **`playwright-plain`** : `VARS.ville`, `VARS.budget` ;
+- **Étape métier** : `args: [{ variable: "ville" }, { variable: "budget" }]` en fait les paramètres
+  de la phrase. Toute variable des étapes regroupées doit en avoir un : sinon le code généré taperait
+  `{{ville}}` tel quel ;
+- **Export Cucumber** : un `Scenario Outline`, avec `<ville>` dans les étapes et une ligne `Examples`
+  des valeurs par défaut, à compléter d'autres lignes pour d'autres jeux de données :
+
+```gherkin
+Scenario Outline: recherche_bienici
+  Given je cherche une maison à vendre à "<ville>" pour <budget> euros maximum
+  When je ne garde que les maisons avec jardin
+
+  Examples:
+    | ville        | budget |
+    | antony-92160 | 500000 |
+```
+
+Dans l'onglet Gherkin du tableau de bord, la phrase garde `"{{ville}}"` et `{{budget}}`, et s'enregistre
+telle quelle, même là où la phrase attend un `{int}`.
+
+Limite : enregistrer depuis l'onglet Gherkin reconstruit les étapes à partir des phrases. Le lien
+d'une étape à une variable de liste (`list_item`) et les intentions des étapes regroupées n'y
+survivent pas.
 
 ### Paramètres de `run_test`
 

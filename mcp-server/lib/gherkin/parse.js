@@ -3,7 +3,7 @@
 
 import { AstBuilder, GherkinClassicTokenMatcher, Parser } from '@cucumber/gherkin';
 import { IdGenerator } from '@cucumber/messages';
-import { CucumberExpression, ParameterTypeRegistry } from '@cucumber/cucumber-expressions';
+import { CucumberExpression, ParameterType, ParameterTypeRegistry } from '@cucumber/cucumber-expressions';
 import { db, parseJson } from '../db.js';
 
 const gherkinParser = new Parser(
@@ -11,6 +11,16 @@ const gherkinParser = new Parser(
   new GherkinClassicTokenMatcher()
 );
 const registry = new ParameterTypeRegistry();
+
+// In the feature IziTest edits, a parameter bound to a variable of the test reads
+// "pour {{budget}} euros", which {int} does not match. Numeric parameters accept a
+// variable here; the Cucumber export puts real values in (Scenario Outline).
+const VARIABLE_ARG = '\\{\\{[A-Za-z_]\\w*\\}\\}';
+const NUMERIC_OR_VARIABLE = { int: ['-?\\d+', VARIABLE_ARG], float: ['-?\\d*\\.?\\d+', VARIABLE_ARG] };
+for (const [type, regexps] of Object.entries(NUMERIC_OR_VARIABLE)) {
+  registry.defineParameterType(new ParameterType(`izitest_${type}`, regexps, String, (s) => s, false, false));
+}
+const withVariableArgs = (pattern) => pattern.replace(/\{(int|float)\}/g, '{izitest_$1}');
 
 export function parseFeatureToSteps(featureText, projectId) {
   const definitions = db.prepare(
@@ -36,7 +46,7 @@ export function parseFeatureToStepsWith(featureText, definitions) {
 
   const compiled = definitions.map(d => ({
     def: d,
-    expression: new CucumberExpression(d.pattern, registry),
+    expression: new CucumberExpression(withVariableArgs(d.pattern), registry),
   }));
 
   const testSteps = [];
