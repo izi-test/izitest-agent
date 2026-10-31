@@ -4,11 +4,14 @@
 // Pure: no DB, no filesystem. Returns `{ files: [{ path, content }] }`.
 
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
-import { chooseTarget, throughLabel, withFixme } from './locators.js';
+import { chooseTarget, throughLabel, withFixme, selectorFor } from './locators.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
-  const feature = toScenarioOutline(serializeTestToFeatureWith(test, definitions), test.variables);
+  const feature = toScenarioOutline(
+    serializeTestToFeatureWith(test, definitions, { singleStep: withStableTarget }),
+    test.variables
+  );
 
   const composites = definitions.filter(d => d.steps_template);
   const files = [
@@ -27,6 +30,15 @@ export function generatePlaywrightCucumber(test, definitions) {
   }
 
   return { files };
+}
+
+// A generic step ("When I click on …") runs page.locator() on the target the .feature
+// gives: the stable one generated code would use (role=button[name="Sign in"s],
+// label:has(input[name="darkMode"])…), not the selector as recorded — positional, or holding
+// an ID the page generates at each load.
+function withStableTarget(step) {
+  if (!step.params?.selector) return step;
+  return { ...step, params: { ...step.params, selector: selectorFor(step) } };
 }
 
 /**
@@ -71,6 +83,10 @@ When('I click on {string}', async function (selector) {
 
 When('I fill {string} with {string}', async function (selector, value) {
   await this.page.fill(selector, value);
+});
+
+When('I select {string} in {string}', async function (option, selector) {
+  await this.page.locator(selector).selectOption(option);
 });
 
 When('I check {string}', async function (selector) {
@@ -233,6 +249,8 @@ function commandToPlaywright(tpl, argNames) {
       return act('click');
     case 'fill':
       return act('fill', params.value);
+    case 'select':
+      return act('selectOption', params.value);
     case 'keyboard':
       return `await this.page.keyboard.press(${resolve(params.key)});`;
     case 'scroll': {

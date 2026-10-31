@@ -59,6 +59,6 @@ test('linked, the check follows the data in plain code and in a Scenario Outline
 
   const defaults = DEFAULT_STEP_DEFINITIONS.map((d, i) => ({ id: i + 1, ...d, steps_template: null, is_default: 1 }));
   const feature = toScenarioOutline(serializeTestToFeatureWith({ name: 't', steps }, defaults), VARIABLES);
-  assert.match(feature, /When I fill "#login-email" with "<email>"\n {4}Then "#result-login" should contain "\\"email\\": \\"<email>\\""/);
+  assert.match(feature, /When I fill "#login-email" with "<email>"\n {4}Then "#result-login" should contain '"email": "<email>"'/);
   assert.match(feature, /\| email \|\n {6}\| jane\.doe@example\.com \|/);
 });

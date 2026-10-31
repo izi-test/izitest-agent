@@ -85,9 +85,22 @@ solide, dans cet ordre :
    est le nom accessible ;
 7. le sélecteur positionnel, faute de mieux.
 
-Sans alternative stable, le sélecteur d'origine reste, précédé d'un commentaire `// FIXME`. En
-`playwright-cucumber`, le même choix vaut pour les étapes métier (ci-dessous) ; une étape restée
-générique (`When I click on "…"`) écrit encore le sélecteur enregistré dans le `.feature`.
+Sans alternative stable, le sélecteur d'origine reste, précédé d'un commentaire `// FIXME`.
+
+En `playwright-cucumber`, le même choix vaut pour les étapes métier (ci-dessous) et pour les étapes
+génériques : le `.feature` exporté leur donne la cible retenue, sous forme de sélecteur Playwright que
+`page.locator()` accepte tel quel :
+
+```gherkin
+When I click on 'role=button[name="Sign in"s]'
+And I check 'label:has-text("Jardin")'
+And I uncheck 'label:has(input[name="darkMode"])'
+And I fill 'internal:label="E-mail"i' with "bob@corp"
+And I select "Pro — 25 members ($29/mo)" in "#ws-plan"
+```
+
+L'onglet Gherkin du tableau de bord, lui, garde les sélecteurs enregistrés, dont le rejeu d'IziTest a
+besoin. Un argument qui contient des guillemets doubles s'écrit entre guillemets simples.
 
 ### Étapes métier : `create_business_step`
 

@@ -48,7 +48,7 @@ test('a typed variable no longer in the step is dropped from it', () => {
 });
 
 test('a list variable and a click through the label survive an edit of the same element', () => {
-  const steps = save(featureOf(RECORDED).replace('I check "input[name=\\"hasGarden\\"]"', 'I uncheck "input[name=\\"hasGarden\\"]"'));
+  const steps = save(featureOf(RECORDED).replace(`I check 'input[name="hasGarden"]'`, `I uncheck 'input[name="hasGarden"]'`));
   assert.deepEqual(steps[2].params, { selector: 'input[name="hasGarden"]', checked: false, viaLabel: true });
   assert.deepEqual(steps[2].variable, JARDIN_LIST);
 });

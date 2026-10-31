@@ -95,10 +95,15 @@ function tagOf(step) {
   return null;
 }
 
+// A value inside a Playwright selector string, quoted: role=button[name="Sign in"s].
+const quoted = (value) => JSON.stringify(String(value));
+
 /**
  * The target of a step: `{ css }` for a CSS selector, `{ locator }` for a Playwright locator
- * expression on `page` built with `literal` (e.g. "page.getByLabel('Jardin')"), plus
- * `fragile: true` when nothing stable was recorded and the original selector is kept anyway.
+ * expression on `page` built with `literal` (e.g. "page.getByLabel('Jardin')") and `selector`,
+ * the same target as a Playwright selector string (`page.locator(selector)` finds it: what a
+ * Cucumber step takes), plus `fragile: true` when nothing stable was recorded and the
+ * original selector is kept anyway.
  */
 export function chooseTarget(step, literal, page = 'page') {
   const selector = step.params?.selector ?? '';
@@ -124,22 +129,29 @@ export function chooseTarget(step, literal, page = 'page') {
   // that says it too (getByText would find both).
   const role = ROLE_OF_TAG[tag];
   if (name && role) {
-    return { locator: `${page}.getByRole('${role}', { name: ${literal(name)}, exact: true })` };
+    return {
+      locator: `${page}.getByRole('${role}', { name: ${literal(name)}, exact: true })`,
+      selector: `role=${role}[name=${quoted(name)}s]`,
+    };
   }
   // The <label> itself, not the control it names: custom checkboxes hide the real <input>
   // (Bien'ici moves it out of the viewport) and only the label can be clicked.
   if (name && tag === 'label') {
-    return { locator: `${page}.locator('label', { hasText: ${literal(name)} })` };
+    return { locator: `${page}.locator('label', { hasText: ${literal(name)} })`, selector: `label:has-text(${quoted(name)})` };
   }
   if (name && (FIELD_TAGS.has(tag) || FIELD_COMMANDS.has(step.command))) {
-    return { locator: `${page}.getByLabel(${literal(name)})` };
+    return { locator: `${page}.getByLabel(${literal(name)})`, selector: `internal:label=${quoted(name)}i` };
   }
 
   const placeholder = valueOf('placeholder');
-  if (placeholder) return { locator: `${page}.getByPlaceholder(${literal(placeholder)}, { exact: true })` };
+  if (placeholder) {
+    return { locator: `${page}.getByPlaceholder(${literal(placeholder)}, { exact: true })`, selector: `[placeholder=${quoted(placeholder)}]` };
+  }
 
   const text = valueOf('text');
-  if (name && text && text === name) return { locator: `${page}.getByText(${literal(text)}, { exact: true })` };
+  if (name && text && text === name) {
+    return { locator: `${page}.getByText(${literal(text)}, { exact: true })`, selector: `text=${quoted(text)}` };
+  }
 
   // Nothing better recorded: a position holds from one page load to the next, a generated
   // ID does not.
@@ -156,7 +168,22 @@ export function chooseTarget(step, literal, page = 'page') {
  */
 export function throughLabel(target, literal, page = 'page') {
   const inner = target.locator ?? `${page}.locator(${literal(target.css)})`;
-  return { fragile: target.fragile, locator: `${page}.locator('label', { has: ${inner} })` };
+  return {
+    fragile: target.fragile,
+    locator: `${page}.locator('label', { has: ${inner} })`,
+    ...(target.css && { selector: `label:has(${target.css})` }),
+  };
+}
+
+/**
+ * A step's target as a Playwright selector string, for the Cucumber export's generic steps
+ * (`When I click on "…"` runs page.locator(selector)): the same choice as generated code
+ * makes, instead of the selector as recorded.
+ */
+export function selectorFor(step) {
+  const chosen = chooseTarget(step, quoted);
+  const target = step.command === 'click' && step.params?.viaLabel ? throughLabel(chosen, quoted) : chosen;
+  return target.css ?? target.selector ?? step.params?.selector;
 }
 
 /** `line` preceded by a FIXME comment when the step's target is a fragile selector kept as is. */

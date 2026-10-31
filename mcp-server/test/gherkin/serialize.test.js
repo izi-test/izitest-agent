@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { serializeTestToFeatureWith } from '../../lib/gherkin/serialize.js';
+import { parseFeatureToStepsWith } from '../../lib/gherkin/parse.js';
 import { DEFAULT_STEP_DEFINITIONS } from '../../lib/gherkin/default-step-definitions.js';
 
 // Emulate the shape returned by the DB layer (id + keeping params_template as object).
@@ -123,15 +124,18 @@ test('uses explicit step_definition_id when provided', () => {
   assert.doesNotMatch(feature, /Given I am on/);
 });
 
-test('escapes double quotes inside string arguments', () => {
+test('quotes a string holding double quotes in single quotes, and escapes it when it holds both', () => {
   const t = {
     name: 'Quotes',
     steps: [
       { command: 'click', params: { selector: 'button[title="ok"]' } },
+      { command: 'click', params: { selector: `button[title="it's"]` } },
     ],
   };
   const feature = serializeTestToFeatureWith(t, SEED);
-  assert.match(feature, /When I click on "button\[title=\\"ok\\"\]"/);
+  assert.match(feature, /When I click on 'button\[title="ok"\]'/);
+  assert.match(feature, /And I click on "button\[title=\\"it's\\"\]"/);
+  assert.deepEqual(parseFeatureToStepsWith(feature, SEED).map(s => s.params.selector), t.steps.map(s => s.params.selector));
 });
 
 test('includes the description lines indented under Feature', () => {

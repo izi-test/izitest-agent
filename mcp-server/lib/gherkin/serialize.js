@@ -16,7 +16,7 @@ export function serializeTestToFeature(test, projectId) {
 
 // Pure version — takes pre-loaded definitions. Used by tests and by the
 // API layer when definitions are already in memory.
-export function serializeTestToFeatureWith(test, definitions) {
+export function serializeTestToFeatureWith(test, definitions, options = {}) {
   const lines = [];
   lines.push(`Feature: ${test.name}`);
   if (test.description) {
@@ -26,7 +26,7 @@ export function serializeTestToFeatureWith(test, definitions) {
   lines.push(`  Scenario: ${test.name}`);
 
   let lastKeyword = null;
-  for (const { keyword, phrase } of scenarioPhrases(test, definitions)) {
+  for (const { keyword, phrase } of scenarioPhrases(test, definitions, options)) {
     lines.push(`    ${keyword === lastKeyword ? 'And' : keyword} ${phrase}`);
     lastKeyword = keyword;
   }
@@ -38,8 +38,10 @@ export function serializeTestToFeatureWith(test, definitions) {
  * The scenario's phrases, in order, each with the test steps it stands for: one step, or
  * the run of steps a business step groups. Saving an edited feature uses it to give an
  * unchanged phrase back its steps (see reconcile.js).
+ * `singleStep(step)` gives the step a phrase is rendered from when no business step groups
+ * it — the Cucumber export puts a stable target in its selector there.
  */
-export function scenarioPhrases(test, definitions) {
+export function scenarioPhrases(test, definitions, { singleStep = (step) => step } = {}) {
   // Split into composite and single definitions.
   const composites = definitions.filter(d => d.steps_template);
   const singles = definitions.filter(d => !d.steps_template);
@@ -72,7 +74,7 @@ export function scenarioPhrases(test, definitions) {
     }
 
     // Fall back to single-step matching.
-    const rendered = renderStepPhrase(steps[i], sortedSingles);
+    const rendered = renderStepPhrase(singleStep(steps[i]), sortedSingles);
     phrases.push({ keyword: rendered.keyword, phrase: rendered.phrase, steps: [steps[i]] });
     i++;
   }
@@ -262,7 +264,15 @@ function renderPattern(pattern, args) {
   let i = 0;
   return pattern.replace(/\{(string|int|float|word)\}/g, (_, type) => {
     const val = args[i++] ?? '';
-    if (type === 'string') return `"${String(val).replace(/"/g, '\\"')}"`;
+    if (type === 'string') return quoteString(val);
     return String(val);
   });
+}
+
+// A {string} argument: in single quotes when it holds double quotes and no single one —
+// 'input[name="darkMode"]' reads better than "input[name=\"darkMode\"]". Cucumber takes both.
+function quoteString(val) {
+  const text = String(val);
+  if (text.includes('"') && !text.includes("'")) return `'${text}'`;
+  return `"${text.replace(/"/g, '\\"')}"`;
 }
