@@ -10,48 +10,10 @@ import {
   updateTestStep, evaluateAssertion
 } from '../tests.js';
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
+import { deriveVarNameFromLocators, uniqueVarName, listVariable } from '../variable-detection.js';
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────
-
-/**
- * Derive a meaningful variable name from step locators (label, placeholder, aria).
- * Returns null if no meaningful name can be extracted.
- */
-function deriveVarNameFromLocators(step) {
-  const locators = step.locators || [];
-  const labelTypes = ['label', 'placeholder', 'aria'];
-  for (const type of labelTypes) {
-    const loc = locators.find(l => l.type === type && l.value);
-    if (loc) {
-      const name = loc.value
-        .toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // strip accents
-        .replace(/[^a-z0-9\s]/g, '')                      // keep alphanum + spaces
-        .trim()
-        .replace(/\s+/g, '_')                              // spaces → underscores
-        .substring(0, 30);
-      if (name && name.length >= 2) return name;
-    }
-  }
-  return null;
-}
-
-/**
- * Ensure a variable name is unique within the used set.
- * Appends _2, _3, etc. on collision.
- */
-function uniqueVarName(baseName, usedNames) {
-  if (!usedNames.has(baseName)) {
-    usedNames.add(baseName);
-    return baseName;
-  }
-  let suffix = 2;
-  while (usedNames.has(`${baseName}_${suffix}`)) suffix++;
-  const unique = `${baseName}_${suffix}`;
-  usedNames.add(unique);
-  return unique;
-}
 
 /**
  * Remove recovery/parasitic steps that result from error recovery during recording.
@@ -255,22 +217,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
                 const llmResult = await classifyWithLLM(listContext, step.intent);
                 if (llmResult.isList) {
                   const varName = uniqueVarName(llmResult.variableName, usedVarNames);
-                  step.variable = {
-                    name: varName,
-                    type: listContext.type === 'box' ? 'box_item' : 'list_item',
-                    defaultValue: llmResult.selectionMode === 'by_text'
-                      ? listContext.selectedText
-                      : String(listContext.selectedIndex),
-                    listContext: {
-                      type: listContext.type,
-                      parentSelector: listContext.parentSelector,
-                      itemXpath: listContext.itemXpath,
-                      totalItems: listContext.totalItems,
-                      selectedIndex: listContext.selectedIndex,
-                      selectedText: listContext.selectedText,
-                      selectionMode: llmResult.selectionMode
-                    }
-                  };
+                  step.variable = listVariable(varName, listContext, llmResult);
                   log(`Auto-variabilized click step ${i + 1}: {{${varName}}} in ${listContext.type}`);
                 }
               }

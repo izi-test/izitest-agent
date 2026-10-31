@@ -28,6 +28,7 @@ const learnTarget = (ref, result) => {
 };
 const saveActionToHistory = (...args) => recordAction(sess(), ...args);
 import { classifyWithLLM, detectListContext } from './classify.js';
+import { deriveVarNameFromLocators, uniqueVarName, listVariable } from './variable-detection.js';
 import { loadTest, saveTest } from './test-store.js';
 import { evaluateAssertion } from './test-execute.js';
 
@@ -42,31 +43,7 @@ function createModel(model, apiKey) {
   return client.chat(model);
 }
 
-// ─── Helpers (duplicated from test.js to avoid circular deps) ──────
-
-function deriveVarNameFromLocators(step) {
-  const locators = step.locators || [];
-  for (const type of ['label', 'placeholder', 'aria']) {
-    const loc = locators.find(l => l.type === type && l.value);
-    if (loc) {
-      const name = loc.value.toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9\s]/g, '').trim()
-        .replace(/\s+/g, '_').substring(0, 30);
-      if (name && name.length >= 2) return name;
-    }
-  }
-  return null;
-}
-
-function uniqueVarName(baseName, usedNames) {
-  if (!usedNames.has(baseName)) { usedNames.add(baseName); return baseName; }
-  let suffix = 2;
-  while (usedNames.has(`${baseName}_${suffix}`)) suffix++;
-  const unique = `${baseName}_${suffix}`;
-  usedNames.add(unique);
-  return unique;
-}
+// ─── Helpers ──────────────────────────────────────────────────────
 
 function cleanRecoverySteps(steps) {
   const cleaned = [...steps];
@@ -604,17 +581,7 @@ function buildTools(sendCommand) {
                   const llmResult = await classifyWithLLM(listContext, step.intent);
                   if (llmResult.isList) {
                     const varName = uniqueVarName(llmResult.variableName, usedVarNames);
-                    step.variable = {
-                      name: varName,
-                      type: listContext.type === 'box' ? 'box_item' : 'list_item',
-                      defaultValue: llmResult.selectionMode === 'by_text' ? listContext.selectedText : String(listContext.selectedIndex),
-                      listContext: {
-                        type: listContext.type, parentSelector: listContext.parentSelector,
-                        itemXpath: listContext.itemXpath, totalItems: listContext.totalItems,
-                        selectedIndex: listContext.selectedIndex, selectedText: listContext.selectedText,
-                        selectionMode: llmResult.selectionMode
-                      }
-                    };
+                    step.variable = listVariable(varName, listContext, llmResult);
                   }
                 }
               } catch (err) {

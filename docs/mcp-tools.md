@@ -133,6 +133,19 @@ When saving a test (via `stop_recording`), IziTest Agent automatically identifie
 run_test("my_test", { variables: { "user_email": "new@example.com" } })
 ```
 
+Une variable de saisie prend le nom du champ : son label (« Workspace name » → `workspace_name`),
+sinon le nom envoyé par le formulaire (`displayName` → `display_name`), le placeholder en dernier.
+
+Un clic devient une variable de liste quand l'élément cliqué fait partie d'éléments semblables. Un LLM
+en décide (clé OpenRouter, sinon la CLI `copilot`) ; sans LLM disponible, une règle prudente prend le
+relais :
+
+- pas de liste pour moins de 3 éléments, pour un élément sans texte (interrupteur nu, icône), ni pour
+  des boutons d'action côte à côte (« Save » / « Discard » / « Delete ») ;
+- des éléments à libellés distincts (critères, catégories) sont choisis **par texte**, sans le compteur
+  final : `Jardin (44)` devient `Jardin`, qui retrouve `Jardin (62)` ailleurs ;
+- un même bouton ou lien répété (« Add to cart » sur chaque produit) est choisi par position.
+
 #### Déclarer une variable : `add_test_variable`
 
 La détection ne couvre que ce qui est saisi (`fill`) ou choisi dans une liste : une ville ou un budget

@@ -4,6 +4,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { log } from './logger.js';
 import { evaluate, getOpenRouterKey } from './jev.js';
+import { itemLabel } from './variable-detection.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -121,11 +122,33 @@ export async function classifyWithLLM(listContext, intent) {
     log(`LLM classification failed (falling back to heuristic): ${err.message}`);
   }
 
-  return {
-    isList: totalItems > 2,
-    variableName: type === 'box' ? 'item' : 'option',
-    selectionMode: 'by_index'
-  };
+  return classifyHeuristically(listContext);
+}
+
+/**
+ * The verdict without an LLM. "More than two similar items" made a list of every click:
+ * a form's submit button among its neighbours, a row of unlabelled toggles. Those became
+ * variables picked by position, which replay then resolved by position in the page.
+ */
+export function classifyHeuristically({ type, itemTexts = [], selectedText = '', totalItems = 0, itemXpath = '' }) {
+  const variableName = type === 'box' ? 'item' : 'option';
+  const notAList = { isList: false, variableName, selectionMode: 'by_index' };
+  const label = itemLabel(selectedText);
+  const texts = itemTexts.map(itemLabel).filter(Boolean);
+
+  // Two items are a pair of controls, not a choice among many.
+  if (totalItems < 3) return notAList;
+  // An item with no text of its own (a bare toggle, an icon) can only be found again by
+  // position, which breaks as soon as the page changes.
+  if (!label) return notAList;
+  // Buttons side by side with their own labels are separate actions (Sign in / Clear,
+  // Save / Discard / Delete). The same button repeated per item ("Add to cart") is a list.
+  const itemTag = /(?:^|\/)([a-z][\w-]*)(?:\[[^\]]*\])*$/i.exec(itemXpath)?.[1]?.toLowerCase();
+  if (itemTag === 'button' && texts.filter((t) => t === label).length < 2) return notAList;
+
+  // Items with labels of their own are found again by text, whatever their order.
+  const labelled = texts.length >= 2 && new Set(texts).size === texts.length;
+  return { isList: true, variableName, selectionMode: labelled ? 'by_text' : 'by_index' };
 }
 
 export async function detectListContext(sendCommand, { selector, text, tabId }) {
