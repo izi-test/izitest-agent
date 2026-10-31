@@ -83,6 +83,20 @@ test('the feature reads in business phrases, the project\'s own winning over the
   assert.match(feature, /\n {4}Given je cherche une maison à "antony-92160" pour 500000 euros maximum\n {4}When je ne garde que les maisons avec jardin\n {4}Then the URL should contain "jardin=oui"\n/);
 });
 
+test('the tab a step ran in is left out: the phrase matches another recording of the same steps', () => {
+  const recordedInTab = (tabId) => ({
+    name: `tab ${tabId}`,
+    steps: [{ command: 'navigate', params: { url: RECORDED.steps[0].params.url, tabId } }],
+  });
+  const search = buildBusinessStep(recordedInTab(231077689), {
+    from_step: 1, to_step: 1, pattern: 'je cherche une maison à {string}', args: [{ step: 1, param: 'url', value: 'antony-92160' }],
+  });
+  assert.deepEqual(Object.keys(search.steps_template[0].params), ['url']);
+
+  const feature = serializeTestToFeatureWith(recordedInTab(231077654), [...DEFAULTS, composite(100, 'Given', 'je cherche une maison à {string}', search)]);
+  assert.match(feature, /Given je cherche une maison à "antony-92160"/);
+});
+
 test('a single-step definition with fixed text beats a built-in default of the same shape', () => {
   const ownSearch = { id: 200, keyword: 'Given', pattern: 'je cherche une maison à {string}', command: 'navigate', params_template: { url: 'https://www.bienici.com/recherche/achat/{0}/maisonvilla?prix-max=500000' }, steps_template: null, is_default: 0 };
   const feature = serializeTestToFeatureWith({ name: 't', steps: [RECORDED.steps[0]] }, [...DEFAULTS, ownSearch]);

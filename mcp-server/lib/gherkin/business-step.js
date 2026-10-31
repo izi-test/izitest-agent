@@ -9,6 +9,10 @@
 
 const PATTERN_PARAMETER = /\{(string|int|float|word)\}/g;
 
+// Where a step ran, not what it does: navigate always records its tab. Kept in the
+// template, it would make the business step match only the test it was built from.
+const RUNTIME_PARAMS = ['tabId'];
+
 /**
  * `{ steps_template }`, or `{ error }`. Steps are numbered from 1, both ends included.
  * Each entry of `args` maps a parameter of the pattern, in order, to a recorded value:
@@ -26,12 +30,16 @@ export function buildBusinessStep(test, { from_step, to_step, pattern, args = []
     return { error: `The pattern has ${parameterCount} parameter(s) ({string}, {int}…) but ${args.length} arg(s) were given: one per parameter, in order` };
   }
 
-  const steps_template = steps.slice(from_step - 1, to_step).map(step => ({
-    command: step.command,
+  const steps_template = steps.slice(from_step - 1, to_step).map(step => {
     // Assertions keep their data in `assertion`; parsing a composite puts it back there.
-    params: structuredClone(step.command === 'assert' ? (step.assertion || step.params || {}) : (step.params || {})),
-    ...(step.locators?.length && { locators: structuredClone(step.locators) }),
-  }));
+    const params = structuredClone(step.command === 'assert' ? (step.assertion || step.params || {}) : (step.params || {}));
+    for (const key of RUNTIME_PARAMS) delete params[key];
+    return {
+      command: step.command,
+      params,
+      ...(step.locators?.length && { locators: structuredClone(step.locators) }),
+    };
+  });
 
   for (const [i, arg] of args.entries()) {
     const { step, param, value } = arg || {};
