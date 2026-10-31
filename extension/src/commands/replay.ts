@@ -165,7 +165,11 @@ export async function cmdReplaySequence(
         const resolvedTab = await resolveTabId(baseParams.tabId, sessionId);
         currentTabId = resolvedTab;
 
+        // A box clicked through its label (viaLabel) is hidden by design: waiting for it to
+        // show cost 2 s on every replay before the fallback found it. Present is enough —
+        // a toggle is clicked from script below, as the label would.
         const elementCondition: ElementCondition =
+          step.command === 'click' && baseParams.viaLabel ? 'any' :
           step.command === 'click'  ? 'visible' :
           step.command === 'fill'   ? 'enabled' :
           step.command === 'select' ? 'enabled' :
