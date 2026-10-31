@@ -45,6 +45,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `delete_test` | Removes a saved test from the database. |
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
 | `get_test_as_code` | Returns a saved test as Playwright code to commit in the project under test (see below). |
+| `create_business_step` | Groups a run of steps of a recorded test into one business Gherkin step (see below). |
 
 ### Export Playwright : `get_test_as_code`
 
@@ -76,8 +77,53 @@ dans un `id` ou un `for`, `:r1:` de React, classes CSS-in-JS) y casserait au pre
 5. `page.getByPlaceholder(…)`, puis `page.getByText(…, { exact: true })` quand le texte visible
    est le nom accessible.
 
-Sans alternative stable, le sélecteur d'origine reste, précédé d'un commentaire `// FIXME`. La
-variante `playwright-cucumber` écrit encore le sélecteur enregistré dans le `.feature` : relisez-le.
+Sans alternative stable, le sélecteur d'origine reste, précédé d'un commentaire `// FIXME`. En
+`playwright-cucumber`, le même choix vaut pour les étapes métier (ci-dessous) ; une étape restée
+générique (`When I click on "…"`) écrit encore le sélecteur enregistré dans le `.feature`.
+
+### Étapes métier : `create_business_step`
+
+Regroupe une suite d'étapes d'un test enregistré en une seule phrase Gherkin métier, au lieu d'une
+étape technique par clic :
+
+```gherkin
+# avant
+When I click on "div.moreFilterBtn"
+And I click on "label[for=\"…uuid…\"]"
+And I click on "#seeAllResults"
+# après
+When je ne garde que les maisons avec jardin
+```
+
+La step definition est construite à partir des étapes enregistrées elles-mêmes, sélecteurs et
+locators compris : rien n'est à recopier. L'export Cucumber de ce test, et de tout test qui contient
+les mêmes étapes, affiche la phrase, et `features/steps/composite.steps.js` contient les actions
+Playwright (avec les locators stables ci-dessus). Écrite à la main dans un autre scénario, la phrase
+fonctionne aussi.
+
+| Paramètre | Type | Description |
+| :--- | :--- | :--- |
+| `project_id` | number | Projet de la step definition. Un test sans projet y est rattaché |
+| `test_name` | string | Test enregistré |
+| `from_step`, `to_step` | number | Étapes à regrouper, numérotées à partir de 1, bornes comprises |
+| `keyword` | string | `Given`, `When` ou `Then` |
+| `pattern` | string | La phrase, en Cucumber expression. `( )` et `/` y ont un sens (texte optionnel, alternatives) : à éviter |
+| `args` | array | Un par paramètre de la phrase (`{string}`, `{int}`…), dans l'ordre. `{ step, param }` prend toute la valeur enregistrée, `{ step, param, value }` seulement cette partie |
+
+Exemple paramétré : la ville et le budget, pris dans l'URL de l'étape 1.
+
+```javascript
+create_business_step({
+  project_id: 2, test_name: "recherche_bienici", from_step: 1, to_step: 1, keyword: "Given",
+  pattern: "je cherche une maison à vendre à {string} pour {int} euros maximum",
+  args: [{ step: 1, param: "url", value: "antony-92160" }, { step: 1, param: "url", value: "500000" }]
+})
+// → Given je cherche une maison à vendre à "antony-92160" pour 500000 euros maximum
+```
+
+À sélecteurs et paramètres égaux, une step definition du projet passe devant une step definition
+par défaut (`I am on {string}`). Rejouée depuis Gherkin (`create_test_from_gherkin`), une étape
+métier redonne ses étapes avec leurs locators.
 
 ### Variable Support
 When saving a test (via `stop_recording`), IziTest Agent automatically identifies variables (e.g., input values or list selections). You can override these during `run_test`:

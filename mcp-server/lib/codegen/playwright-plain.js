@@ -2,7 +2,7 @@
 // test object. Pure: no DB access, no filesystem. Returns the file content as
 // a single string so the caller can write it to disk or bundle it in a zip.
 
-import { chooseTarget } from './locators.js';
+import { chooseTarget, withFixme } from './locators.js';
 
 export function generatePlaywrightPlain(test) {
   const lines = [];
@@ -111,11 +111,6 @@ function act(target, method, ...args) {
 
 function locatorOf(target) {
   return target.locator ?? `page.locator(${jsLiteral(target.css)})`;
-}
-
-function withFixme(target, line) {
-  if (!target.fragile) return line;
-  return `// FIXME: this selector holds an ID the page generates at each load, and nothing stable was recorded: replace it.\n${line}`;
 }
 
 function renderAssertion(a) {

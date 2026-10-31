@@ -104,6 +104,8 @@ function buildTestSteps(def, args, phrase, startIndex) {
       if (tpl.command === 'assert') {
         step.assertion = params;
       }
+      // Built from a recording, the sub-step keeps its locators: replay falls back on them.
+      if (tpl.locators) step.locators = tpl.locators;
       return step;
     });
   }

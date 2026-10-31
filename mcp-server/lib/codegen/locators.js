@@ -76,10 +76,10 @@ function tagOf(step) {
 
 /**
  * The target of a step: `{ css }` for a CSS selector, `{ locator }` for a Playwright locator
- * expression built with `literal` (e.g. "page.getByLabel('Jardin')"), plus `fragile: true`
- * when nothing stable was recorded and the original selector is kept anyway.
+ * expression on `page` built with `literal` (e.g. "page.getByLabel('Jardin')"), plus
+ * `fragile: true` when nothing stable was recorded and the original selector is kept anyway.
  */
-export function chooseTarget(step, literal) {
+export function chooseTarget(step, literal, page = 'page') {
   const selector = step.params?.selector ?? '';
   if (!isFragileSelector(selector)) return { css: selector };
 
@@ -97,17 +97,23 @@ export function chooseTarget(step, literal) {
   // The <label> itself, not the control it names: custom checkboxes hide the real <input>
   // (Bien'ici moves it out of the viewport) and only the label can be clicked.
   if (name && tag === 'label') {
-    return { locator: `page.locator('label', { hasText: ${literal(name)} })` };
+    return { locator: `${page}.locator('label', { hasText: ${literal(name)} })` };
   }
   if (name && (FIELD_TAGS.has(tag) || FIELD_COMMANDS.has(step.command))) {
-    return { locator: `page.getByLabel(${literal(name)})` };
+    return { locator: `${page}.getByLabel(${literal(name)})` };
   }
 
   const placeholder = valueOf('placeholder');
-  if (placeholder) return { locator: `page.getByPlaceholder(${literal(placeholder)}, { exact: true })` };
+  if (placeholder) return { locator: `${page}.getByPlaceholder(${literal(placeholder)}, { exact: true })` };
 
   const text = valueOf('text');
-  if (name && text && text === name) return { locator: `page.getByText(${literal(text)}, { exact: true })` };
+  if (name && text && text === name) return { locator: `${page}.getByText(${literal(text)}, { exact: true })` };
 
   return { css: selector, fragile: true };
+}
+
+/** `line` preceded by a FIXME comment when the step's target is a fragile selector kept as is. */
+export function withFixme(target, line) {
+  if (!target.fragile) return line;
+  return `// FIXME: this selector holds an ID the page generates at each load, and nothing stable was recorded: replace it.\n${line}`;
 }

@@ -16,6 +16,7 @@ import {
 } from '../gherkin/step-definition-store.js';
 import { log } from '../logger.js';
 import { CODEGEN_FRAMEWORKS, generateTestCode, formatCodeFiles } from '../codegen/index.js';
+import { buildBusinessStep } from '../gherkin/business-step.js';
 
 function projectDefinitions(projectId) {
   return db.prepare(
@@ -198,6 +199,84 @@ export const AGENT_TOOLS = [
         });
         log(`[Agent Tool] Created step definition "${pattern}" in project ${project_id}`);
         return { data: def };
+      } catch (err) {
+        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          return { error: `Step definition with pattern "${pattern}" already exists` };
+        }
+        return { error: err.message };
+      }
+    },
+  },
+
+  {
+    name: 'create_business_step',
+    description: [
+      'Group a run of steps of a recorded test into one business step: a Gherkin phrase in the language of the',
+      'domain ("When I keep only houses with a garden") instead of one technical step per click. The step',
+      'definition is built from the recorded steps themselves, selectors and locators included, so nothing has',
+      'to be retyped. The Cucumber export of this test, and of any test with the same steps, then shows the',
+      'phrase, and features/steps/composite.steps.js holds the Playwright actions behind it.',
+      'Values that change from one scenario to the next go into the phrase as {string} or {int}, each mapped to',
+      'a recorded value by `args`. In the phrase, ( ) and / mean optional text and alternatives in Cucumber',
+      'expressions: avoid them. Returns the test\'s feature as it now reads.',
+    ].join(' '),
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Project ID. A test that has no project yet is assigned to this one.' },
+        test_name: { type: 'string', description: 'Name of the recorded test' },
+        from_step: { type: 'number', description: 'First step to group, numbered from 1' },
+        to_step: { type: 'number', description: 'Last step to group, included' },
+        keyword: { type: 'string', enum: ['Given', 'When', 'Then'], description: 'Gherkin keyword' },
+        pattern: { type: 'string', description: 'The business phrase as a Cucumber expression, e.g. "I keep only houses with a garden" or "I look for a house in {string}"' },
+        args: {
+          type: 'array',
+          description: 'One per parameter of the pattern, in order. { step, param } takes the whole recorded value (e.g. { "step": 3, "param": "value" }); { step, param, value } only that part of it (e.g. { "step": 1, "param": "url", "value": "antony-92160" }).',
+          items: {
+            type: 'object',
+            properties: {
+              step: { type: 'number' },
+              param: { type: 'string' },
+              value: { type: 'string' },
+            },
+            required: ['step', 'param'],
+          },
+        },
+      },
+      required: ['project_id', 'test_name', 'from_step', 'to_step', 'keyword', 'pattern'],
+    },
+    handler({ project_id, test_name, from_step, to_step, keyword, pattern, args = [] }) {
+      const test = loadTest(test_name);
+      if (!test) return { error: `Test "${test_name}" not found` };
+      if (test.project_id && test.project_id !== project_id) {
+        return { error: `Test "${test_name}" belongs to project ${test.project_id}, not ${project_id}` };
+      }
+      if (!db.prepare('SELECT id FROM projects WHERE id = ?').get(project_id)) {
+        return { error: `Project ${project_id} not found` };
+      }
+
+      const built = buildBusinessStep(test, { from_step, to_step, pattern, args });
+      if (built.error) return { error: built.error };
+
+      try {
+        const def = createStepDefinition(project_id, {
+          keyword,
+          pattern,
+          command: 'composite',
+          params_template: {},
+          steps_template: built.steps_template,
+        });
+        if (!test.project_id) {
+          db.prepare('UPDATE tests SET project_id = ? WHERE name = ?').run(project_id, test_name);
+        }
+        log(`[Agent Tool] Created business step "${pattern}" from steps ${from_step}-${to_step} of "${test_name}"`);
+        return {
+          data: {
+            step_definition_id: def.id,
+            steps_grouped: built.steps_template.length,
+            feature: serializeTestToFeatureWith(test, projectDefinitions(project_id)),
+          },
+        };
       } catch (err) {
         if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
           return { error: `Step definition with pattern "${pattern}" already exists` };

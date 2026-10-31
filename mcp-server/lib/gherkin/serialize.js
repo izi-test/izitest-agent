@@ -22,9 +22,13 @@ export function serializeTestToFeatureWith(test, definitions) {
   const singles = definitions.filter(d => !d.steps_template);
 
   // Most specific templates first: definitions with more leaves in their
-  // params_template win over generic fallbacks when both can match a step.
+  // params_template win over generic fallbacks when both can match a step. On a tie,
+  // the one with more fixed text wins, then the project's own over a built-in default:
+  // "I search a house in {string}" on url "https://…/{0}/maison" beats "I am on {string}".
   const sortedSingles = [...singles].sort(
     (a, b) => templateComplexity(b.params_template) - templateComplexity(a.params_template)
+      || literalLength(b.params_template) - literalLength(a.params_template)
+      || Number(!!a.is_default) - Number(!!b.is_default)
   );
   // Longer composites first — greedier match wins.
   const sortedComposites = [...composites].sort(
@@ -225,6 +229,13 @@ function matchTemplateString(tpl, actual, args) {
 
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Characters of a template that are not placeholders.
+function literalLength(tpl) {
+  if (tpl == null) return 0;
+  if (typeof tpl !== 'object') return String(tpl).replace(/\{\d+\}/g, '').length;
+  return Object.values(tpl).reduce((a, v) => a + literalLength(v), 0);
 }
 
 function templateComplexity(tpl) {

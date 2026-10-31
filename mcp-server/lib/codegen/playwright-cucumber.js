@@ -4,6 +4,7 @@
 // Pure: no DB, no filesystem. Returns `{ files: [{ path, content }] }`.
 
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
+import { chooseTarget, withFixme } from './locators.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
@@ -146,10 +147,11 @@ function renderCompositeSteps(composites) {
     const argNames = Array.from({ length: argCount }, (_, i) => `arg${i}`);
     const argList = argNames.length > 0 ? argNames.join(', ') : '';
 
-    lines.push(`${keyword}('${def.pattern}', async function (${argList}) {`);
+    lines.push(`${keyword}(${jsString(def.pattern)}, async function (${argList}) {`);
     for (const tpl of def.steps_template) {
-      const code = commandToPlaywright(tpl.command, tpl.params, argNames);
-      lines.push(`  ${code}`);
+      for (const code of commandToPlaywright(tpl, argNames).split('\n')) {
+        lines.push(`  ${code}`);
+      }
     }
     lines.push(`});`);
     lines.push(``);
@@ -163,27 +165,45 @@ function countPatternArgs(pattern) {
   return matches ? matches.length : 0;
 }
 
-function commandToPlaywright(command, params, argNames) {
+function commandToPlaywright(tpl, argNames) {
+  const params = tpl.params || {};
   const resolve = (val) => resolveTemplateValue(val, argNames);
+  // A sub-step built from a recording (create_business_step) carries its locators: the
+  // same stable choice as plain Playwright code. Without them, the selector as before.
+  const target = () => chooseTarget(tpl, resolve, 'this.page');
+  const act = (method, ...values) => {
+    const t = target();
+    const args = values.map(resolve);
+    return withFixme(t, t.locator
+      ? `await ${t.locator}.${method}(${args.join(', ')});`
+      : `await this.page.${method}(${[resolve(t.css), ...args].join(', ')});`);
+  };
 
-  switch (command) {
+  switch (tpl.command) {
     case 'navigate':
       return `await this.page.goto(${resolve(params.url)});`;
     case 'click':
-      return `await this.page.click(${resolve(params.selector)});`;
+      return act('click');
     case 'fill':
-      return `await this.page.fill(${resolve(params.selector)}, ${resolve(params.value)});`;
+      return act('fill', params.value);
     case 'keyboard':
       return `await this.page.keyboard.press(${resolve(params.key)});`;
-    case 'scroll':
-      return `await this.page.locator(${resolve(params.selector)}).scrollIntoViewIfNeeded();`;
+    case 'scroll': {
+      const t = target();
+      return withFixme(t, `await ${t.locator ?? `this.page.locator(${resolve(t.css)})`}.scrollIntoViewIfNeeded();`);
+    }
     case 'wait':
-      if (params.selector) return `await this.page.waitForSelector(${resolve(params.selector)});`;
+      if (params.selector) {
+        const t = target();
+        return withFixme(t, t.locator
+          ? `await ${t.locator}.waitFor();`
+          : `await this.page.waitForSelector(${resolve(t.css)});`);
+      }
       return `await this.page.waitForTimeout(${resolve(params.ms)});`;
     case 'assert':
       return assertionToPlaywright(params, argNames);
     default:
-      return `// Unsupported command: ${command}`;
+      return `// Unsupported command: ${tpl.command}`;
   }
 }
 
@@ -223,14 +243,27 @@ function resolveTemplateValue(val, argNames) {
   if (pure) return argNames[Number(pure[1])] || "''";
 
   // No placeholders → quoted string literal
-  if (!str.includes('{')) return `'${str.replace(/'/g, "\\'")}'`;
+  if (!/\{\d+\}/.test(str)) return jsString(str);
 
-  // Mixed → template literal
-  const resolved = str.replace(/\{(\d+)\}/g, (_, i) => {
-    const name = argNames[Number(i)];
-    return name ? `\${${name}}` : '';
-  });
+  // Mixed → template literal. Its literal parts are escaped too: a CSS escape such as
+  // `\39 ` left raw is an octal escape, a syntax error in an ES module.
+  const resolved = str.split(/(\{\d+\})/).map(part => {
+    const placeholder = part.match(/^\{(\d+)\}$/);
+    if (placeholder) {
+      const name = argNames[Number(placeholder[1])];
+      return name ? `\${${name}}` : '';
+    }
+    return part.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+  }).join('');
   return `\`${resolved}\``;
+}
+
+function jsString(value) {
+  return `'${String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')}'`;
 }
 
 function renderPackageJson(slug) {
