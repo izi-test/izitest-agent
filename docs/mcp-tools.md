@@ -14,6 +14,7 @@ These tools are used for direct, real-time control of the browser.
 | `screenshot` | Takes an annotated screenshot with DOM mapping. | `annotate`, `purposeFilter`, `searchText` |
 | `click` | Clicks an element. On a checkbox, radio or switch (or its label), returns the state it left (`checked`); with `checked`, sets that state and does not click when it is already so. | `ref` (@eX), `selector`, `text`, `checked` |
 | `fill` | Fills an input/textarea/contenteditable. A date, time, colour or range input gets its value set instead of typed (see below). | `ref` (@eX), `selector`, `value`, `clear` |
+| `upload_file` | Gives files to a file input, as picking them in the file dialog would. The ref may be the input — often hidden — or its drop zone, label or "Upload" button (see below). | `files` (paths), `ref` (@eX), `selector` |
 | `extract` | Retrieves content (text, attributes) from the page. `attribute: "value"` on a field reads what it holds now. | `selector`, `attribute`, `multiple` |
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
 | `get_page_info` | Detailed info (title, URL, element counts). | `tabId`, `profile` |
@@ -39,6 +40,20 @@ These tools are used for direct, real-time control of the browser.
 - **Nom d'un champ** : la valeur d'un champ n'est son nom que pour un bouton (`<input type="submit">`).
   Une couleur, un curseur, un champ prérempli sans label n'ont plus pour nom `#6c5ce7` ou `60`, qui
   changeaient au premier `fill`.
+- **Envoi de fichiers** (`upload_file`) : les fichiers sont lus sur la machine d'IziTest Agent (chemins
+  absolus, ou relatifs à son dossier de travail ; 25 Mo au plus par étape), puis posés dans
+  l'`<input type="file">` depuis la page, qui reçoit `input` et `change` comme après le sélecteur de
+  fichiers. La voie de Chrome (`DOM.setFileInputFiles`) n'est pas prise : elle est refusée à une
+  extension qui n'a pas l'accès aux URL de fichiers, désactivé par défaut. La ref peut être l'input
+  — souvent caché, absent de la snapshot — ou ce qui l'entoure : la zone de dépôt qui le contient,
+  son `<label>`, ou le bouton « Upload » posé à côté (le seul input de fichier de l'ancêtre le plus
+  proche qui en a un). L'étape enregistrée est celle de l'input lui-même (`#avatar-input`), sur
+  lequel le code généré pose les fichiers. Une zone de dépôt sans aucun input n'est pas gérée.
+  Enregistré, un fichier devient une variable de type `file` (`{{avatar}}`), changeable par
+  `run_test` ; en Playwright, `page.setInputFiles('#avatar-input', …)`, précédé d'un `// FIXME`
+  quand le chemin est celui de la machine qui a enregistré — à copier dans le projet ; en Gherkin,
+  `When I upload "<avatar>" to "#avatar-input"` (un seul fichier : plusieurs n'ont pas de phrase).
+  Une assertion sur le nom affiché (`✓ avatar.png`) reste littérale : seul le chemin est variable.
 - **Case ou radio en `display: none`** derrière un label visible (les étoiles d'une note) : listée
   et manipulée par son label, avec sa valeur quand son nom ne la dit pas :
   `[radio] "★" value="4" [unchecked]`.

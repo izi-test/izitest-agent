@@ -53,7 +53,7 @@ const STREAM_REVIVE_MS = 5000;
 const BOUNDARY = 'izitestframe';
 const FRAME_ID = /^[a-z0-9]{6,12}-[0-9a-f]{12}$/;
 
-export const LIVE_ACTIONS = new Set(['navigate', 'click', 'fill', 'select', 'keyboard']);
+export const LIVE_ACTIONS = new Set(['navigate', 'click', 'fill', 'select', 'upload', 'keyboard']);
 
 // The extensions, through the bridge. Tests swap in a fake browser.
 let bridge = {

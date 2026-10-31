@@ -8,6 +8,7 @@ import { currentSession, listSessions, closeNamedSession, forgetTabsEverywhere }
 /** Session ids the extension should treat as still working (see CloseWindowParams). */
 const liveSessionIds = () => listSessions().map((s) => s.id);
 import { recordAction, selectParams } from '../recording.js';
+import { absolutePaths, readUploadFiles } from '../upload-files.js';
 import { captureActionFrame, LIVE_ACTIONS } from '../live.js';
 
 // How text is typed into fields. Default is per-character key events (human-like, slow:
@@ -618,6 +619,44 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       const actionId = saveActionToHistory('execute_js', { code, tabId, ...(frame ? { frame } : {}) });
       const textResponse = result !== undefined ? JSON.stringify(result, null, 2) : "Execution successful (no return value)";
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + textResponse }] };
+    }
+  );
+
+  // --- Tool: upload_file ---
+  server.tool(
+    'upload_file',
+    'Give one or more files to a file input (<input type="file">), as picking them in the file dialog would. ' +
+    'The ref or selector may be the input itself — often hidden, then absent from snapshots — or the drop zone, label ' +
+    'or "Upload" button around it: its input is found. The files are read on the machine running IziTest Agent. ' +
+    'A drop zone with no file input at all is not handled.',
+    {
+      files: z.array(z.string()).min(1).describe('Paths of the files: absolute, or relative to the IziTest Agent server\'s working directory'),
+      ref: z.string().optional().describe('Reference from a previous snapshot: the input, or its drop zone, label or button'),
+      selector: z.string().optional().describe('CSS selector of the input, or of its drop zone, label or button'),
+      profile: z.string().optional(),
+      tabId: z.number().optional(),
+      intent: z.string().optional().describe('Functional description of this step. Recorded as step intent during test recording.')
+    },
+    async ({ files, ref, selector, profile, tabId, intent }) => {
+      const paths = absolutePaths(files);
+      const fileData = await readUploadFiles(paths);
+      const result = learnTarget(ref, await sendCommand(profile, 'upload', { selector, ref, fileData, tabId }));
+      let screenshotBase64 = null;
+      if (getRecording()?.use_vrt) {
+        try {
+          const snap = await sendCommand(profile, 'screenshot', { tabId, annotate: false });
+          if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
+        } catch(e) {}
+      }
+      const fileParams = paths.length === 1 ? { file: paths[0] } : { files: paths };
+      // The ref stood for a drop zone or a button: the step is the input's, which generated
+      // code sets the files on (Playwright's setInputFiles takes an input, nothing else).
+      const { input, ...shown } = result ?? {};
+      const actionId = input
+        ? saveActionToHistory('upload', { selector: input.selector, ...fileParams, tabId }, null, screenshotBase64, intent, input.locators ?? [])
+        : saveActionToHistory('upload', { selector, ...fileParams, tabId }, ref, screenshotBase64, intent);
+      if (input) shown.input = input.selector;
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(shown, null, 2) }] };
     }
   );
 

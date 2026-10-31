@@ -3,7 +3,7 @@
 // Actions use Chrome DevTools Protocol (CDP) for native input simulation
 
 import { updateBadge, resolveTabId, ensureContentScript, captureTabScreenshot, delay, isExpectedRefusal, assertTabIsNotAnotherSessions, TOP_FRAME } from './helpers';
-import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdKeyboard, cmdScroll } from './commands/actions';
+import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdUpload, cmdKeyboard, cmdScroll } from './commands/actions';
 import { cmdReplaySequence } from './commands/replay';
 import {
   cmdSnapshot, cmdExtract, cmdGetPageInfo, cmdScreenshot,
@@ -63,6 +63,7 @@ const COMMAND_HANDLERS: Record<string, CommandHandler> = {
   click:        (params) => cmdClick(params as unknown as Parameters<typeof cmdClick>[0]),
   fill:         (params) => cmdFill(params as unknown as Parameters<typeof cmdFill>[0]),
   select:       (params) => cmdSelect(params as unknown as Parameters<typeof cmdSelect>[0]),
+  upload:       (params) => cmdUpload(params as unknown as Parameters<typeof cmdUpload>[0]),
   keyboard:     (params) => cmdKeyboard(params as unknown as Parameters<typeof cmdKeyboard>[0]),
   scroll:       (params) => cmdScroll(params as unknown as Parameters<typeof cmdScroll>[0]),
   snapshot:     (params) => cmdSnapshot(params as unknown as Parameters<typeof cmdSnapshot>[0]),

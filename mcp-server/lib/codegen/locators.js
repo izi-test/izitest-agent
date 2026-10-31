@@ -70,7 +70,7 @@ export function isPositionalSelector(selector) {
   return /:nth-(of-type|child|last-of-type|last-child)\(/.test(String(selector ?? ''));
 }
 
-const FIELD_COMMANDS = new Set(['fill', 'type', 'press', 'select']);
+const FIELD_COMMANDS = new Set(['fill', 'type', 'press', 'select', 'upload']);
 const FIELD_TAGS = new Set(['input', 'select', 'textarea']);
 // Roles getByRole finds by a tag a recorded selector ends with. Inputs are left out: their
 // role depends on their type, which a selector rarely says; fields go by their label.

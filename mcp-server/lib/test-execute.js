@@ -3,6 +3,7 @@
 import { log } from './logger.js';
 import { db } from './db.js';
 import { loadTest } from './test-store.js';
+import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -295,6 +296,11 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     }
     return hydratedStep;
   });
+
+  // An upload sends the files' content, read here: the extension cannot read the disk.
+  for (const step of hydratedSteps) {
+    if (step.command === 'upload') step.params.fileData = await readUploadFiles(uploadPathsOf(step.params));
+  }
 
   // ─── Get test ID for FK reference ──────────────────────────
   const testRow = db.prepare('SELECT id FROM tests WHERE name = ?').get(name);

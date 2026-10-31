@@ -47,20 +47,27 @@ export function deriveVarNameFromLocators(step) {
   return null;
 }
 
-// The variable type of what a step puts in a field.
-const INPUT_TYPES = { fill: 'text', select: 'select' };
+// What a step puts in a field: the param that holds it, and the variable's type.
+const INPUTS = {
+  fill: { param: 'value', type: 'text', fallback: 'input' },
+  select: { param: 'value', type: 'select', fallback: 'select' },
+  // One file (`file`); several (`files`) stay as they are.
+  upload: { param: 'file', type: 'file', fallback: 'file' },
+};
 
 /**
- * Turn what a step typed (fill) or picked in a <select> into a {{variable}} of the test,
- * named after the field. A <select> was left out: its option stayed fixed, run_test could
- * not change it, and its Examples column was missing. False for any other step.
+ * Turn what a step typed (fill), picked in a <select> or gave a file input (upload) into a
+ * {{variable}} of the test, named after the field. A <select> was left out: its option stayed
+ * fixed, run_test could not change it, and its Examples column was missing. False for any
+ * other step.
  */
 export function variabilizeInput(step, index, usedNames) {
-  const type = INPUT_TYPES[step.command];
-  if (!type || !step.params?.value) return false;
-  const name = uniqueVarName(deriveVarNameFromLocators(step) || `${step.command === 'select' ? 'select' : 'input'}_${index + 1}`, usedNames);
-  step.variable = { name, type, defaultValue: step.params.value };
-  step.params.value = `{{${name}}}`;
+  const input = INPUTS[step.command];
+  const value = input && step.params?.[input.param];
+  if (!value) return false;
+  const name = uniqueVarName(deriveVarNameFromLocators(step) || `${input.fallback}_${index + 1}`, usedNames);
+  step.variable = { name, type: input.type, defaultValue: value };
+  step.params[input.param] = `{{${name}}}`;
   return true;
 }
 

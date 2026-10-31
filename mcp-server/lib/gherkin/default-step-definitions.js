@@ -15,6 +15,8 @@ export const DEFAULT_STEP_DEFINITIONS = [
   { keyword: 'When',  pattern: 'I check {string}',                command: 'click',    params_template: { selector: '{0}', checked: true } },
   { keyword: 'When',  pattern: 'I uncheck {string}',              command: 'click',    params_template: { selector: '{0}', checked: false } },
   { keyword: 'When',  pattern: 'I set {string} checked to {string}', command: 'click', params_template: { selector: '{0}', checked: '{1}' } },
+  // One file; an upload of several has no phrase.
+  { keyword: 'When',  pattern: 'I upload {string} to {string}',   command: 'upload',   params_template: { file: '{0}', selector: '{1}' } },
   { keyword: 'When',  pattern: 'I press {string}',                command: 'keyboard', params_template: { key: '{0}' } },
   { keyword: 'When',  pattern: 'I scroll to {string}',            command: 'scroll',   params_template: { selector: '{0}' } },
 

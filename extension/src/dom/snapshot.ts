@@ -1,6 +1,7 @@
 import { describeBlocker, frameLevels, hitTestThroughFrames, type FrameLevel } from './hit-test';
 import { toggleOf, isToggleInput, styledAwayToggleLabel, textAround, type ToggleState } from './toggle';
 import { pickedInputType, setPickedValue } from './picked-input';
+import { fileInputOf, putFiles, type FileData } from './file-input';
 
 export type SnapshotPurpose = 'fill' | 'click' | 'read';
 
@@ -215,6 +216,30 @@ export function setInputValue(
   const result = setPickedValue(found.el, value);
   if (!result) return { success: false, error: `Not a date, time, colour or range input: <${found.el.tagName.toLowerCase()}>` };
   return 'error' in result ? { success: false, error: result.error } : { success: true, value: result.value };
+}
+
+/**
+ * Give files to the file input a ref or selector stands for (see file-input.ts): the
+ * element itself, or the input of its drop zone, label or "Upload" button. That input, when
+ * it is another element, is described for the step to record: the code generated from the
+ * step sets files on it, not on the drop zone.
+ */
+export function setInputFiles(
+  by: { ref?: string; selector?: string },
+  files: FileData[]
+): { success: true; names: string[]; input?: RefNodeInfo } | { success: false; error: string } {
+  const found = elementBy(by, 'Element');
+  if ('error' in found) return { success: false, error: found.error };
+  const input = fileInputOf(found.el);
+  if (!input) {
+    return { success: false, error: `No file input for <${found.el.tagName.toLowerCase()}>: not one, nor in it, nor its label's, ` +
+      'nor a single one around it. A drop zone without any input is not handled.' };
+  }
+  // Before the files: the page may take the input away once it has them.
+  const described = input === found.el ? undefined : describeElement(input);
+  const result = putFiles(input, files);
+  if ('error' in result) return { success: false, error: result.error };
+  return { success: true, names: result.names, ...(described ? { input: described } : {}) };
 }
 
 /** The element a ref names, or the first a selector matches in the page or its same-origin iframes. */
@@ -554,6 +579,10 @@ const LOCATOR_BUDGET_MS = 400;
 export function describeRef(ref: string): RefNodeInfo | null {
   const el = window.__izitestRefMap?.get(ref);
   if (!el?.isConnected) return null;
+  return describeElement(el);
+}
+
+function describeElement(el: Element): RefNodeInfo {
   const { getRole, getAccessibleName, buildSelector, buildLocators } = pageTools();
   const role = getRole(el);
   const name = getAccessibleName(el);

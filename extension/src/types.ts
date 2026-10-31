@@ -52,6 +52,16 @@ export interface SelectParams {
   matchBy?: 'value' | 'text';
 }
 
+export interface UploadParams {
+  selector?: string;
+  ref?: string;
+  /** The files' content, read by the server: the extension cannot read the disk. */
+  fileData: Array<{ name: string; type: string; base64: string }>;
+  tabId?: number;
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
+}
+
 export interface KeyboardParams {
   key: string;
   modifiers?: KeyboardModifier[];

@@ -3,6 +3,7 @@
 // a single string so the caller can write it to disk or bundle it in a zip.
 
 import { chooseTarget, throughLabel, withFixme } from './locators.js';
+import { recordedPathNote, uploadPathsOf } from '../upload-files.js';
 
 export function generatePlaywrightPlain(test) {
   const lines = [];
@@ -87,6 +88,16 @@ function renderStep(step) {
       return `await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));`;
     case 'select':
       return act(target(), 'selectOption', p.value ?? '');
+    case 'upload': {
+      const t = target();
+      const files = uploadPathsOf(p).map(jsLiteral);
+      const arg = files.length === 1 ? files[0] : `[${files.join(', ')}]`;
+      const call = withFixme(t, t.locator
+        ? `await ${t.locator}.setInputFiles(${arg});`
+        : `await page.setInputFiles(${jsLiteral(t.css)}, ${arg});`);
+      const note = recordedPathNote(step);
+      return note ? `${note}\n${call}` : call;
+    }
     case 'wait':
       if (p.ms != null && p.ms !== '') {
         const ms = Number(p.ms);

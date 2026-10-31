@@ -47,6 +47,11 @@ function deriveIntent(command, params, locators) {
         : `Select "${params.value}"`;
     }
 
+    case 'upload': {
+      const names = (params.files ?? [params.file]).filter(Boolean).map(f => String(f).split(/[\\/]/).pop());
+      return `Upload ${names.map(n => `"${n}"`).join(', ') || 'files'}`;
+    }
+
     case 'keyboard': {
       const modPrefix = params.modifiers?.length
         ? params.modifiers.join('+') + '+'

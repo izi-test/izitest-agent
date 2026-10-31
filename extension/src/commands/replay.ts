@@ -4,9 +4,10 @@ import { resolveTabId, delay, TOP_FRAME } from '../helpers';
 import { clickViaLocator, clickToggleViaHandle, focusViaLocator, clearAndType, isStaleContextError, toggleStateOf } from './page-helpers';
 import { findElementWithLocators, type ElementCondition } from './locators';
 import { resolveVariableElement, type ReplayStep } from './variable-resolver';
-import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdKeyboard, cmdScroll, wantedChecked } from './actions';
+import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdUpload, cmdKeyboard, cmdScroll, wantedChecked } from './actions';
 import { cmdExecuteJs, cmdWait } from './queries';
 import { setPickedValue } from '../dom/picked-input';
+import { fileInputOf, putFiles } from '../dom/file-input';
 import type { ReplaySequenceParams, Locator } from '../types';
 import type { ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
 
@@ -33,6 +34,7 @@ const COMMAND_DISPATCH: Record<string, (params: any) => Promise<any>> = {
   click: cmdClick,
   fill: cmdFill,
   select: cmdSelect,
+  upload: cmdUpload,
   scroll: cmdScroll,
   execute_js: cmdExecuteJs,
   wait: cmdWait,
@@ -96,7 +98,8 @@ export async function cmdReplaySequence(
     }
 
     console.log(`\n▶ Step ${i + 1}/${totalSteps}: [${step.command}] ${step.intent || step.command}`);
-    console.log(`  Params: ${JSON.stringify(baseParams)}`);
+    // An upload's files, in base64, would fill the console.
+    console.log(`  Params: ${JSON.stringify(baseParams, (key, value) => key === 'fileData' ? `[${value.length} file(s)]` : value)}`);
 
     onProgress?.({ type: 'step_start', step: i + 1, command: step.command, intent: step.intent });
     
@@ -256,6 +259,19 @@ export async function cmdReplaySequence(
                 tabId: currentTabId,
                 matchBy: baseParams.matchBy || 'text'
               });
+            } else if (step.command === 'upload') {
+              // The files' content was read by the server (fileData): the extension cannot.
+              const files = baseParams.fileData ?? [];
+              console.log(`  📎 Uploading ${files.map((f: { name: string }) => f.name).join(', ')}`);
+              const found = await handle.evaluateHandle(fileInputOf);
+              const input = found.asElement() as ElementHandle<Element> | null;
+              try {
+                if (!input) throw new Error('No file input there: not one, nor in it, nor its label\'s, nor a single one around it');
+                const put = await input.evaluate(putFiles, files);
+                if ('error' in put) throw new Error(put.error);
+              } finally {
+                await found.dispose().catch(() => {});
+              }
             } else if (step.command === 'scroll') {
               console.log(`  📜 Scrolling to element...`);
               await page.evaluate((el: Element) => el.scrollIntoView({ behavior: 'instant', block: 'center' }), handle);

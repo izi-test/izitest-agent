@@ -6,7 +6,7 @@ import { CMD_KEY, MODIFIER_MAP, focusViaLocator, clearAndType } from './page-hel
 import { attachNetworkCapture } from './network';
 import { adoptOpenedWindow, rememberOwnedWindow } from '../owned-windows';
 import { armEffects } from '../effects';
-import type { NavigateParams, ClickParams, FillParams, SelectParams, KeyboardParams, ScrollParams } from '../types';
+import type { NavigateParams, ClickParams, FillParams, SelectParams, UploadParams, KeyboardParams, ScrollParams } from '../types';
 import type { CDPSession, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
 
 // ─── Ref resolution (content script element map) ────────────────────
@@ -469,6 +469,28 @@ export async function cmdSelect({ selector, value, tabId, sessionId, ref, matchB
   return {
     success: true, selector: ref ?? selector, selectedValue: result.selectedValue, selectedText: result.selectedText,
     ...(target ? { target } : {}),
+  };
+}
+
+/**
+ * Give files to the file input a ref or selector stands for — itself, or the one of its
+ * drop zone, label or "Upload" button (see dom/file-input.ts). `input` in the result
+ * describes that input when it is another element: it is what the step records.
+ */
+export async function cmdUpload({ selector, ref, fileData, tabId, sessionId }: UploadParams) {
+  const resolvedTabId = await resolveTabId(tabId, sessionId);
+  if (!ref && !selector) throw new Error('Provide selector or ref to upload to');
+  if (!fileData?.length) throw new Error('No file to upload');
+
+  await ensureContentScript(resolvedTabId);
+  const target = await describeRefTarget(resolvedTabId, ref);
+  type UploadAnswer = PageAnswer & { names?: string[]; input?: Record<string, unknown> };
+  const result = await askFrameOf<UploadAnswer>(resolvedTabId, { ref, selector },
+    { type: 'set_input_files', ref, selector, files: fileData });
+  if (!result.success) throw new Error(result.error);
+  return {
+    success: true, selector: ref ?? selector, files: result.names,
+    ...(result.input ? { input: result.input } : {}), ...(target ? { target } : {}),
   };
 }
 

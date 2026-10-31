@@ -1,9 +1,10 @@
 // IziTest Agent — Content Script
 // Injected into every page to enable deep DOM interaction
 
-import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, selectOption, setInputValue } from './dom/snapshot';
+import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, selectOption, setInputValue, setInputFiles } from './dom/snapshot';
 import FindSimilarElements from './utils/FindSimilarElements';
 import { announceToParent, listenForHops } from './dom/frame-hop';
+import type { FileData } from './dom/file-input';
 
 (() => {
   // Helper: build a stable CSS selector for an element (for serialization)
@@ -113,6 +114,13 @@ import { announceToParent, listenForHops } from './dom/frame-hop';
       sendResponse(setInputValue(
         { ref: message.ref as string | undefined, selector: message.selector as string | undefined },
         message.value as string
+      ));
+    }
+
+    if (message.type === 'set_input_files') {
+      sendResponse(setInputFiles(
+        { ref: message.ref as string | undefined, selector: message.selector as string | undefined },
+        message.files as FileData[]
       ));
     }
 

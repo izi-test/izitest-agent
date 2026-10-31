@@ -5,6 +5,7 @@
 
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
 import { chooseTarget, throughLabel, withFixme, selectorFor } from './locators.js';
+import { uploadPathsOf } from '../upload-files.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
@@ -113,6 +114,10 @@ When('I uncheck {string}', async function (selector) {
 
 When('I set {string} checked to {string}', async function (selector, checked) {
   await this.page.locator(selector).setChecked(checked === 'true');
+});
+
+When('I upload {string} to {string}', async function (file, selector) {
+  await this.page.setInputFiles(selector, file);
 });
 
 When('I press {string}', async function (key) {
@@ -292,6 +297,14 @@ function commandToPlaywright(tpl, argNames) {
       return act('fill', params.value);
     case 'select':
       return act('selectOption', params.value);
+    case 'upload': {
+      const t = target();
+      const files = uploadPathsOf(params).map(resolve);
+      const arg = files.length === 1 ? files[0] : `[${files.join(', ')}]`;
+      return withFixme(t, t.locator
+        ? `await ${t.locator}.setInputFiles(${arg});`
+        : `await this.page.setInputFiles(${resolve(t.css)}, ${arg});`);
+    }
     case 'keyboard':
       return `await this.page.keyboard.press(${resolve(params.key)});`;
     case 'scroll': {
