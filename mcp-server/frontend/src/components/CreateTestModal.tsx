@@ -3,7 +3,7 @@ import { Button } from './Button';
 import { X, Wand2, Loader2, Folder, Square, FileCode, Bot } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { useGetProjectsQuery, } from '../store/services/projectsApi';
-import { useCreateRequirementMutation } from '../store/services/requirementsApi';
+import { useAddCaseMutation, useCreateRequirementMutation } from '../store/services/requirementsApi';
 import {
   testsApi,
   useAssignToProjectMutation,
@@ -11,12 +11,27 @@ import {
   usePutTestFeatureMutation,
 } from '../store/services/testsApi';
 
-type CreateMode = 'ai' | 'gherkin';
+export type CreateMode = 'ai' | 'gherkin';
+
+/**
+ * What the modal opens with for a requirement's planned case: its scenario — to create the
+ * test from, or for the agent to record — and the requirement and case the test is linked to.
+ */
+export interface CreateTestPreset {
+  mode: CreateMode;
+  name: string;
+  description: string;
+  projectId: number | null;
+  gherkin: string | null;
+  requirement: string;
+  caseId: number;
+}
 
 interface CreateTestModalProps {
   isOpen: boolean;
   onClose: () => void;
   onTestCreated: (testName: string, projectId: number | null, mode?: CreateMode) => void;
+  preset?: CreateTestPreset | null;
 }
 
 type AgentStatus = 'idle' | 'running' | 'done' | 'error' | 'stopped';
@@ -59,13 +74,14 @@ function parseViewportString(value: string): { width: number; height: number } |
   return { width: w, height: h };
 }
 
-export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestModalProps) {
+export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null }: CreateTestModalProps) {
   const dispatch = useAppDispatch();
   const selectedProjectId = useAppSelector(state => state.ui.selectedProjectId);
 
   const { data: projects = [] } = useGetProjectsQuery(undefined, { skip: !isOpen });
   const [assignToProject] = useAssignToProjectMutation();
   const [createRequirement] = useCreateRequirementMutation();
+  const [addCase] = useAddCaseMutation();
   const [createTest] = useCreateTestMutation();
   const [putTestFeature] = usePutTestFeatureMutation();
 
@@ -93,19 +109,19 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
 
   useEffect(() => {
     if (isOpen) {
-      setMode('ai');
-      setName('');
-      setDescription('');
+      setMode(preset?.mode ?? 'ai');
+      setName(preset?.name ?? '');
+      setDescription(preset?.description ?? '');
       setUseVrt(false);
       setViewport(null);
       setAgentStatus('idle');
       setAgentOutput('');
       setError(null);
-      setGherkinDraft('');
-      setGherkinDraftDirty(false);
+      setGherkinDraft(preset?.gherkin ?? '');
+      setGherkinDraftDirty(!!preset?.gherkin);
       setIsCreatingGherkin(false);
     }
-  }, [isOpen]);
+  }, [isOpen, preset]);
 
   // Keep the Gherkin draft in sync with name/description until the user edits it.
   useEffect(() => {
@@ -115,9 +131,9 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
 
   useEffect(() => {
     if (isOpen) {
-      setProjectId(selectedProjectId);
+      setProjectId(preset?.projectId ?? selectedProjectId);
     }
-  }, [isOpen, selectedProjectId]);
+  }, [isOpen, selectedProjectId, preset]);
 
   const handleClose = () => {
     if (abortRef.current) {
@@ -152,17 +168,20 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
 
     const prompt = buildPrompt(name.trim(), description.trim(), useVrt, viewport);
     // The request is kept as a requirement (source "prompt"), and the test the agent records is
-    // linked to it: what the test is for is not lost with the conversation.
-    let requirement: string | undefined;
-    try {
-      const firstLine = description.trim().split('\n')[0];
-      const saved = await createRequirement({
-        title: firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine,
-        description: description.trim(), source: 'prompt', project_id: projectId,
-      }).unwrap();
-      requirement = saved.requirement.key;
-    } catch {
-      requirement = undefined;
+    // linked to it: what the test is for is not lost with the conversation. A requirement's
+    // case is linked to its own.
+    let requirement: string | undefined = preset?.requirement;
+    if (!requirement) {
+      try {
+        const firstLine = description.trim().split('\n')[0];
+        const saved = await createRequirement({
+          title: firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine,
+          description: description.trim(), source: 'prompt', project_id: projectId,
+        }).unwrap();
+        requirement = saved.requirement.key;
+      } catch {
+        requirement = undefined;
+      }
     }
 
     const controller = new AbortController();
@@ -172,7 +191,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
       const response = await fetch('/api/agent/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, requirement }),
+        body: JSON.stringify({ prompt, requirement, case_id: preset?.caseId }),
         signal: controller.signal,
       });
 
@@ -272,6 +291,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
 
       await assignToProject({ testName: name.trim(), projectId }).unwrap();
       await putTestFeature({ testName: name.trim(), feature: gherkinDraft }).unwrap();
+      if (preset) await addCase({ ref: preset.requirement, test_name: name.trim(), case_id: preset.caseId }).unwrap();
 
       dispatch(testsApi.util.invalidateTags([{ type: 'TestList', id: 'LIST' }]));
       onTestCreated(name.trim(), projectId, 'gherkin');
@@ -308,6 +328,12 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
         </div>
 
         <div className="modal-body">
+          {preset && (
+            <p className="create-wf-hint create-wf-hint--linked">
+              For {preset.requirement}, case #{preset.caseId}: the test is linked to it.
+              {preset.mode === 'ai' && ' The agent is told the requirement\'s criteria: expected results come from them.'}
+            </p>
+          )}
           <div className="create-mode-toggle" role="tablist">
             <button
               type="button"

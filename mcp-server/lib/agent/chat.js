@@ -134,7 +134,7 @@ function executeTool(toolName, args, projectId, conversationMessages) {
 
 // ─── Call OpenRouter API directly ──────────────────────────────────
 
-async function callOpenRouter(apiKey, modelName, messages, systemPrompt, includeTools) {
+export async function callOpenRouter(apiKey, modelName, messages, systemPrompt, includeTools, signal) {
   const body = {
     model: modelName,
     messages: [
@@ -154,6 +154,7 @@ async function callOpenRouter(apiKey, modelName, messages, systemPrompt, include
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {
@@ -196,7 +197,8 @@ function saveMessage(conversationId, role, content, toolCalls, toolResults) {
 
 // ─── CLI: spawn helper ────────────────────────────────────────────
 
-function spawnCli(command, args) {
+// Stopped when `signal` aborts (the page that asked went away), or after `timeoutMs`.
+export function spawnCli(command, args, { signal, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
     log(`[Agent Chat CLI] Spawning: ${command} ${args.map(a => a.length > 100 ? a.substring(0, 100) + '...' : a).join(' ')}`);
 
@@ -204,6 +206,9 @@ function spawnCli(command, args) {
       env: { ...process.env, PATH: process.env.PATH },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    const stop = () => { if (child.exitCode == null) child.kill('SIGTERM'); };
+    signal?.addEventListener('abort', stop, { once: true });
+    const timer = timeoutMs ? setTimeout(stop, timeoutMs) : null;
 
     let stdout = '';
     let stderr = '';
@@ -212,6 +217,8 @@ function spawnCli(command, args) {
     child.stderr.on('data', (data) => { stderr += data.toString(); });
 
     child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
       if (code !== 0 && !stdout.trim()) {
         reject(new Error(`CLI exited with code ${code}: ${stderr.substring(0, 500)}`));
         return;

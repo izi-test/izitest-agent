@@ -14,7 +14,7 @@ import { DebugController, activeDebugControllers } from '../debug-controller.js'
 import { uniqueVarName, listVariable, variabilizeInput } from '../variable-detection.js';
 import { linkAssertionToVariables } from '../test-variable.js';
 import { formatTriage } from '../triage.js';
-import { getRequirement, linkRecorded, requirementsOfTest } from '../requirements.js';
+import { getRequirement, linkRecorded, nonConformityOf } from '../requirements.js';
 import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair } from '../repairs.js';
 
 
@@ -605,11 +605,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       const isOracle = ORACLE_ASSERTIONS.has(assertion_type);
       // So is the expected result of a requirement the test checks, when the page shows something
       // else — once the agent says so (non_conformity), having checked the steps before did what
-      // they should: a click that missed its button leaves the page as it was, and that is the
-      // test's mistake, not the app's. Never when the element is not found: a wrong selector.
-      const requirements = requirementsOfTest(test_name);
-      const elementFound = !/not found/i.test(String(result.actual ?? ''));
-      const nonConformity = !result.passed && non_conformity === true && requirements.length > 0 && elementFound;
+      // they should. Never when the element is not found: a wrong selector.
+      const { requirements, elementFound, nonConformity } = nonConformityOf(test_name, result, non_conformity);
       if (!result.passed && !isOracle && !nonConformity) {
         let msg = `Assertion FAILED — not added to test "${test_name}".\n`;
         msg += `  Type: ${assertion_type}\n`;

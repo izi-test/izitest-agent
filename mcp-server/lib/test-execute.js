@@ -694,6 +694,17 @@ async function triageRun({ name, test, executionId, failedStepOrder, globalError
  * Evaluate a single assertion by querying the browser.
  * Returns { passed, expected, actual, type }
  */
+/**
+ * What a whole page shows, for a check of a phrase in it: where the phrase is, when it is
+ * there; otherwise the page's text, cut short.
+ */
+function pageExcerpt(text, expected) {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const at = expected ? flat.indexOf(expected) : -1;
+  if (at >= 0) return `the page: …${flat.slice(Math.max(0, at - 60), at + expected.length + 60)}…`;
+  return `the page: ${flat.length > 240 ? `${flat.slice(0, 240)}…` : flat}`;
+}
+
 export async function evaluateAssertion(sendCommand, assertion, tabId) {
   const type = assertion.type;
   const selector = assertion.selector;
@@ -785,9 +796,10 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
     case 'text_equals':
       js = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? el.textContent.trim() : null; })()`;
       break;
+    // With no selector ("I should see …"), the whole page: as the exported code checks it, in body.
     case 'text_contains':
     case 'text_not_contains':
-      js = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? el.textContent.trim() : null; })()`;
+      js = `(() => { const el = document.querySelector(${JSON.stringify(selector || 'body')}); return el ? el.textContent.trim() : null; })()`;
       break;
     case 'attribute_equals':
       // A field's "value" is what it holds now, as Playwright's toHaveValue reads it: the
@@ -812,7 +824,10 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
   const params = { code: js };
   if (tabId) params.tabId = tabId;
   const result = await sendCommand(undefined, 'execute_js', params);
-  const actual = result.result !== undefined ? result.result : result;
+  const value = result?.result !== undefined ? result.result : result;
+  // The whole page's text, checked for a phrase: told in a line, not page after page.
+  const wholePage = !selector && (type === 'text_contains' || type === 'text_not_contains') && typeof value === 'string';
+  const actual = wholePage ? pageExcerpt(value, expected) : value;
 
   switch (type) {
     case 'element_exists':
@@ -823,10 +838,12 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
     case 'text_equals':
       return { passed: actual === expected, expected, actual: actual ?? '(element not found)', type };
     case 'text_contains':
+      if (wholePage) return { passed: value.includes(expected), expected: `contains "${expected}"`, actual, type };
       return { passed: typeof actual === 'string' && actual.includes(expected), expected: `contains "${expected}"`, actual: actual ?? '(element not found)', type };
     // The element has to be there: a result panel that never showed up contains nothing,
     // and passing on it would hide the failure.
     case 'text_not_contains':
+      if (wholePage) return { passed: !value.includes(expected), expected: `does not contain "${expected}"`, actual, type };
       return { passed: typeof actual === 'string' && !actual.includes(expected), expected: `does not contain "${expected}"`, actual: actual ?? '(element not found)', type };
     case 'attribute_equals':
       return { passed: actual === expected, expected, actual: actual ?? '(element/attribute not found)', type };

@@ -38,3 +38,22 @@ test('generated as not.toContainText, phrased "should not contain", read back th
   const stepsJs = generatePlaywrightCucumber({ name: 't', steps }, defaults).files.find(f => f.path === 'features/steps/default.steps.js').content;
   assert.match(stepsJs, /Then\('\{string\} should not contain \{string\}'[\s\S]*?\.not\.toContainText\(expected\);/);
 });
+
+test('with no selector ("I should see …"), the whole page is checked — in body, as the exported code does', async () => {
+  let code = null;
+  const page = async (_profile, _command, params) => { code = params.code; return { result: 'Sign in — Invalid credentials' }; };
+  const seen = await evaluateAssertion(page, { type: 'text_contains', expected: 'Invalid credentials' });
+  assert.equal(seen.passed, true);
+  assert.match(code, /document\.querySelector\("body"\)/);
+  // Failing, what the page shows is told in a line.
+  const long = async () => ({ result: `Sign in\n\n   ✓ Submitted ${'filler '.repeat(100)}` });
+  const missed = await evaluateAssertion(long, { type: 'text_contains', expected: 'Invalid credentials' });
+  assert.equal(missed.passed, false);
+  assert.match(missed.actual, /^the page: Sign in ✓ Submitted filler/);
+  assert.ok(missed.actual.length < 260);
+  const there = await evaluateAssertion(long, { type: 'text_not_contains', expected: 'Submitted' });
+  assert.match(there.actual, /^the page: …Sign in ✓ Submitted filler/);
+  // The extension may answer null itself: not an evaluation error.
+  const nothing = await evaluateAssertion(async () => null, { type: 'text_contains', expected: 'x' });
+  assert.deepEqual([nothing.passed, nothing.actual], [false, '(element not found)']);
+});

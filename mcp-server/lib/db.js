@@ -307,6 +307,19 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_cases_test ON requirement_cases(test_id);
   `);
 
+  // Test design (lib/requirement-design.js): a case designed with a technique, its priority,
+  // why it is there, its scenario in Gherkin; the last design an agent proposed for a requirement.
+  try {
+    const caseCols = db.prepare('PRAGMA table_info(requirement_cases)').all().map(c => c.name);
+    for (const column of ['technique', 'priority', 'rationale', 'gherkin']) {
+      if (!caseCols.includes(column)) db.exec(`ALTER TABLE requirement_cases ADD COLUMN ${column} TEXT DEFAULT NULL`);
+    }
+    const requirementCols = db.prepare('PRAGMA table_info(requirements)').all().map(c => c.name);
+    if (!requirementCols.includes('design')) db.exec('ALTER TABLE requirements ADD COLUMN design TEXT DEFAULT NULL');
+  } catch (err) {
+    log(`Migration warning (test design): ${err.message}`);
+  }
+
   log('SQLite database initialized');
 }
 

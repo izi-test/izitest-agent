@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Requirement, TestRequirement } from '../../types';
+import type { Requirement, RequirementCase, TestRequirement } from '../../types';
 
 type RequirementInput = Partial<Pick<Requirement, 'title' | 'description' | 'priority' | 'source' | 'key'>> & {
   criteria?: Array<string | { id?: number; text: string }>;
@@ -40,6 +40,25 @@ export const requirementsApi = createApi({
       query: ({ ref, ...body }) => ({ url: `api/requirements/${encodeURIComponent(ref)}/cases`, method: 'POST', body }),
       invalidatesTags: (_result, _error, { ref }) => ['Requirements', { type: 'Requirement', id: ref }, 'TestRequirements'],
     }),
+    // A case changed: its title, kind, technique, priority, scenario.
+    updateCase: builder.mutation<{ requirement: Requirement }, { ref: string; caseId: number } & Partial<Pick<RequirementCase, 'title' | 'kind' | 'technique' | 'priority' | 'rationale' | 'gherkin'>>>({
+      query: ({ ref, caseId, ...body }) => ({ url: `api/requirements/${encodeURIComponent(ref)}/cases/${caseId}`, method: 'PUT', body }),
+      invalidatesTags: (_result, _error, { ref }) => [{ type: 'Requirement', id: ref }],
+    }),
+    // The agent set in Settings reviews the criteria and proposes scenarios: one answer, up to a few minutes.
+    designRequirement: builder.mutation<{ requirement: Requirement }, string>({
+      query: (ref) => ({ url: `api/requirements/${encodeURIComponent(ref)}/design`, method: 'POST' }),
+      invalidatesTags: (_result, _error, ref) => [{ type: 'Requirement', id: ref }],
+    }),
+    // The proposals chosen become planned cases.
+    planDesign: builder.mutation<{ requirement: Requirement }, { ref: string; scenarios: string[] }>({
+      query: ({ ref, scenarios }) => ({ url: `api/requirements/${encodeURIComponent(ref)}/design/plan`, method: 'POST', body: { scenarios } }),
+      invalidatesTags: (_result, _error, { ref }) => ['Requirements', { type: 'Requirement', id: ref }],
+    }),
+    dismissDesign: builder.mutation<{ requirement: Requirement }, string>({
+      query: (ref) => ({ url: `api/requirements/${encodeURIComponent(ref)}/design`, method: 'DELETE' }),
+      invalidatesTags: (_result, _error, ref) => [{ type: 'Requirement', id: ref }],
+    }),
     deleteCase: builder.mutation<{ requirement: Requirement }, { ref: string; caseId: number }>({
       query: ({ ref, caseId }) => ({ url: `api/requirements/${encodeURIComponent(ref)}/cases/${caseId}`, method: 'DELETE' }),
       invalidatesTags: (_result, _error, { ref }) => ['Requirements', { type: 'Requirement', id: ref }, 'TestRequirements'],
@@ -60,5 +79,9 @@ export const {
   useDeleteRequirementMutation,
   useAddCaseMutation,
   useDeleteCaseMutation,
+  useUpdateCaseMutation,
+  useDesignRequirementMutation,
+  usePlanDesignMutation,
+  useDismissDesignMutation,
   useGetTestRequirementsQuery,
 } = requirementsApi;

@@ -23,7 +23,9 @@ import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
-import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, requirementsOfTest } from './requirements.js';
+import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
+import { designTests, planDesigned, withResolution, recordingBrief } from './requirement-design.js';
+import { complete, agentName } from './agent/complete.js';
 import { generateTestCode } from './codegen/index.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
@@ -440,7 +442,7 @@ export async function apiRouter(req, res, url) {
     if (params && ['GET', 'PUT', 'DELETE'].includes(method)) {
       const existing = getRequirement(params.ref);
       if (!existing) return json(res, 404, { error: 'Requirement not found' });
-      if (method === 'GET') return json(res, 200, { requirement: existing });
+      if (method === 'GET') return json(res, 200, { requirement: withResolution(existing) });
       if (method === 'DELETE') {
         deleteRequirement(existing.id);
         return json(res, 200, { success: true });
@@ -460,27 +462,76 @@ export async function apiRouter(req, res, url) {
       }
     }
 
-    // POST /api/requirements/:ref/cases — { test_name, case_id, criterion, kind, title }: a test linked (to a planned case), or a case planned
+    // POST /api/requirements/:ref/cases — { test_name, case_id, criterion, kind, title, technique, priority, rationale, gherkin }:
+    // a test linked (to a planned case), or a case planned
     params = matchRoute(path, '/api/requirements/:ref/cases');
     if (method === 'POST' && params) {
       const body = await readBody(req);
       try {
         const requirement = body.test_name
           ? linkTest(params.ref, body.test_name, { caseId: body.case_id ?? null, criterion: body.criterion ?? null, kind: body.kind ?? 'nominal', title: body.title ?? null })
-          : planCases(params.ref, [{ title: body.title, criterion: body.criterion ?? null, kind: body.kind ?? 'nominal' }]);
-        return json(res, 200, { requirement });
+          : planCases(params.ref, [{
+            title: body.title, criterion: body.criterion ?? null, kind: body.kind ?? 'nominal',
+            technique: body.technique ?? null, priority: body.priority ?? null, rationale: body.rationale ?? null, gherkin: body.gherkin ?? null,
+          }]);
+        return json(res, 200, { requirement: withResolution(requirement) });
       } catch (err) {
         return json(res, 400, { error: err.message });
       }
     }
 
-    // DELETE /api/requirements/:ref/cases/:caseId — a planned case gone, or a test unlinked
+    // PUT | DELETE /api/requirements/:ref/cases/:caseId — a case changed (its title, kind, scenario…); a planned case gone, or a test unlinked
     params = matchRoute(path, '/api/requirements/:ref/cases/:caseId');
+    if (method === 'PUT' && params) {
+      const body = await readBody(req);
+      const changes = Object.fromEntries(['title', 'kind', 'technique', 'priority', 'rationale', 'gherkin'].filter((k) => k in body).map((k) => [k, body[k]]));
+      try {
+        return json(res, 200, { requirement: withResolution(updateCase(parseInt(params.caseId), changes)) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
     if (method === 'DELETE' && params) {
       try {
-        return json(res, 200, { requirement: deleteCase(parseInt(params.caseId)) });
+        return json(res, 200, { requirement: withResolution(deleteCase(parseInt(params.caseId))) });
       } catch (err) {
         return json(res, 404, { error: err.message });
+      }
+    }
+
+    // POST /api/requirements/:ref/design — the agent set in Settings reviews the criteria and proposes scenarios
+    // (lib/requirement-design.js); kept on the requirement. One answer, no tools: it takes up to a few minutes.
+    params = matchRoute(path, '/api/requirements/:ref/design');
+    if (method === 'POST' && params) {
+      if (!getRequirement(params.ref)) return json(res, 404, { error: 'Requirement not found' });
+      const abort = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) abort.abort(); });
+      try {
+        const requirement = await designTests(params.ref, { complete, agent: agentName(), signal: abort.signal });
+        return json(res, 200, { requirement });
+      } catch (err) {
+        log(`Test design failed for ${params.ref}: ${err.message}`);
+        if (abort.signal.aborted) return;
+        return json(res, 502, { error: err.message });
+      }
+    }
+    // DELETE /api/requirements/:ref/design — the proposals dismissed
+    if (method === 'DELETE' && params) {
+      try {
+        return json(res, 200, { requirement: withResolution(saveDesign(params.ref, null)) });
+      } catch (err) {
+        return json(res, 404, { error: err.message });
+      }
+    }
+
+    // POST /api/requirements/:ref/design/plan — { scenarios: ["s1", "s3"] }: the chosen proposals become planned cases
+    params = matchRoute(path, '/api/requirements/:ref/design/plan');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      try {
+        return json(res, 200, { requirement: planDesigned(params.ref, Array.isArray(body.scenarios) ? body.scenarios : []) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
       }
     }
 
@@ -1014,9 +1065,11 @@ export async function apiRouter(req, res, url) {
         api: { model: 'anthropic/claude-haiku-4-5-20251001', apiKey: '' }
       };
 
-      // A CLI agent records through the MCP tools: told to link there. The internal one links by itself.
-      if (requirementLink && agentConfig.mode !== 'api') {
-        body.prompt += `\n\nThis test checks requirement ${requirementLink.requirement}: pass requirement: "${requirementLink.requirement}" to start_recording.`;
+      // The agent is told what the requirement expects: the expected results come from it. A CLI agent
+      // records through the MCP tools, and is told to link there; the internal one links by itself.
+      const linkedRequirement = requirementLink && getRequirement(requirementLink.requirement);
+      if (linkedRequirement) {
+        body.prompt += `\n\n${recordingBrief(linkedRequirement, requirementLink.caseId, { viaMcp: agentConfig.mode !== 'api' })}`;
       }
 
       // ── API mode: internal agent via Vercel AI SDK ──

@@ -49,6 +49,8 @@ export function failureKind(step, error = '') {
     const type = step.assertion?.type;
     if (type === 'visual_match') return 'visual';
     if (['no_console_errors', 'no_failed_requests', 'link_ok', 'no_a11y_violations'].includes(type)) return 'oracle';
+    // The replay could not evaluate it: nothing is known of the page.
+    if (/^Error: /.test(error)) return 'assertion_error';
     if (/not found/i.test(error) || error === 'null') return 'assertion_missing';
     if ((type === 'element_exists' || type === 'element_visible') && error === 'false') return 'assertion_missing';
     return 'assertion_value';
@@ -227,6 +229,7 @@ async function diagnose({ stored, failed, tabId, sendCommand, history }) {
   if (kind === 'visual') return result('changed_value', 'low', 'The screenshot differs from the baseline: look at both before accepting it');
   // A check of what the page does wrong on its own (a bug's test): the page has the bug.
   if (kind === 'oracle') return result('app_regression', 'high', `The page still has the bug this step checks for: ${failed.assertionResult?.actual ?? error}`);
+  if (kind === 'assertion_error') return result('unknown', 'low', `The check of step ${stepOrder} could not be evaluated: ${failed.assertionResult?.actual ?? error}`);
 
   if (kind === 'not_found' || kind === 'drop_not_found') {
     const side = kind === 'drop_not_found' ? 'target' : 'element';

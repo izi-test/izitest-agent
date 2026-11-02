@@ -1,17 +1,26 @@
 import { useState } from 'react';
-import { ClipboardList, Plus, Trash2, Save, ArrowLeft, FlaskConical, Link2, X, ExternalLink } from 'lucide-react';
+import {
+  ClipboardList, Plus, Trash2, Save, ArrowLeft, FlaskConical, Link2, X, ExternalLink, Sparkles, AlertTriangle, FileCode, Bot, Loader2,
+} from 'lucide-react';
 import {
   useGetRequirementsQuery, useGetRequirementQuery, useCreateRequirementMutation, useUpdateRequirementMutation,
-  useDeleteRequirementMutation, useAddCaseMutation, useDeleteCaseMutation,
+  useDeleteRequirementMutation, useAddCaseMutation, useDeleteCaseMutation, useUpdateCaseMutation,
+  useDesignRequirementMutation, usePlanDesignMutation, useDismissDesignMutation,
 } from '../store/services/requirementsApi';
 import { useGetTestsQuery } from '../store/services/testsApi';
 import { useAppSelector } from '../store/hooks';
 import { Button } from './Button';
-import type { Requirement, RequirementCase } from '../types';
+import { CreateTestModal, type CreateMode, type CreateTestPreset } from './CreateTestModal';
+import type { Requirement, RequirementCase, RequirementDesign, DesignedScenario, ScenarioResolution, Technique } from '../types';
 
 // Requirements: what tests are for (mcp-server/lib/requirements.js). A tester writes one here
 // — its acceptance criteria, the cases that check each — and links the tests that check them;
 // coverage says, criterion by criterion, what is tested and how it went on the last run.
+// "Propose scenarios" asks the agent set in Settings for a test design
+// (mcp-server/lib/requirement-design.js): the criteria a test cannot judge, with the question to
+// ask; what the requirement leaves unsaid; scenarios, each with its technique and its Gherkin.
+// The ones chosen are planned; a planned case's test is created from its Gherkin, or recorded
+// by the agent following it.
 
 const COVERAGE_LABELS: Record<Requirement['coverage']['status'], string> = {
   passing: 'Passing',
@@ -21,6 +30,21 @@ const COVERAGE_LABELS: Record<Requirement['coverage']['status'], string> = {
 };
 const SOURCE_LABELS: Record<Requirement['source'], string> = { prompt: 'From a request', manual: 'Written', jira: 'Jira', import: 'Imported' };
 const KINDS = ['nominal', 'alternative', 'error', 'boundary'] as const;
+const TECHNIQUE_LABELS: Record<Technique, string> = {
+  use_case: 'Use case',
+  equivalence_partitioning: 'Equivalence classes',
+  boundary_values: 'Boundary values',
+  decision_table: 'Decision table',
+  state_transition: 'State transition',
+  error_guessing: 'Error guessing',
+};
+
+const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** A test's name for a requirement's case: "shop_7_wrong_password_refused". */
+const testNameFor = (key: string, title: string) => `${key} ${title}`
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
 
 const errorOf = (err: unknown) => (err as { data?: { error?: string } })?.data?.error ?? 'The request failed';
 
@@ -126,8 +150,11 @@ function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: R
   const [priority, setPriority] = useState(requirement.priority);
   const [criteria, setCriteria] = useState(requirement.criteria.map((c) => ({ id: c.id as number | undefined, text: c.text })));
   const [error, setError] = useState<string | null>(null);
+  const [preset, setPreset] = useState<CreateTestPreset | null>(null);
   const [update, { isLoading: saving }] = useUpdateRequirementMutation();
   const [remove] = useDeleteRequirementMutation();
+  const design = requirement.design;
+  const missing = (design?.missing ?? []).filter((m) => !criteria.some((c) => sameText(c.text, m)));
   const dirty = title !== requirement.title || description !== requirement.description || priority !== requirement.priority
     || JSON.stringify(criteria) !== JSON.stringify(requirement.criteria.map((c) => ({ id: c.id, text: c.text })));
 
@@ -143,6 +170,15 @@ function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: R
     if (!window.confirm(`Delete ${requirement.key}? Its tests stay; only the requirement and its links go.`)) return;
     await remove(requirement.key).unwrap();
     onBack();
+  };
+  // A planned case's test: created from its Gherkin, or recorded by the agent following it.
+  const createFor = (c: RequirementCase, mode: CreateMode) => {
+    const criterion = requirement.criteria.find((x) => x.id === c.criterion_id);
+    setPreset({
+      mode, name: testNameFor(requirement.key, c.title),
+      description: criterion ? `${c.title} — checks criterion ${criterion.position}: ${criterion.text}` : c.title,
+      projectId: requirement.project_id, gherkin: c.gherkin, requirement: requirement.key, caseId: c.id,
+    });
   };
 
   return (
@@ -175,6 +211,8 @@ function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: R
         <div className="dash-panel__title">Acceptance criteria</div>
         {criteria.map((criterion, i) => {
           const saved = requirement.criteria.find((c) => c.id === criterion.id);
+          // What the review said of it, until it is reworded.
+          const note = saved && criterion.text === saved.text ? design?.review.find((r) => sameText(r.criterion_text, saved.text)) : undefined;
           return (
             <div key={criterion.id ?? `new-${i}`} className="criterion">
               <div className="criterion__head">
@@ -182,12 +220,26 @@ function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: R
                 <input value={criterion.text} onChange={(e) => setCriteria(criteria.map((c, j) => (j === i ? { ...c, text: e.target.value } : c)))} />
                 <button className="icon-btn" title="Remove this criterion" onClick={() => setCriteria(criteria.filter((_, j) => j !== i))}><X size={14} /></button>
               </div>
+              {note && (
+                <ReviewNote note={note} onUse={() => setCriteria(criteria.map((c, j) => (j === i ? { ...c, text: note.suggestion ?? c.text } : c)))} />
+              )}
               {saved && (
-                <CasesOf requirement={requirement} criterion={saved.position} cases={requirement.cases.filter((c) => c.criterion_id === saved.id)} onOpenTest={onOpenTest} />
+                <CasesOf requirement={requirement} criterion={saved.position} cases={requirement.cases.filter((c) => c.criterion_id === saved.id)} onOpenTest={onOpenTest} onCreate={createFor} />
               )}
             </div>
           );
         })}
+        {missing.length > 0 && (
+          <div className="missing">
+            <div className="missing__title">The requirement does not say</div>
+            {missing.map((m) => (
+              <div key={m} className="missing__item">
+                <span>{m}</span>
+                <button className="link-btn" onClick={() => setCriteria([...criteria, { id: undefined, text: m }])}>Add as a criterion</button>
+              </div>
+            ))}
+          </div>
+        )}
         <Button size="sm" variant="action" icon={Plus} onClick={() => setCriteria([...criteria, { id: undefined, text: '' }])}>Add a criterion</Button>
         {error && <div className="repair-error">{error}</div>}
         <div className="repair-actions requirement-save">
@@ -196,16 +248,206 @@ function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: R
         </div>
       </div>
 
+      <DesignPanel key={design?.designed_at ?? 'none'} requirement={requirement} unsaved={dirty} />
+
       <div className="dash-panel">
         <div className="dash-panel__title">The whole requirement</div>
-        <CasesOf requirement={requirement} criterion={null} cases={requirement.cases.filter((c) => c.criterion_id == null)} onOpenTest={onOpenTest} />
+        <CasesOf requirement={requirement} criterion={null} cases={requirement.cases.filter((c) => c.criterion_id == null)} onOpenTest={onOpenTest} onCreate={createFor} />
+      </div>
+
+      <CreateTestModal
+        isOpen={!!preset}
+        preset={preset}
+        onClose={() => setPreset(null)}
+        onTestCreated={(name) => { setPreset(null); onOpenTest(name); }}
+      />
+    </div>
+  );
+}
+
+/** What the review says of a criterion: why a test cannot judge it, what to ask, a rewording to use. */
+function ReviewNote({ note, onUse }: { note: RequirementDesign['review'][number]; onUse: () => void }) {
+  return (
+    <div className="review-note">
+      <AlertTriangle size={13} />
+      <div>
+        <div>{note.issue}</div>
+        {note.question && <div className="review-note__question">Ask: {note.question}</div>}
+        {note.suggestion && (
+          <div className="review-note__suggestion">
+            “{note.suggestion}” <button className="link-btn" onClick={onUse}>Use this wording</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** How far a scenario's Gherkin resolves: the test can be created from it, or an agent records some steps. */
+function ResolutionChip({ resolution }: { resolution?: ScenarioResolution | null }) {
+  if (!resolution) return null;
+  if (resolution.error) return <span className="resolution resolution--error" title={resolution.error}>Gherkin does not parse</span>;
+  if (resolution.ready) return <span className="resolution resolution--ready">Ready to create</span>;
+  return (
+    <span className="resolution resolution--record" title={`No phrase covers:\n${resolution.unresolved.join('\n')}`}>
+      {resolution.unresolved.length} step{resolution.unresolved.length === 1 ? '' : 's'} to record
+    </span>
+  );
+}
+
+/**
+ * The test design: asked of the agent set in Settings, then its scenarios to choose from,
+ * criterion by criterion. Its review shows on the criteria above.
+ */
+function DesignPanel({ requirement, unsaved }: { requirement: Requirement; unsaved: boolean }) {
+  const design = requirement.design;
+  const [designRequirement, { isLoading: designing }] = useDesignRequirementMutation();
+  const [planDesign, { isLoading: planning }] = usePlanDesignMutation();
+  const [dismissDesign] = useDismissDesignMutation();
+  const [error, setError] = useState<string | null>(null);
+  // The low-priority ones left out to start with.
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set(design?.scenarios.filter((s) => s.priority !== 'low').map((s) => s.id)));
+  const scenarios = [...(design?.scenarios ?? [])].sort((a, b) => (a.criterion ?? Infinity) - (b.criterion ?? Infinity));
+  const picked = scenarios.filter((s) => chosen.has(s.id));
+
+  const propose = async () => {
+    setError(null);
+    try {
+      await designRequirement(requirement.key).unwrap();
+    } catch (err) {
+      setError(errorOf(err));
+    }
+  };
+  const plan = async () => {
+    setError(null);
+    try {
+      await planDesign({ ref: requirement.key, scenarios: picked.map((s) => s.id) }).unwrap();
+    } catch (err) {
+      setError(errorOf(err));
+    }
+  };
+  const toggle = (id: string) => setChosen((before) => {
+    const next = new Set(before);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const issues = design?.review.length ?? 0;
+
+  return (
+    <div className="dash-panel design-panel">
+      <div className="dash-panel__title">
+        <Sparkles size={15} /> Test design
+        <Button
+          size="sm" variant="action" icon={designing ? Loader2 : Sparkles} className="requirements-new"
+          disabled={designing || unsaved} title={unsaved ? 'Save the requirement first' : undefined} onClick={propose}
+        >
+          {designing ? 'Designing…' : design ? 'Propose again' : 'Propose scenarios'}
+        </Button>
+      </div>
+      {!design && !designing && (
+        <p className="explore-help">
+          The agent set in Settings reviews each criterion — can a test tell pass from fail? — lists what the requirement leaves
+          unsaid, and proposes scenarios with test design techniques, written in Gherkin with this project's phrases.
+          You choose which to plan.
+        </p>
+      )}
+      {designing && <p className="explore-help"><Loader2 size={12} className="spin" /> The agent is reading the requirement. It takes up to a few minutes.</p>}
+      {error && <div className="repair-error">{error}</div>}
+      {design && (
+        <>
+          <p className="explore-help">
+            Proposed by {design.agent ?? 'the agent'}, {new Date(design.designed_at).toLocaleString()}.
+            {issues > 0 && ` ${issues} criteri${issues === 1 ? 'on' : 'a'} to clarify: see the notes above.`}
+          </p>
+          {requirement.design_stale && (
+            <div className="design-stale">The requirement changed since: these scenarios were designed for an earlier version. Propose again, or plan them as they are.</div>
+          )}
+          {scenarios.length === 0 && <p className="dash-panel__empty">No scenario left to plan.</p>}
+          {scenarios.map((s, i) => (
+            <div key={s.id}>
+              {(i === 0 || scenarios[i - 1].criterion !== s.criterion) && (
+                <div className="scenario-group">{s.criterion ? `Criterion ${s.criterion} — ${s.criterion_text}` : 'The whole requirement'}</div>
+              )}
+              <ScenarioItem scenario={s} checked={chosen.has(s.id)} onToggle={() => toggle(s.id)} />
+            </div>
+          ))}
+          <div className="repair-actions requirement-save">
+            {scenarios.length > 0 && (
+              <Button size="sm" variant="save" icon={Plus} disabled={!picked.length || planning} onClick={plan}>
+                Plan {picked.length} scenario{picked.length === 1 ? '' : 's'}
+              </Button>
+            )}
+            <Button size="sm" variant="cancel" onClick={() => dismissDesign(requirement.key)}>Dismiss</Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ScenarioItem({ scenario, checked, onToggle }: { scenario: DesignedScenario; checked: boolean; onToggle: () => void }) {
+  const id = `scenario-${scenario.id}`;
+  return (
+    <div className={`scenario ${checked ? 'scenario--chosen' : ''}`}>
+      <input id={id} type="checkbox" checked={checked} onChange={onToggle} />
+      <div className="scenario__body">
+        <div className="case-row">
+          <span className={`case-kind case-kind--${scenario.kind}`}>{scenario.kind}</span>
+          <label htmlFor={id} className="case-title">{scenario.title}</label>
+          {scenario.technique && <span className="case-technique">{TECHNIQUE_LABELS[scenario.technique]}</span>}
+          <span className={`case-priority case-priority--${scenario.priority}`}>{scenario.priority}</span>
+          <ResolutionChip resolution={scenario.resolution} />
+        </div>
+        {scenario.rationale && <div className="scenario__why">{scenario.rationale}</div>}
+        {scenario.gherkin && (
+          <details className="scenario__gherkin">
+            <summary>Gherkin</summary>
+            <pre>{scenario.gherkin}</pre>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A planned case's scenario, edited: checked against the project's phrases when saved. */
+function CaseScenario({ requirement, item, onClose }: { requirement: Requirement; item: RequirementCase; onClose: () => void }) {
+  const [text, setText] = useState(item.gherkin ?? `Scenario: ${item.title}\n  Given I am on "https://"\n`);
+  const [updateCase, { isLoading }] = useUpdateCaseMutation();
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    setError(null);
+    try {
+      await updateCase({ ref: requirement.key, caseId: item.id, gherkin: text }).unwrap();
+    } catch (err) {
+      setError(errorOf(err));
+    }
+  };
+  const unresolved = item.resolution && !item.resolution.ready ? item.resolution : null;
+  return (
+    <div className="case-scenario">
+      <textarea className="gherkin-textarea" rows={Math.min(14, text.split('\n').length + 1)} spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} />
+      {unresolved?.error && <div className="repair-error">{unresolved.error}</div>}
+      {unresolved && !unresolved.error && (
+        <div className="case-scenario__unresolved">
+          No phrase of the project covers {unresolved.unresolved.length === 1 ? 'this step' : 'these steps'} — reword with a phrase, or let the agent record it:
+          <ul>{unresolved.unresolved.map((u) => <li key={u}><code>{u}</code></li>)}</ul>
+        </div>
+      )}
+      {error && <div className="repair-error">{error}</div>}
+      <div className="repair-actions">
+        <Button size="sm" variant="save" icon={Save} disabled={isLoading || text === item.gherkin} onClick={save}>Save scenario</Button>
+        <Button size="sm" variant="cancel" onClick={onClose}>Close</Button>
       </div>
     </div>
   );
 }
 
 /** The cases of one criterion (or of the whole requirement): their test, how it last ran; plan one, link a test. */
-function CasesOf({ requirement, criterion, cases, onOpenTest }: { requirement: Requirement; criterion: number | null; cases: RequirementCase[]; onOpenTest: (name: string) => void }) {
+function CasesOf({ requirement, criterion, cases, onOpenTest, onCreate }: {
+  requirement: Requirement; criterion: number | null; cases: RequirementCase[];
+  onOpenTest: (name: string) => void; onCreate: (c: RequirementCase, mode: CreateMode) => void;
+}) {
   const { data: tests = [] } = useGetTestsQuery(undefined);
   const [addCase, { isLoading }] = useAddCaseMutation();
   const [deleteCase] = useDeleteCaseMutation();
@@ -213,6 +455,7 @@ function CasesOf({ requirement, criterion, cases, onOpenTest }: { requirement: R
   const [testName, setTestName] = useState('');
   const [kind, setKind] = useState<(typeof KINDS)[number]>('nominal');
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
 
   const add = async (body: { test_name?: string; case_id?: number; title?: string }) => {
     setError(null);
@@ -228,21 +471,37 @@ function CasesOf({ requirement, criterion, cases, onOpenTest }: { requirement: R
   return (
     <div className="cases">
       {cases.map((c) => (
-        <div key={c.id} className="case-row">
-          <span className={`case-kind case-kind--${c.kind}`}>{c.kind}</span>
-          <span className="case-title">{c.title}</span>
-          {c.test ? (
-            <>
-              <button className="bug-test" onClick={() => onOpenTest(c.test!)}><FlaskConical size={12} /> {c.test}</button>
-              <span className={`case-run case-run--${c.last_run?.status ?? 'never'}`}>{c.last_run ? c.last_run.status : 'never run'}</span>
-            </>
-          ) : (
-            <select className="case-link" value="" onChange={(e) => e.target.value && add({ test_name: e.target.value, case_id: c.id })}>
-              <option value="">Planned — link a test…</option>
-              {tests.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
-            </select>
-          )}
-          <button className="icon-btn" title={c.test ? 'Unlink this test' : 'Remove this case'} onClick={() => deleteCase({ ref: requirement.key, caseId: c.id })}><X size={12} /></button>
+        <div key={c.id}>
+          <div className="case-row">
+            <span className={`case-kind case-kind--${c.kind}`}>{c.kind}</span>
+            <span className="case-title" title={c.rationale ?? undefined}>{c.title}</span>
+            {c.technique && <span className="case-technique">{TECHNIQUE_LABELS[c.technique]}</span>}
+            {c.priority && <span className={`case-priority case-priority--${c.priority}`}>{c.priority}</span>}
+            {c.test ? (
+              <>
+                <button className="bug-test" onClick={() => onOpenTest(c.test!)}><FlaskConical size={12} /> {c.test}</button>
+                <span className={`case-run case-run--${c.last_run?.status ?? 'never'}`}>{c.last_run ? c.last_run.status : 'never run'}</span>
+              </>
+            ) : (
+              <>
+                <ResolutionChip resolution={c.resolution} />
+                <button className="link-btn" onClick={() => setEditing(editing === c.id ? null : c.id)}>{c.gherkin ? 'Scenario' : 'Write its scenario'}</button>
+                <Button
+                  size="sm" variant="action" icon={FileCode} disabled={!c.resolution?.ready} onClick={() => onCreate(c, 'gherkin')}
+                  title={c.resolution?.ready ? 'Create the test from its scenario' : c.gherkin ? 'Some steps are in plain words: reword them with the project\'s phrases, or record it' : 'Write its scenario first'}
+                >
+                  Create
+                </Button>
+                <Button size="sm" variant="action" icon={Bot} title="The agent records it in the browser, following its scenario" onClick={() => onCreate(c, 'ai')}>Record</Button>
+                <select className="case-link" value="" onChange={(e) => e.target.value && add({ test_name: e.target.value, case_id: c.id })}>
+                  <option value="">…or link a test</option>
+                  {tests.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+                </select>
+              </>
+            )}
+            <button className="icon-btn" title={c.test ? 'Unlink this test' : 'Remove this case'} onClick={() => deleteCase({ ref: requirement.key, caseId: c.id })}><X size={12} /></button>
+          </div>
+          {editing === c.id && !c.test && <CaseScenario key={c.gherkin ?? ''} requirement={requirement} item={c} onClose={() => setEditing(null)} />}
         </div>
       ))}
       <div className="case-add">

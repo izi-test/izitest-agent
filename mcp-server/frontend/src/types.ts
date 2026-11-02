@@ -185,15 +185,55 @@ export interface Criterion {
   text: string;
 }
 
+export type CaseKind = 'nominal' | 'alternative' | 'error' | 'boundary';
+export type Technique = 'use_case' | 'equivalence_partitioning' | 'boundary_values' | 'decision_table' | 'state_transition' | 'error_guessing';
+
+/** How far a scenario's Gherkin resolves against the project's phrases: ready, or the steps an agent records. */
+export interface ScenarioResolution {
+  phrases: number;
+  unresolved: string[];
+  ready: boolean;
+  error?: string;
+}
+
 export interface RequirementCase {
   id: number;
   criterion_id: number | null;
   title: string;
-  kind: 'nominal' | 'alternative' | 'error' | 'boundary';
+  kind: CaseKind;
+  technique: Technique | null;
+  priority: 'high' | 'medium' | 'low' | null;
+  rationale: string | null;
+  gherkin: string | null;
+  resolution?: ScenarioResolution | null;
   position: number;
   test: string | null;
   test_id: number | null;
   last_run: { id: number; status: string; started_at: string } | null;
+}
+
+/** A scenario an agent proposed for a requirement (mcp-server/lib/requirement-design.js). */
+export interface DesignedScenario {
+  id: string;
+  title: string;
+  criterion: number | null;
+  criterion_text: string | null;
+  kind: CaseKind;
+  technique: Technique | null;
+  priority: 'high' | 'medium' | 'low';
+  rationale: string | null;
+  gherkin: string | null;
+  resolution?: ScenarioResolution | null;
+}
+
+/** The last test design an agent proposed: the review of the criteria, what is missing, the scenarios. */
+export interface RequirementDesign {
+  review: Array<{ criterion: number; criterion_text: string; issue: string; question: string | null; suggestion: string | null }>;
+  missing: string[];
+  scenarios: DesignedScenario[];
+  agent: string | null;
+  designed_at: string;
+  content_hash: string;
 }
 
 export interface Requirement {
@@ -209,6 +249,8 @@ export interface Requirement {
   updated_at: string;
   criteria: Criterion[];
   cases: RequirementCase[];
+  design: RequirementDesign | null;
+  design_stale: boolean;
   coverage: { status: 'passing' | 'failing' | 'not_run' | 'not_covered'; criteria: number; covered: number; tests: number; planned: number };
 }
 

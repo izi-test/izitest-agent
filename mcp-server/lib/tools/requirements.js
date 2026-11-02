@@ -1,12 +1,14 @@
 // Requirement MCP tools: what tests are for (lib/requirements.js). A developer's plain request
 // becomes a requirement the agent words as criteria, then plans and records cases for; a
 // requirement written in the dashboard or taken from a tool (a Jira story read by the agent)
-// is saved the same way. start_recording and create_test_from_gherkin link what they create.
+// is saved the same way. design_tests lays out how to design its tests (lib/requirement-design.js),
+// plan_tests keeps the cases chosen; start_recording and create_test_from_gherkin link what they create.
 
 import { z } from 'zod';
 import {
-  SOURCES, PRIORITIES, CASE_KINDS, saveRequirement, getRequirement, listRequirements, planCases, linkTest, formatRequirement,
+  SOURCES, PRIORITIES, CASE_KINDS, TECHNIQUES, saveRequirement, getRequirement, listRequirements, planCases, linkTest, formatRequirement,
 } from '../requirements.js';
+import { designBrief, withResolution } from '../requirement-design.js';
 
 const text = (t, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: 'text', text: t }] });
 const REQUIREMENT = z.string().describe('The requirement: its key ("REQ-12", "SHOP-123") or id');
@@ -41,10 +43,27 @@ export function registerRequirementTools(server) {
           key, title, description, criteria: criteria ?? [], source, url, projectId: project_id ?? null, priority,
         });
         const head = isNew ? `Saved ${requirement.key}.` : changed ? `Updated ${requirement.key}: its content changed — check that its tests still match it.` : `${requirement.key} is unchanged.`;
-        return text(`${head}\n\n${formatRequirement(requirement)}\n\nNext: plan_tests to plan its cases, then record each with start_recording(requirement: "${requirement.key}", case_id: …).`);
+        return text(`${head}\n\n${formatRequirement(requirement)}\n\nNext: design_tests(requirement: "${requirement.key}") to review its criteria and design its scenarios, then plan_tests.`);
       } catch (err) {
         return text(err.message, true);
       }
+    }
+  );
+
+  // --- Tool: design_tests ---
+  server.tool(
+    'design_tests',
+    [
+      'How to design the tests of a requirement, laid out for it: its criteria, the cases it already has, the application,',
+      'the Gherkin phrases of its project, and the method — review each criterion (can a test tell pass from fail? what to',
+      'ask), list what it leaves unsaid, then design scenarios with test techniques (use case, equivalence partitioning,',
+      'boundary values, decision table, state transition, error guessing), each with its steps in Gherkin. Apply it, show',
+      'the user the result, and plan what they keep with plan_tests. The dashboard\'s "Propose scenarios" uses the same method.',
+    ].join('\n'),
+    { requirement: REQUIREMENT },
+    async ({ requirement }) => {
+      const found = getRequirement(requirement);
+      return found ? text(designBrief(found, { answer: 'mcp' })) : text(`No requirement ${requirement}.`, true);
     }
   );
 
@@ -53,8 +72,10 @@ export function registerRequirementTools(server) {
     'plan_tests',
     [
       'Plan the test cases of a requirement before recording them: for each criterion, the expected path (nominal), and where it',
-      'matters another way through (alternative), an error the app must handle (error), a value at the edge (boundary). Each',
-      'case gets an id: record it with start_recording(requirement, case_id), and it is linked to the test saved.',
+      'matters another way through (alternative), an error the app must handle (error), a value at the edge (boundary) —',
+      'designed with design_tests: with their technique, priority, reason and scenario in Gherkin. Each case gets an id; the',
+      'answer says, for each scenario, whether it is ready (every step resolves: create_test_from_gherkin with requirement and',
+      'case_id) or has steps to record (start_recording with requirement and case_id). Either way the test is linked to it.',
       'Show the plan to the user before recording. The expected result of each case comes from its criterion: if the app shows',
       'something else when you record, report it as a non-conformity — do not assert what the app shows instead.',
     ].join('\n'),
@@ -64,11 +85,15 @@ export function registerRequirementTools(server) {
         title: z.string().describe('What the case checks, e.g. "A wrong password shows an error and stays on the login page"'),
         criterion: z.number().int().optional().describe('The criterion it checks, by its number (1, 2…). Omit for the whole requirement.'),
         kind: z.enum(CASE_KINDS).optional().describe('Default: nominal'),
+        technique: z.enum(TECHNIQUES).optional().describe('The test design technique it comes from'),
+        priority: z.enum(PRIORITIES).optional(),
+        rationale: z.string().optional().describe('Why this case, in one sentence'),
+        gherkin: z.string().optional().describe('Its scenario: "Scenario: …" and its steps, with the project\'s phrases; a step no phrase covers in plain words'),
       })).min(1),
     },
     async ({ requirement, cases }) => {
       try {
-        return text(formatRequirement(planCases(requirement, cases)));
+        return text(formatRequirement(withResolution(planCases(requirement, cases))));
       } catch (err) {
         return text(err.message, true);
       }
@@ -102,7 +127,7 @@ export function registerRequirementTools(server) {
     { requirement: REQUIREMENT },
     async ({ requirement }) => {
       const found = getRequirement(requirement);
-      return found ? text(formatRequirement(found)) : text(`No requirement ${requirement}.`, true);
+      return found ? text(formatRequirement(withResolution(found))) : text(`No requirement ${requirement}.`, true);
     }
   );
 

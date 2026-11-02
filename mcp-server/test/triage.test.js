@@ -33,6 +33,7 @@ test('what a failure is, from its step and its error', () => {
   assert.equal(failureKind(check('element_exists'), 'false'), 'assertion_missing');
   assert.equal(failureKind(check('text_equals'), 'Mon avis'), 'assertion_value');
   assert.equal(failureKind(check('visual_match'), '3.2% diff'), 'visual');
+  assert.equal(failureKind(check('text_contains'), "Error: Cannot read properties of null (reading 'result')"), 'assertion_error');
 });
 
 test('the element found again: same name and role, under a new selector', () => {

@@ -6,7 +6,7 @@
 // checks it. Coverage is read from those links and from each test's last run.
 
 import { createHash } from 'node:crypto';
-import { db } from './db.js';
+import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 
 export const SOURCES = ['prompt', 'manual', 'jira', 'import'];
@@ -14,6 +14,10 @@ export const PRIORITIES = ['high', 'medium', 'low'];
 // The kinds of case a requirement is tested with: the expected path, another way through,
 // an error the app must handle, a value at the edge of what is allowed.
 export const CASE_KINDS = ['nominal', 'alternative', 'error', 'boundary'];
+// How a case was found (lib/requirement-design.js): the expected path and other ways through,
+// one value per class of inputs that behave the same, the values at a limit, the combinations
+// of conditions that change the result, the moves between states, what usually goes wrong.
+export const TECHNIQUES = ['use_case', 'equivalence_partitioning', 'boundary_values', 'decision_table', 'state_transition', 'error_guessing'];
 
 /** What makes two versions of a requirement the same: its title, description and criteria. */
 export function contentHash({ title, description, criteria }) {
@@ -112,17 +116,24 @@ export function coverageOf(criteria, cases) {
   };
 }
 
-/** A requirement with its criteria, its cases (their test and its last run) and its coverage. */
+/**
+ * A requirement with its criteria, its cases (their test and its last run) and its coverage —
+ * and the last test design proposed for it, stale once its content changed since.
+ */
 export function getRequirement(ref) {
   const row = rowOf(ref);
   if (!row) return null;
   const criteria = db.prepare('SELECT id, position, text FROM acceptance_criteria WHERE requirement_id = ? ORDER BY position').all(row.id);
   const cases = db.prepare(
-    `SELECT c.id, c.criterion_id, c.title, c.kind, c.position, t.name AS test, t.id AS test_id
+    `SELECT c.id, c.criterion_id, c.title, c.kind, c.technique, c.priority, c.rationale, c.gherkin, c.position, t.name AS test, t.id AS test_id
      FROM requirement_cases c LEFT JOIN tests t ON t.id = c.test_id
      WHERE c.requirement_id = ? ORDER BY c.position, c.id`
   ).all(row.id).map((c) => ({ ...c, last_run: c.test_id ? lastRunOf(c.test_id) : null }));
-  return { ...row, criteria, cases, coverage: coverageOf(criteria, cases) };
+  const design = parseJson(row.design);
+  return {
+    ...row, design, design_stale: !!design && design.content_hash !== row.content_hash,
+    criteria, cases, coverage: coverageOf(criteria, cases),
+  };
 }
 
 /** Requirements, newest first, each with its coverage: of a project, or all. */
@@ -142,21 +153,70 @@ function criterionOf(requirement, criterion) {
   return found;
 }
 
-/** Plan test cases for a requirement: what to test, for which criterion, which kind. Not tests yet. */
+/**
+ * A case's scenario as a whole feature, the way it is parsed and created from: given as a
+ * scenario alone (its steps, or "Scenario:" and its steps), it is put in a Feature named
+ * after the requirement, and a Scenario named after the case. Empty: null.
+ */
+export function scenarioFeature(gherkin, featureTitle, scenarioTitle) {
+  const text = gherkin?.trim();
+  if (!text) return null;
+  if (/^\s*Feature:/m.test(text)) return `${text}\n`;
+  const indent = (block, by) => block.split('\n').map((line) => (line.trim() ? `${by}${line.trim()}` : '')).join('\n');
+  const [, head, steps] = text.match(/^\s*(Scenario(?: Outline)?:.*)\n?([\s\S]*)$/m) ?? [null, `Scenario: ${scenarioTitle}`, text];
+  return `Feature: ${featureTitle}\n\n  ${head.trim()}\n${indent(steps, '    ')}\n`;
+}
+
+/** A case's fields checked: kind, technique, priority — what a planned case or an edit gives. */
+function caseFields(requirement, c) {
+  const kind = c.kind ?? 'nominal';
+  if (!CASE_KINDS.includes(kind)) throw new Error(`No such case kind: ${kind}`);
+  if (c.technique != null && !TECHNIQUES.includes(c.technique)) throw new Error(`No such technique: ${c.technique} (${TECHNIQUES.join(', ')})`);
+  if (c.priority != null && !PRIORITIES.includes(c.priority)) throw new Error(`No such priority: ${c.priority}`);
+  if (!c.title?.trim()) throw new Error('A case needs a title');
+  return {
+    title: c.title.trim(), kind, technique: c.technique ?? null, priority: c.priority ?? null,
+    rationale: c.rationale?.trim() || null, gherkin: scenarioFeature(c.gherkin, requirement.title, c.title.trim()),
+  };
+}
+
+/**
+ * Plan test cases for a requirement: what to test, for which criterion, which kind — and,
+ * designed (lib/requirement-design.js), with which technique, its priority, why, and its
+ * scenario in Gherkin. Not tests yet.
+ */
 export function planCases(ref, cases) {
   const requirement = getRequirement(ref);
   if (!requirement) throw new Error(`No requirement ${ref}`);
   const next = requirement.cases.reduce((max, c) => Math.max(max, c.position), 0);
-  const insert = db.prepare('INSERT INTO requirement_cases (requirement_id, criterion_id, title, kind, position) VALUES (?, ?, ?, ?, ?)');
+  const insert = db.prepare(`INSERT INTO requirement_cases (requirement_id, criterion_id, title, kind, technique, priority, rationale, gherkin, position)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   db.transaction(() => {
     cases.forEach((c, i) => {
-      const kind = c.kind ?? 'nominal';
-      if (!CASE_KINDS.includes(kind)) throw new Error(`No such case kind: ${kind}`);
-      if (!c.title?.trim()) throw new Error('A case needs a title');
-      insert.run(requirement.id, criterionOf(requirement, c.criterion)?.id ?? null, c.title.trim(), kind, next + i + 1);
+      const f = caseFields(requirement, c);
+      insert.run(requirement.id, criterionOf(requirement, c.criterion)?.id ?? null, f.title, f.kind, f.technique, f.priority, f.rationale, f.gherkin, next + i + 1);
     });
   })();
   return getRequirement(requirement.id);
+}
+
+/** Change a case: its title, kind, technique, priority, scenario — what `changes` gives. */
+export function updateCase(caseId, changes) {
+  const row = db.prepare('SELECT * FROM requirement_cases WHERE id = ?').get(caseId);
+  if (!row) throw new Error(`No case #${caseId}`);
+  const requirement = getRequirement(row.requirement_id);
+  const f = caseFields(requirement, { ...row, ...changes, title: changes.title ?? row.title });
+  db.prepare('UPDATE requirement_cases SET title = ?, kind = ?, technique = ?, priority = ?, rationale = ?, gherkin = ? WHERE id = ?')
+    .run(f.title, f.kind, f.technique, f.priority, f.rationale, f.gherkin, row.id);
+  return getRequirement(row.requirement_id);
+}
+
+/** Keep the test design an agent proposed for a requirement (null: none any more). */
+export function saveDesign(ref, design) {
+  const row = rowOf(ref);
+  if (!row) throw new Error(`No requirement ${ref}`);
+  db.prepare('UPDATE requirements SET design = ? WHERE id = ?').run(design ? JSON.stringify(design) : null, row.id);
+  return getRequirement(row.id);
 }
 
 /**
@@ -196,6 +256,19 @@ export function deleteCase(caseId) {
   return getRequirement(row.requirement_id);
 }
 
+/**
+ * Whether an assertion that failed is kept as a non-conformity: the agent says so, the test
+ * checks a requirement, and the element is there — not found, it is a wrong selector, the
+ * test's mistake. A click that missed its button leaves the page as it was: the agent says
+ * so only once it checked the steps before did what they should.
+ */
+export function nonConformityOf(testName, result, claimed) {
+  const requirements = requirementsOfTest(testName);
+  // Not found, or not evaluated at all ("Error: …"): nothing says what the page shows.
+  const elementFound = !/not found|^Error: /i.test(String(result.actual ?? ''));
+  return { requirements, elementFound, nonConformity: !result.passed && claimed === true && requirements.length > 0 && elementFound };
+}
+
 /** What a test checks: each requirement it is linked to, with the criteria it covers there. */
 export function requirementsOfTest(testName) {
   const rows = db.prepare(
@@ -226,6 +299,16 @@ export function linkRecorded(recording) {
 
 const STATUS_LABELS = { passing: 'passing', failing: 'FAILING', not_run: 'not run yet', not_covered: 'not covered' };
 
+/** What a planned case's scenario lets the agent do: create the test from it, or record the steps no phrase covers. */
+function plannedScenario(c) {
+  if (!c.gherkin) return '';
+  const r = c.resolution;
+  if (!r) return ', scenario written';
+  if (r.error) return `, scenario does not parse: ${r.error}`;
+  return r.ready ? ', scenario ready: create_test_from_gherkin'
+    : `, scenario has ${r.unresolved.length} step(s) no phrase covers (${r.unresolved.map((u) => `"${u}"`).join(', ')}): record it`;
+}
+
 /** A requirement as the agent reads it: criteria, the cases of each, coverage. */
 export function formatRequirement(requirement) {
   const { coverage } = requirement;
@@ -234,7 +317,8 @@ export function formatRequirement(requirement) {
     `Coverage: ${STATUS_LABELS[coverage.status]} — ${coverage.criteria ? `${coverage.covered}/${coverage.criteria} criteria covered, ` : ''}${coverage.tests} test(s)${coverage.planned ? `, ${coverage.planned} case(s) planned, not recorded yet` : ''}`,
   ];
   if (requirement.description) lines.push(`  ${requirement.description.split('\n').join('\n  ')}`);
-  const caseLine = (c) => `      case #${c.id} (${c.kind}) ${c.title}: ${c.test ? `test "${c.test}" — ${c.last_run ? c.last_run.status : 'never run'}` : 'planned'}`;
+  const caseLine = (c) => `      case #${c.id} (${[c.kind, c.technique, c.priority].filter(Boolean).join(', ')}) ${c.title}: `
+    + (c.test ? `test "${c.test}" — ${c.last_run ? c.last_run.status : 'never run'}` : `planned${plannedScenario(c)}`);
   for (const criterion of requirement.criteria) {
     lines.push(`  ${criterion.position}. ${criterion.text}`);
     for (const c of requirement.cases.filter((x) => x.criterion_id === criterion.id)) lines.push(caseLine(c));

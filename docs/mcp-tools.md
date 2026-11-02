@@ -104,7 +104,8 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
 | `save_requirement` | Saves a requirement — from a request, written by hand, or a Jira story — with its acceptance criteria (see below). |
-| `plan_tests` | Plans a requirement's test cases: per criterion, nominal, alternative, error, boundary. |
+| `design_tests` | Lays out how to design a requirement's tests: its criteria, its cases, the app, the project's Gherkin phrases, and the method — review, what is left unsaid, scenarios by test technique (see below). |
+| `plan_tests` | Plans a requirement's test cases: per criterion, nominal, alternative, error, boundary — with their technique, priority and scenario in Gherkin; says which scenarios are ready and which have steps to record. |
 | `link_test` | Links a saved test to a requirement: to a planned case, a criterion, or the whole requirement. |
 | `get_requirement` / `list_requirements` | A requirement with its criteria, cases, tests and coverage; or all of them with their coverage. |
 | `list_repairs` | Lists the repairs proposed for failed runs, and where each stands. |
@@ -359,7 +360,7 @@ Chaque type d'assertion se rejoue, s'exporte en Playwright et a sa phrase Gherki
 
 | Type | Playwright | Gherkin |
 | :--- | :--- | :--- |
-| `text_contains` / `text_not_contains` | `toContainText` / `not.toContainText` | `"…" should contain "…"` / `should not contain` |
+| `text_contains` / `text_not_contains` | `toContainText` / `not.toContainText` | `"…" should contain "…"` / `should not contain` ; sans sélecteur, `I should see "…"` |
 | `text_equals` | `toHaveText` | `"…" should have text "…"` |
 | `attribute_equals` | `toHaveAttribute` ; `toHaveValue` pour `value` | `the "href" of "…" should be "…"` |
 | `element_count` | `toHaveCount` | `"…" should match 2 elements` |
@@ -371,6 +372,9 @@ Chaque type d'assertion se rejoue, s'exporte en Playwright et a sa phrase Gherki
 | `no_failed_requests` | réponses ≥ 400 et requêtes en échec collectées, puis `toEqual([])` | `no request to "…" should fail` |
 | `link_ok` | `page.request.get(href)`, statut < 400 | `the link "…" should work` |
 | `no_a11y_violations` | `@axe-core/playwright` : `new AxeBuilder({ page }).withRules([…])` | `the page should not break the accessibility rule "…"` |
+
+Sans sélecteur (`I should see "…"`), `text_contains` vérifie tout le texte de la page, dans `body`, au
+rejeu comme à l'export ; en échec, il en donne un extrait plutôt que la page entière.
 
 Pour `attribute_equals`, l'attribut `value` d'un champ est ce qu'il contient au moment du contrôle,
 comme le lit `toHaveValue` : l'attribut HTML n'est que la valeur de départ (absent d'un champ rempli
@@ -425,7 +429,7 @@ les testent. Le même objet, d'où qu'elle vienne :
 | :--- | :--- |
 | Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré. |
 | Un outil (une story Jira) | l'agent la lit (par exemple avec un serveur MCP Atlassian) et la garde : `source: "jira"`, sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |
-| Un testeur | page **Requirements** du tableau de bord : écrire l'exigence et ses critères, planifier des cas, y lier des tests. |
+| Un testeur | page **Requirements** du tableau de bord : écrire l'exigence et ses critères, demander des scénarios (« Propose scenarios »), planifier des cas, y lier des tests. |
 
 Un cas est d'abord **planifié** (`plan_tests` : son titre, le critère qu'il vérifie, son type —
 `nominal`, `alternative`, `error`, `boundary`), puis enregistré : `start_recording(requirement, case_id)`
@@ -448,6 +452,46 @@ l'affaire du test.
 À l'export, les exigences d'un test deviennent des étiquettes : `test('…', { tag: ['@REQ-1'] }, …)`
 en Playwright (`npx playwright test --grep @REQ-1`), `@REQ-1` sur la feature Cucumber
 (`cucumber-js --tags @REQ-1`), avec un commentaire qui dit le critère vérifié.
+
+#### Concevoir les tests d'une exigence : `design_tests`
+
+Une seule méthode, quel que soit l'agent qui l'applique. IziTest ne raisonne pas : il expose
+l'exigence, ses cas déjà là, l'appli (le projet, son adresse, ses notes) et les **phrases Gherkin du
+projet** — en disant, pour chacune, quel argument est un sélecteur CSS, et lesquelles sont des étapes
+métier —, puis les règles :
+
+1. **Revue de testabilité** : un critère se teste quand il dit ce qu'on fait et ce qu'on voit ensuite,
+   avec ses valeurs. Un mot vague (« rapide », « simple »), un résultat absent, une valeur manquante :
+   le critère est signalé, avec la question à poser à son auteur et une reformulation.
+2. **Ce que l'exigence ne dit pas** mais que sa portée implique (un champ vide, une valeur hors
+   limite) : des critères à ajouter.
+3. **Les scénarios**, critère par critère, avec une technique : `use_case` (chemin attendu et
+   variantes), `equivalence_partitioning`, `boundary_values`, `decision_table`, `state_transition`,
+   `error_guessing`. Un scénario vérifie un critère, avec des valeurs concrètes, et une priorité.
+4. **Le résultat attendu vient de l'exigence.** Là où elle ne le dit pas, il n'y a pas de scénario à
+   écrire : c'est une question.
+5. **Les étapes en Gherkin**, avec les phrases du projet mot pour mot. Jamais de sélecteur deviné :
+   les phrases qui n'en demandent pas (`I am on`, `I click on the text`, `I should see`) et les étapes
+   métier d'abord ; une étape qu'aucune phrase ne couvre est écrite en clair.
+
+Chaque scénario est résolu contre les phrases du projet : **prêt** quand toutes ses étapes le sont —
+le test se crée tel quel (`create_test_from_gherkin(…, requirement, case_id)`) —, sinon ses étapes en
+clair sont **à enregistrer** : un agent les suit dans le navigateur (`start_recording(requirement,
+case_id)`).
+
+- **En MCP**, l'agent du dev lit `design_tests(requirement)`, montre la revue et les scénarios à
+  l'utilisateur, puis garde ce qu'il retient : `save_requirement` pour les critères reformulés,
+  `plan_tests` pour les scénarios (`technique`, `priority`, `rationale`, `gherkin`).
+- **Dans le tableau de bord**, « Propose scenarios » envoie la même méthode à l'agent réglé dans
+  Settings (un modèle par l'API, ou un CLI lancé une fois avec `-p`, sans outils), qui répond en JSON.
+  La proposition est gardée sur l'exigence : la revue s'affiche sous chaque critère concerné (avec
+  « Use this wording »), ce qui manque sous les critères (« Add as a criterion »), et les scénarios à
+  cocher, groupés par critère. « Plan » en fait des cas planifiés, rattachés à leur critère par son
+  texte. Si l'exigence change ensuite, la proposition est marquée comme faite pour une version
+  antérieure.
+- **Un cas planifié** se crée depuis son scénario (« Create » : le modal Gherkin, prérempli, lie le
+  test au cas) ou s'enregistre (« Record » : l'agent reçoit les critères, le scénario à suivre, et la
+  règle des non-conformités). « Scenario » ouvre son Gherkin : modifié, il est revérifié.
 
 ### Exploration autonome : `explore_app`
 

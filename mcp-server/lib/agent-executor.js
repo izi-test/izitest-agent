@@ -30,7 +30,7 @@ import { classifyWithLLM, detectListContext } from './classify.js';
 import { uniqueVarName, listVariable, variabilizeInput } from './variable-detection.js';
 import { linkAssertionToVariables } from './test-variable.js';
 import { loadTest, saveTest } from './test-store.js';
-import { linkRecorded } from './requirements.js';
+import { linkRecorded, nonConformityOf } from './requirements.js';
 import { evaluateAssertion } from './test-execute.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
@@ -625,7 +625,7 @@ function buildTools(sendCommand) {
     }),
 
     add_assertion: tool({
-      description: 'Add an assertion to a saved test. Evaluates live first — only passes are saved.',
+      description: 'Add an assertion to a saved test. Evaluates live first — only passes are saved, except on a test linked to a requirement: the expected result it states, when the element is there but shows something else, with non_conformity: true — the test then reports that non-conformity.',
       inputSchema: z.object({
         test_name: z.string(),
         assertion_type: z.enum([
@@ -638,8 +638,9 @@ function buildTools(sendCommand) {
         attribute: z.string().optional(),
         description: z.string().optional(),
         step_order: z.number().optional(),
+        non_conformity: z.boolean().optional().describe('The expected value is the requirement\'s, the page does not show it, and you checked the steps before did what they should'),
       }),
-      execute: async ({ test_name, assertion_type, selector, expected, attribute, description, step_order }) => {
+      execute: async ({ test_name, assertion_type, selector, expected, attribute, description, step_order, non_conformity }) => {
         const assertion = { type: assertion_type };
         if (selector) assertion.selector = selector;
         if (expected !== undefined) assertion.expected = expected;
@@ -658,8 +659,13 @@ function buildTools(sendCommand) {
         try { result = await evaluateAssertion(sendCommand, assertion); }
         catch (err) { return `Assertion evaluation error: ${err.message}. NOT added.`; }
 
-        if (!result.passed) {
-          return `Assertion FAILED — NOT added.\n  Type: ${assertion_type}\n  Expected: ${result.expected}\n  Actual: ${result.actual}\nFix and try again.`;
+        // The requirement's expected result, which the page does not meet, is kept failing (lib/requirements.js).
+        const { requirements, elementFound, nonConformity } = nonConformityOf(test_name, result, non_conformity);
+        if (!result.passed && !nonConformity) {
+          const hint = requirements.length && elementFound
+            ? `\nThis test checks ${requirements.map((r) => r.key).join(', ')}: if the expected value is the requirement's and the steps before did what they should, call again with non_conformity: true.`
+            : '';
+          return `Assertion FAILED — NOT added.\n  Type: ${assertion_type}\n  Expected: ${result.expected}\n  Actual: ${result.actual}\nFix and try again.${hint}`;
         }
 
         // Checked against what the test typed: replayed with other values, it checks those.
@@ -676,7 +682,9 @@ function buildTools(sendCommand) {
         saveTest(test);
         const link = (linked.length ? `\n  Linked to ${linked.map(n => `{{${n}}}`).join(', ')}: saved as "${saved.expected}".` : '') +
           ambiguous.map(({ name, value, found }) => `\n  Not linked to {{${name}}}: "${value}" is found ${found} times in the expected text.`).join('');
-        return `Assertion PASSED and added at step ${step_order || test.steps.length}.\n  Expected: ${result.expected}\n  Actual: ${result.actual}${link}`;
+        const head = result.passed ? 'Assertion PASSED and added'
+          : `Assertion FAILS now — the app does not meet ${requirements.map((r) => r.key).join(', ')} — and was added`;
+        return `${head} at step ${step_order || test.steps.length}.\n  Expected: ${result.expected}\n  Actual: ${result.actual}${link}`;
       },
     }),
   };
