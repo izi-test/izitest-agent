@@ -5,6 +5,7 @@ import { useGetAgentConfigQuery, useUpdateAgentConfigMutation, useTestAgentMutat
 import type { AgentConfig } from '../store/services/settingsApi';
 import { Button } from './Button';
 import { JiraSettings } from './JiraSettings';
+import { XraySettings } from './XraySettings';
 import { ArrowLeft, Save, Play, Check, X, Terminal, Cloud, Search } from 'lucide-react';
 
 const CLI_PROVIDERS = [
@@ -344,6 +345,7 @@ export function Settings({ onBack }: SettingsProps) {
       </div>
 
       <JiraSettings />
+      <XraySettings />
     </section>
   );
 }

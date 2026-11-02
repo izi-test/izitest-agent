@@ -349,6 +349,17 @@ export function initDatabase() {
     log(`Migration warning (campaigns): ${err.message}`);
   }
 
+  // Xray and Jira (lib/xray.js, lib/jira.js): the Test Execution a campaign was sent to, and the
+  // comment IziTest keeps on a story — sent again, they are updated, not repeated.
+  try {
+    const campaignCols = db.prepare('PRAGMA table_info(campaigns)').all().map(c => c.name);
+    if (!campaignCols.includes('xray_execution_key')) db.exec('ALTER TABLE campaigns ADD COLUMN xray_execution_key TEXT DEFAULT NULL');
+    const requirementCols = db.prepare('PRAGMA table_info(requirements)').all().map(c => c.name);
+    if (!requirementCols.includes('jira_comment_id')) db.exec('ALTER TABLE requirements ADD COLUMN jira_comment_id TEXT DEFAULT NULL');
+  } catch (err) {
+    log(`Migration warning (Xray, Jira comments): ${err.message}`);
+  }
+
   log('SQLite database initialized');
 }
 

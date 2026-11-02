@@ -26,7 +26,8 @@ import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
 import { designTests, planDesigned, withResolution, recordingBrief } from './requirement-design.js';
 import { importRequirements } from './requirement-import.js';
-import { jiraConfig, maskedJiraConfig, saveJiraConfig, siteOf, jiraClient, testJira, jiraProjects, importFromJira } from './jira.js';
+import { jiraConfig, maskedJiraConfig, saveJiraConfig, siteOf, jiraClient, testJira, jiraProjects, importFromJira, commentOnJira } from './jira.js';
+import { xrayConfig, maskedXrayConfig, saveXrayConfig, xrayClient, testXray, exportToXray } from './xray.js';
 import { complete, agentName } from './agent/complete.js';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport } from './campaigns.js';
 import { generateTestCode } from './codegen/index.js';
@@ -500,6 +501,45 @@ export async function apiRouter(req, res, url) {
       }
     }
 
+    // POST /api/jira/comments — { keys | campaign_id, dry_run }: each story's coverage as IziTest's comment on it, posted unless dry_run
+    if (method === 'POST' && path === '/api/jira/comments') {
+      const body = await readBody(req);
+      try {
+        const result = await commentOnJira({
+          keys: Array.isArray(body.keys) ? body.keys : [], campaignId: body.campaign_id ?? null, dryRun: body.dry_run !== false,
+        });
+        return json(res, 200, { comments: result });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // ── Xray (lib/xray.js): the API key, and a campaign's results sent as a Test Execution ──
+
+    // GET | PUT /api/settings/xray — { clientId, clientSecret }: the secret masked when read, kept when given masked
+    if (path === '/api/settings/xray' && (method === 'GET' || method === 'PUT')) {
+      if (method === 'GET') return json(res, 200, { xray: maskedXrayConfig() });
+      const body = await readBody(req);
+      try {
+        return json(res, 200, { xray: saveXrayConfig(body) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/settings/xray/test — { clientId, clientSecret } (a secret given masked: the one saved): whether Xray takes it
+    if (method === 'POST' && path === '/api/settings/xray/test') {
+      const body = await readBody(req);
+      try {
+        const config = body.clientId
+          ? { clientId: body.clientId.trim(), clientSecret: body.clientSecret?.includes('•') ? xrayConfig()?.clientSecret : body.clientSecret }
+          : xrayConfig();
+        return json(res, 200, { success: true, ...(await testXray(xrayClient(config))) });
+      } catch (err) {
+        return json(res, 200, { success: false, error: err.message });
+      }
+    }
+
     // GET /api/tests/:name/requirements — what the test checks
     params = matchRoute(path, '/api/tests/:name/requirements');
     if (method === 'GET' && params) {
@@ -646,6 +686,20 @@ export async function apiRouter(req, res, url) {
     if (method === 'POST' && params) {
       try {
         return json(res, 200, { campaign: stopCampaign(params.id) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/campaigns/:id/xray — { project_key, test_plan_key, dry_run }: its results as a Test Execution of Xray, sent unless dry_run
+    params = matchRoute(path, '/api/campaigns/:id/xray');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      try {
+        const result = await exportToXray(params.id, {
+          projectKey: body.project_key || null, testPlanKey: body.test_plan_key || null, dryRun: body.dry_run !== false,
+        });
+        return json(res, 200, { xray: result });
       } catch (err) {
         return json(res, 400, { error: err.message });
       }

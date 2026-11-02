@@ -304,6 +304,26 @@ export interface Campaign {
   requirements: CampaignRequirement[];
   non_conformities: string[];
   runs: CampaignRun[];
+  /** The Test Execution of Xray its results were sent to. */
+  xray_execution_key: string | null;
+}
+
+/** A campaign's results as sent (or to be sent) to Xray (mcp-server/lib/xray.js). */
+export interface XrayExport {
+  sent: boolean;
+  project: string;
+  /** The Test Execution: updated when it was sent before. */
+  execution: string | null;
+  updates: boolean;
+  url?: string | null;
+  tests: Array<{ name: string; status: string; stories: string[] }>;
+}
+
+/** Each story's coverage as IziTest's comment on it in Jira, to post or posted (mcp-server/lib/jira.js). */
+export interface JiraComments {
+  sent: boolean;
+  comments: Array<{ key: string; action: 'add' | 'update' | 'added' | 'updated'; status: string; text: string; url?: string; error?: string }>;
+  warnings: string[];
 }
 
 /** A campaign as listed: without its runs and requirements, with what failed. */

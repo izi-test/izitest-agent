@@ -3,9 +3,9 @@ import { Check, X, Play, Save } from 'lucide-react';
 import { useGetJiraConfigQuery, useUpdateJiraConfigMutation, useTestJiraMutation, type JiraConfig } from '../store/services/settingsApi';
 import { Button } from './Button';
 
-// The Jira site requirements are read from (mcp-server/lib/jira.js): its address, the email of
-// the account to read as, and an API token of that account — kept on this machine, the token
-// never shown back. Tested before it is relied on.
+// The Jira site requirements are read from, and coverage is commented on (mcp-server/lib/jira.js):
+// its address, the email of the account to act as, and an API token of that account — kept on
+// this machine, the token never shown back. Tested before it is relied on.
 
 export function JiraSettings() {
   const { data: saved, isLoading } = useGetJiraConfigQuery();
@@ -43,7 +43,7 @@ function JiraForm({ saved }: { saved: JiraConfig | null }) {
       <h2 className="settings-title">Jira</h2>
       <p className="settings-desc">
         The Jira site requirements are read from: its stories, by a JQL query or their keys (Requirements → Import → Jira, or
-        import_from_jira). Nothing is written to Jira.
+        import_from_jira). Written to only when asked, after a preview: a campaign's results as a comment on each story it checks.
         {saved?.from === 'env' && ' Set now by JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN; saved here, these come first.'}
       </p>
       <div className="settings-card">

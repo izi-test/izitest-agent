@@ -9,13 +9,15 @@ import { useGetTestsQuery } from '../store/services/testsApi';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
 import { useAppSelector } from '../store/hooks';
 import { Button } from './Button';
+import { CampaignWriteBack } from './CampaignWriteBack';
 import { CAUSE_LABELS } from '../triage-labels';
 import type { Campaign, CampaignSummary, CampaignTestStatus } from '../types';
 
 // Campaigns: tests replayed together for a version of the app (mcp-server/lib/campaigns.js) —
 // a project's, a requirement's, or a chosen list —, a few at a time, each in its own window.
 // The report says what failed and why, what regressed since the last campaign of the same
-// tests, and where each requirement stands; it downloads as JUnit for a CI, or opens as HTML.
+// tests, and where each requirement stands; it downloads as JUnit for a CI, or opens as HTML,
+// and is sent to Xray and to the Jira stories it checks (CampaignWriteBack).
 
 const STATUS_ORDER: CampaignTestStatus[] = ['passed', 'failed', 'error', 'running', 'pending', 'skipped'];
 const STATUS_LABELS: Record<Campaign['status'], string> = { running: 'Running', done: 'Done', stopped: 'Stopped', interrupted: 'Interrupted' };
@@ -238,6 +240,8 @@ export function CampaignPage({ id, onBack, onOpen, onOpenTest, onOpenRequirement
           {!c.running && <Button size="sm" variant="danger" icon={Trash2} onClick={destroy}>Delete</Button>}
         </div>
       </div>
+
+      <CampaignWriteBack campaign={c} />
 
       {c.non_conformities.length > 0 && (
         <div className="dash-panel">

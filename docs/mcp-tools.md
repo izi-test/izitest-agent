@@ -120,6 +120,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `save_requirement` | Saves a requirement — from a request, written by hand, or a Jira story — with its acceptance criteria (see below). |
 | `import_requirements` | Imports requirements from a file — CSV, TSV, Excel, a Jira CSV export, JSON, Markdown —, a dry run first (see below). |
 | `import_from_jira` | Reads stories from the Jira site set in the dashboard — a JQL query, their keys, or again (`sync`) — as requirements, a dry run first. |
+| `comment_on_jira` | Writes each Jira story's coverage — a campaign's stories, or those of their keys — as IziTest's comment on it, updated after; a dry run first (see below). |
 | `design_tests` | Lays out how to design a requirement's tests: its criteria, its cases, the app, the project's Gherkin phrases, and the method — review, what is left unsaid, scenarios by test technique (see below). |
 | `plan_tests` | Plans a requirement's test cases: per criterion, nominal, alternative, error, boundary — with their technique, priority and scenario in Gherkin; says which scenarios are ready and which have steps to record. |
 | `link_test` | Links a saved test to a requirement: to a planned case, a criterion, or the whole requirement. |
@@ -129,6 +130,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `resolve_repair` | Applies a repair to the saved test, or rejects it — on the user's word. |
 | `run_campaign` | Replays a project's tests, a requirement's or a list together, for a version of the app, and answers with the report (see below). |
 | `get_campaign` / `list_campaigns` / `stop_campaign` | A campaign's report; the campaigns, newest first; stop one that runs. |
+| `export_to_xray` | Sends a campaign's results to Xray as a Test Execution, each test a Generic test linked to the stories it covers; a dry run first (see below). |
 | `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
@@ -538,7 +540,8 @@ Le site se règle dans le tableau de bord (**Settings → Jira**) : son adresse
 (`https://votre-equipe.atlassian.net`), l'email du compte, et un jeton d'API de ce compte (créé sur
 id.atlassian.com → Security → API tokens). Il est gardé sur la machine, et jamais réaffiché : le tableau de
 bord le montre masqué. « Test the connection » dit sous quel compte IziTest lit. À défaut, `JIRA_BASE_URL`,
-`JIRA_EMAIL` et `JIRA_API_TOKEN` en tiennent lieu. **Rien n'est écrit dans Jira.**
+`JIRA_EMAIL` et `JIRA_API_TOKEN` en tiennent lieu. La lecture n'écrit rien dans Jira ; seuls les
+commentaires de couverture (`comment_on_jira`, plus bas) y écrivent, et seulement quand on le demande.
 
 `import_from_jira` lit, par l'API REST v3 de Jira Cloud (la recherche JQL « enhanced », page après page,
 500 stories au plus) :
@@ -556,6 +559,20 @@ une story modifiée depuis, qui a des tests liés, est signalée. Dans le tablea
 → Import → From Jira**, avec les projets du site pour partir d'une requête (choisir un projet propose ses
 stories, `issuetype = Story` ; sans type Story, ses tickets sauf les sous-tâches), et « Check the
 imported ones for changes ».
+
+#### Dire à Jira où en est chaque story : `comment_on_jira`
+
+`comment_on_jira` écrit sur chaque story, en commentaire, où elle en est dans IziTest : sa couverture
+(`passing`, `failing`, `not run`, `not covered`), chacun de ses critères avec ses tests et leur dernier
+résultat (`✓`, `✗`, `○` sans test), la campagne d'où ça vient, et quand. Pour les stories de `keys`, ou
+celles que vérifient les tests d'une campagne (`campaign_id` : ses exigences importées de Jira, les
+autres laissées de côté). **Un commentaire par story**, celui d'IziTest : envoyé à nouveau, il est mis à
+jour, pas répété ; supprimé dans Jira entre-temps, un nouveau le remplace.
+
+C'est d'abord un **essai** (`dry_run`, par défaut) qui montre chaque commentaire : l'agent le montre à
+l'utilisateur et lui demande avant de rappeler avec `dry_run: false`. Une story que Jira refuse (supprimée,
+ce compte n'y a pas droit) est dite, les autres sont commentées. Dans le tableau de bord : le rapport d'une
+campagne, **Jira and Xray → Comment on the Jira stories…**, aperçu puis « Post ».
 
 #### Concevoir les tests d'une exigence : `design_tests`
 
@@ -632,6 +649,34 @@ IZITEST_TOKEN=… node mcp-server/bin/campaign.js --project 3 --version 1.4.0 --
 du triage est le `type` de chaque `failure`, et les exigences d'un test sont ses `property
 name="requirement"`. Une campagne laissée en cours par un serveur arrêté est marquée `interrupted` au
 redémarrage.
+
+#### Envoyer une campagne à Xray : `export_to_xray`
+
+La clé d'API de Xray se règle dans le tableau de bord (**Settings → Xray**) : son client id et son secret,
+créés dans Jira → Apps → Xray → API Keys (par un administrateur). Le secret est gardé sur la machine et
+jamais réaffiché ; « Test the API key » vérifie que Xray la prend. À défaut, `XRAY_CLIENT_ID` et
+`XRAY_CLIENT_SECRET` en tiennent lieu ; `XRAY_BASE_URL` désigne un Xray régional
+(`https://eu.xray.cloud.getxray.app`).
+
+`export_to_xray(id)` envoie les résultats d'une campagne terminée, par l'import JSON de Xray Cloud
+(`/api/v2/import/execution`) :
+- une **Test Execution** dans le projet Jira `project_key` — par défaut celui des stories que couvrent ses
+  tests, quand elles sont toutes d'un même projet —, ajoutée au Test Plan `test_plan_key` s'il est donné ;
+  son résumé est « IziTest — <campagne> (<version>) », sa description les totaux, les régressions, les
+  non-conformités ;
+- chaque test d'IziTest est un **test Generic** de Xray, créé au premier envoi puis retrouvé par sa
+  définition `izitest:<nom>`, libellé `izitest`, **lié aux stories qu'il couvre** (ses exigences importées
+  de Jira) : Xray en montre la couverture ;
+- son résultat : `PASSED`, `FAILED` avec l'étape, l'erreur et le triage en commentaire, ou `TODO` s'il n'a
+  pas tourné ; ses heures de début et de fin.
+
+Envoyée à nouveau, la campagne **met à jour sa Test Execution** (sa clé est gardée) : ses résultats, pas
+ses champs (Xray peut ne pas avoir le droit de réécrire ses dates, sur un projet « team-managed »), et
+les mêmes tests, retrouvés par leur définition ; supprimée dans Jira entre-temps, une nouvelle est créée. C'est d'abord un **essai** (`dry_run`, par défaut) qui dit ce
+qui serait envoyé : l'agent le montre et demande avant d'envoyer. Dans le tableau de bord : le rapport
+d'une campagne, **Jira and Xray → Send to Xray…** (le projet et le Test Plan, l'aperçu, puis l'envoi), et
+la Test Execution une fois envoyée. Xray demande un projet où ses types de tickets (Test, Test Execution)
+sont activés ; sur un projet « team-managed », passer d'abord par sa configuration Xray.
 
 ### Exploration autonome : `explore_app`
 

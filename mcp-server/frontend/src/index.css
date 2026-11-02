@@ -3428,3 +3428,17 @@ body {
 .campaign-table td:first-child { white-space: nowrap; }
 .campaign-error { color: var(--text); word-break: break-word; }
 .campaign-why { margin-top: 2px; color: var(--text-muted); word-break: break-word; }
+
+/* A campaign written back to Xray and Jira (CampaignWriteBack) */
+.writeback-panel { margin-top: 12px; }
+.writeback-fields { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.writeback-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-muted); }
+.writeback-fields input {
+  width: 170px; padding: 5px 8px; background: var(--bg-tertiary); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px;
+}
+.writeback-comment { white-space: pre-wrap; font-size: 12px; margin: 8px 0 0; padding: 8px 10px; background: var(--bg-tertiary); border-radius: var(--radius-sm); }
+.xray-status { font-size: 11px; font-weight: 600; letter-spacing: .03em; }
+.xray-status--passed { color: var(--green); }
+.xray-status--failed { color: var(--red); }
+.xray-status--todo { color: var(--text-muted); }

@@ -41,10 +41,17 @@ export interface JiraConfig {
   from?: 'settings' | 'env';
 }
 
+/** The Xray API key campaigns are sent with (mcp-server/lib/xray.js): its secret comes back masked. */
+export interface XrayConfig {
+  clientId: string;
+  clientSecret: string;
+  from?: 'settings' | 'env';
+}
+
 export const settingsApi = createApi({
   reducerPath: 'settingsApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
-  tagTypes: ['AgentConfig', 'JiraConfig'],
+  tagTypes: ['AgentConfig', 'JiraConfig', 'XrayConfig'],
   endpoints: (builder) => ({
 
     getAgentConfig: builder.query<AgentConfig, void>({
@@ -81,6 +88,21 @@ export const settingsApi = createApi({
       query: (body) => ({ url: 'api/settings/jira/test', method: 'POST', body }),
     }),
 
+    getXrayConfig: builder.query<XrayConfig | null, void>({
+      query: () => 'api/settings/xray',
+      transformResponse: (response: { xray: XrayConfig | null }) => response.xray,
+      providesTags: ['XrayConfig'],
+    }),
+
+    updateXrayConfig: builder.mutation<{ xray: XrayConfig | null }, XrayConfig>({
+      query: (body) => ({ url: 'api/settings/xray', method: 'PUT', body }),
+      invalidatesTags: ['XrayConfig'],
+    }),
+
+    testXray: builder.mutation<{ success: boolean; url?: string; error?: string }, Partial<XrayConfig>>({
+      query: (body) => ({ url: 'api/settings/xray/test', method: 'POST', body }),
+    }),
+
     getModels: builder.query<OpenRouterModel[], void>({
       query: () => 'api/models',
       transformResponse: (response: { models: OpenRouterModel[] }) => response.models,
@@ -97,4 +119,7 @@ export const {
   useGetJiraConfigQuery,
   useUpdateJiraConfigMutation,
   useTestJiraMutation,
+  useGetXrayConfigQuery,
+  useUpdateXrayConfigMutation,
+  useTestXrayMutation,
 } = settingsApi;

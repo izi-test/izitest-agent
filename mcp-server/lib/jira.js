@@ -2,7 +2,8 @@
 // into the records IziTest keeps (lib/requirement-import.js): key, summary, description,
 // acceptance criteria (a field of their own, or the list under "Acceptance criteria" in the
 // description), priority, link. Read again, a story changed since is told, with its tests to
-// check. Nothing is written to Jira here.
+// check. Written to Jira only when asked, and once tried as a dry run: a story's coverage, as a
+// comment of IziTest's — one a story, updated after.
 //
 // The site, the account's email and an API token of that account are set in the dashboard
 // (Settings → Jira), else read from JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN.
@@ -10,6 +11,8 @@
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 import { applyImport, splitCriteria, priorityOf, fold } from './requirement-import.js';
+import { getRequirement } from './requirements.js';
+import { getCampaign } from './campaigns.js';
 
 const KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
 const MAX_ISSUES = 500;
@@ -25,7 +28,8 @@ export function jiraConfig() {
   return baseUrl && email && apiToken ? { baseUrl: baseUrl.replace(/\/+$/, ''), email, apiToken, from: 'env' } : null;
 }
 
-const mask = (token) => (token.length > 8 ? `${token.slice(0, 4)}${'•'.repeat(token.length - 8)}${token.slice(-4)}` : '••••••••');
+/** A secret as the dashboard is shown it: its ends, the rest dots. */
+export const mask = (token) => (token.length > 8 ? `${token.slice(0, 4)}${'•'.repeat(token.length - 8)}${token.slice(-4)}` : '••••••••');
 
 /** The connection as the dashboard shows it: the token masked. */
 export function maskedJiraConfig() {
@@ -96,7 +100,9 @@ export function jiraClient(config = jiraConfig(), { fetch = globalThis.fetch } =
     }
     return data;
   };
-  return { baseUrl: config.baseUrl, get: (path) => call('GET', path), post: (path, body) => call('POST', path, body) };
+  return {
+    baseUrl: config.baseUrl, get: (path) => call('GET', path), post: (path, body) => call('POST', path, body), put: (path, body) => call('PUT', path, body),
+  };
 }
 
 /** Whether the connection works: who it reads as. */
@@ -238,4 +244,108 @@ export async function importFromJira({ jql, keys, sync = false, projectId = null
   log(`Jira: ${issues.length} issue(s) read${jql ? ` for "${jql}"` : ''}`);
   const requirements = issues.map((issue) => requirementOfIssue(issue, { baseUrl: client.baseUrl, criteriaFieldIds: fieldIds }));
   return applyImport(requirements, { format: 'jira', warnings, projectId, dryRun });
+}
+
+// ─── Writing back: a story's coverage, as a comment ─────────────────
+
+const COVERAGE_LABELS = { passing: '✅ Passing', failing: '❌ Failing', not_run: '⏳ Not run yet', not_covered: '⚠️ Not covered' };
+
+/** How a test did last, in words: "passed (2026-11-02)", "failed (…)", "not run yet". */
+function lastResult(c) {
+  const status = c.last_run?.status;
+  if (!status) return 'not run yet';
+  const word = status === 'success' ? 'passed' : status;
+  return c.last_run.started_at ? `${word} (${c.last_run.started_at.slice(0, 10)})` : word;
+}
+
+/**
+ * A story's coverage as IziTest has it, as an Atlassian document: where it stands, each of
+ * its criteria with the tests of it and how they did last, the campaign it comes from, when.
+ */
+export function coverageComment(requirement, { campaign = null, now = new Date() } = {}) {
+  const t = (text, marks) => ({ type: 'text', text, ...(marks ? { marks: marks.map((type) => ({ type })) } : {}) });
+  const p = (...content) => ({ type: 'paragraph', content });
+  const { coverage, criteria, cases } = requirement;
+  const testsOf = (list) => list.map((c) => `${c.test}: ${lastResult(c)}`).join(', ');
+  const markOf = (list) => (!list.length ? '○' : list.some((c) => c.last_run?.status === 'failed') ? '✗'
+    : list.every((c) => c.last_run?.status === 'success') ? '✓' : '…');
+  const items = criteria.map((criterion) => {
+    const tested = cases.filter((c) => c.test && c.criterion_id === criterion.id);
+    return { type: 'listItem', content: [p(t(`${markOf(tested)} ${criterion.position}. ${criterion.text} — `), t(tested.length ? testsOf(tested) : 'no test yet', ['em']))] };
+  });
+  const others = cases.filter((c) => c.test && !c.criterion_id);
+  const counts = `${criteria.length ? `${coverage.covered}/${coverage.criteria} criteria covered, ` : ''}${coverage.tests} test${coverage.tests === 1 ? '' : 's'}`;
+  const from = campaign
+    ? `Campaign #${campaign.id} "${campaign.name}"${campaign.version ? ` (${campaign.version})` : ''}: ${campaign.totals.passed}/${campaign.total} passed. `
+    : '';
+  return {
+    type: 'doc', version: 1,
+    content: [
+      p(t(`IziTest — ${COVERAGE_LABELS[coverage.status] ?? coverage.status}`, ['strong']), t(` · ${counts}`)),
+      ...(items.length ? [{ type: 'bulletList', content: items }] : [p(t('No acceptance criteria.'))]),
+      ...(others.length ? [p(t('Also checked by: '), t(testsOf(others), ['em']))] : []),
+      p(t(`${from}Updated by IziTest on ${now.toISOString().slice(0, 16).replace('T', ' ')} UTC.`, ['em'])),
+    ],
+  };
+}
+
+/** Post a story's comment — IziTest's one, updated when it is still there; its id, and what was done. */
+async function postComment(client, requirement, body) {
+  const path = `/rest/api/3/issue/${encodeURIComponent(requirement.key)}/comment`;
+  if (requirement.jira_comment_id) {
+    try {
+      await client.put(`${path}/${requirement.jira_comment_id}`, { body });
+      return { id: requirement.jira_comment_id, action: 'updated' };
+    } catch (err) {
+      if (err.status !== 404) throw err; // deleted in Jira since: a new one
+    }
+  }
+  const comment = await client.post(path, { body });
+  db.prepare('UPDATE requirements SET jira_comment_id = ? WHERE id = ?').run(String(comment.id), requirement.id);
+  return { id: String(comment.id), action: 'added' };
+}
+
+/**
+ * Tell Jira stories where they stand in IziTest: those of `keys`, or those a campaign's tests
+ * check (its requirements imported from Jira). One comment a story, IziTest's, updated when it
+ * is there already. A dry run unless `dryRun` is false: what each comment would say.
+ */
+export async function commentOnJira({ keys = [], campaignId = null, dryRun = true }, { client = null } = {}) {
+  const campaign = campaignId != null ? getCampaign(campaignId) : null;
+  if (campaignId != null && !campaign) throw new Error(`No campaign #${campaignId}`);
+  if (campaign?.running) throw new Error(`Campaign #${campaign.id} is still running: comment once it is done`);
+  const warnings = [];
+  const stories = [];
+  for (const key of [...new Set(keys.map((k) => String(k).trim().toUpperCase()).filter(Boolean))]) {
+    const requirement = getRequirement(key);
+    if (!requirement) warnings.push(`${key}: no such requirement in IziTest`);
+    else if (requirement.source !== 'jira' || !KEY.test(requirement.key)) warnings.push(`${key} was not imported from Jira: no comment`);
+    else stories.push(requirement);
+  }
+  // A campaign's: its requirements from Jira, the others left out.
+  for (const { key } of campaign?.requirements ?? []) {
+    const requirement = getRequirement(key);
+    if (requirement?.source === 'jira' && KEY.test(requirement.key) && !stories.some((s) => s.id === requirement.id)) stories.push(requirement);
+  }
+  if (!stories.length && !warnings.length) {
+    throw new Error(campaign ? `None of the requirements campaign #${campaign.id} checks comes from Jira` : 'Say which stories: their keys, or a campaign');
+  }
+  if (!dryRun) client ??= jiraClient();
+  const comments = [];
+  for (const requirement of stories) {
+    const body = coverageComment(requirement, { campaign });
+    const entry = { key: requirement.key, action: requirement.jira_comment_id ? 'update' : 'add', status: requirement.coverage.status, text: adfToText(body) };
+    if (!dryRun) {
+      // A story Jira refuses (gone, not allowed): told, the others still commented.
+      try {
+        const { id, action } = await postComment(client, requirement, body);
+        Object.assign(entry, { action, url: `${client.baseUrl}/browse/${requirement.key}?focusedCommentId=${id}` });
+      } catch (err) {
+        entry.error = err.message;
+      }
+    }
+    comments.push(entry);
+  }
+  if (!dryRun) log(`Jira: coverage commented on ${comments.filter((c) => !c.error).map((c) => c.key).join(', ') || 'no story'}`);
+  return { sent: !dryRun, comments, warnings };
 }

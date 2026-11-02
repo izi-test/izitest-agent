@@ -10,7 +10,7 @@ import {
 } from '../requirements.js';
 import { designBrief, withResolution } from '../requirement-design.js';
 import { FORMATS, importRequirements, formatImport } from '../requirement-import.js';
-import { importFromJira } from '../jira.js';
+import { importFromJira, commentOnJira } from '../jira.js';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, extname } from 'node:path';
 
@@ -120,6 +120,37 @@ export function registerRequirementTools(server) {
       try {
         const result = await importFromJira({ jql, keys, sync: !!sync, projectId: project_id ?? null, dryRun: dry_run !== false });
         return text(formatImport(result));
+      } catch (err) {
+        return text(err.message, true);
+      }
+    }
+  );
+
+  // --- Tool: comment_on_jira ---
+  server.tool(
+    'comment_on_jira',
+    [
+      'Tell Jira stories where they stand in IziTest, as a comment on each: its coverage (passing, failing, not run, not',
+      'covered), each acceptance criterion with its tests and how they did last, and the campaign it comes from. For the',
+      'stories of keys, or those a campaign\'s tests check (its requirements imported from Jira; the others are left out).',
+      'One comment a story, IziTest\'s own: posted again, it is updated. This WRITES to the Jira site: by default a dry run',
+      'that shows each comment — show it to the user and ask before calling again with dry_run: false.',
+    ].join('\n'),
+    {
+      keys: z.array(z.string()).optional().describe('The stories\' keys (e.g. ["SHOP-12"]): requirements imported from Jira'),
+      campaign_id: z.number().int().optional().describe('Or the stories this campaign\'s tests check, with its results'),
+      dry_run: z.boolean().optional().describe('Default true: show the comments, post nothing'),
+    },
+    async ({ keys, campaign_id, dry_run }) => {
+      try {
+        const result = await commentOnJira({ keys: keys ?? [], campaignId: campaign_id ?? null, dryRun: dry_run !== false });
+        const lines = result.comments.map((c) => (c.error
+          ? `${c.key}: NOT commented — ${c.error}`
+          : `${c.key}: ${result.sent ? `${c.action} — ${c.url}` : `would ${c.action} IziTest's comment:`}${result.sent ? '' : `\n${c.text.replace(/^/gm, '    ')}`}`));
+        return text([
+          result.sent ? 'Commented on Jira:' : 'Dry run — nothing posted; dry_run: false posts these comments:',
+          ...lines, ...result.warnings.map((w) => `Note: ${w}`),
+        ].join('\n'));
       } catch (err) {
         return text(err.message, true);
       }
