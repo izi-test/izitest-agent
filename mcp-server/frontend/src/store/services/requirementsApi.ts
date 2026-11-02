@@ -7,6 +7,9 @@ type RequirementInput = Partial<Pick<Requirement, 'title' | 'description' | 'pri
   project_id?: number | null;
 };
 
+/** A project of the Jira site, and a query for its stories to start from. */
+type JiraProject = { key: string; name: string; jql: string };
+
 // Requirements, their criteria and cases, and the tests linked to them (mcp-server/lib/requirements.js).
 export const requirementsApi = createApi({
   reducerPath: 'requirementsApi',
@@ -71,6 +74,15 @@ export const requirementsApi = createApi({
       query: (body) => ({ url: 'api/requirements/import', method: 'POST', body }),
       invalidatesTags: (_result, _error, { dry_run }) => (dry_run ? [] : ['Requirements', 'Requirement', 'TestRequirements']),
     }),
+    // Stories read from the Jira site set in Settings: by a query, their keys, or again (sync); saved unless dry_run.
+    importFromJira: builder.mutation<{ import: RequirementImport }, { jql?: string; keys?: string[]; sync?: boolean; project_id?: number | null; dry_run: boolean }>({
+      query: (body) => ({ url: 'api/jira/import', method: 'POST', body }),
+      invalidatesTags: (_result, _error, { dry_run }) => (dry_run ? [] : ['Requirements', 'Requirement', 'TestRequirements']),
+    }),
+    getJiraProjects: builder.query<JiraProject[], void>({
+      query: () => 'api/jira/projects',
+      transformResponse: (response: { projects: JiraProject[] }) => response.projects ?? [],
+    }),
     getTestRequirements: builder.query<TestRequirement[], string>({
       query: (testName) => `api/tests/${encodeURIComponent(testName)}/requirements`,
       transformResponse: (response: { requirements: TestRequirement[] }) => response.requirements ?? [],
@@ -92,5 +104,7 @@ export const {
   usePlanDesignMutation,
   useDismissDesignMutation,
   useImportRequirementsMutation,
+  useImportFromJiraMutation,
+  useGetJiraProjectsQuery,
   useGetTestRequirementsQuery,
 } = requirementsApi;

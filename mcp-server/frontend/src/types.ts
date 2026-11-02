@@ -311,7 +311,7 @@ export type CampaignSummary = Omit<Campaign, 'requirements' | 'runs'> & { failin
 
 /** What a file of requirements holds, previewed or imported (mcp-server/lib/requirement-import.js). */
 export interface RequirementImport {
-  format: 'csv' | 'xlsx' | 'json' | 'markdown';
+  format: 'csv' | 'xlsx' | 'json' | 'markdown' | 'jira';
   headers: string[] | null;
   columns: Partial<Record<'key' | 'title' | 'description' | 'criteria' | 'priority' | 'url', string>> | null;
   warnings: string[];

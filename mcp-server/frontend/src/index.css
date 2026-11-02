@@ -498,6 +498,7 @@ body {
 }
 
 .field-group input[type="text"],
+.field-group input[type="password"],
 .field-group select,
 .field-group textarea {
   width: 100%;
@@ -3358,6 +3359,11 @@ body {
 .create-wf-hint--linked { margin: 0 0 12px; color: var(--accent-bright); }
 
 /* Importing requirements from a file */
+.import-tabs { display: flex; gap: 4px; }
+.import-tabs button { padding: 4px 12px; font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: none; color: var(--text-muted); cursor: pointer; }
+.import-tabs button.active { border-color: var(--accent); color: var(--accent-bright); background: var(--bg-elevated); }
+.jira-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0 16px; }
+.jira-fields .settings-apikey-input-wrapper { width: 100%; }
 .import-panel { border: 1px dashed var(--border-hover); border-radius: var(--radius-sm); padding: 12px; }
 .import-file { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--accent-bright); cursor: pointer; }
 .import-file input { font-size: 12px; color: var(--text-muted); }

@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { Upload, Loader2 } from 'lucide-react';
-import { useImportRequirementsMutation } from '../store/services/requirementsApi';
+import { Upload, Loader2, RefreshCw, Search } from 'lucide-react';
+import { useImportRequirementsMutation, useImportFromJiraMutation, useGetJiraProjectsQuery } from '../store/services/requirementsApi';
+import { useGetJiraConfigQuery } from '../store/services/settingsApi';
 import { Button } from './Button';
 import type { RequirementImport } from '../types';
 
-// Requirements from a file (mcp-server/lib/requirement-import.js): a test plan in a spreadsheet
-// (CSV, Excel), a Jira CSV export, JSON, a Markdown spec — chosen or pasted, previewed (what is
-// new, changed, unchanged; which column is which), then imported.
+// Requirements from a file (mcp-server/lib/requirement-import.js) — a test plan in a spreadsheet
+// (CSV, Excel), a Jira CSV export, JSON, a Markdown spec, chosen or pasted — or from the Jira site
+// set in Settings (mcp-server/lib/jira.js), by a JQL query or again to see what changed: previewed
+// (what is new, changed, unchanged; for a table, which column is which), then imported.
 
 const FIELDS = ['key', 'title', 'description', 'criteria', 'priority', 'url'] as const;
 const FIELD_LABELS: Record<(typeof FIELDS)[number], string> = {
@@ -24,11 +26,15 @@ function base64Of(buffer: ArrayBuffer) {
   return btoa(binary);
 }
 
-type Source = { filename: string; content_base64: string } | { filename: ''; content: string };
+/** What is read: a file (its bytes, or pasted text), or stories of Jira (a query, or those imported already). */
+type Source =
+  | { kind: 'file'; filename: string; content_base64?: string; content?: string }
+  | { kind: 'jira'; jql?: string; sync?: boolean };
 
 export function RequirementImportPanel({ projectId, projectName, onDone, onCancel }: {
   projectId: number | null; projectName: string | null; onDone: () => void; onCancel: () => void;
 }) {
+  const [tab, setTab] = useState<'file' | 'jira'>('file');
   const [source, setSource] = useState<Source | null>(null);
   const [pasted, setPasted] = useState('');
   const [columns, setColumns] = useState<Record<string, string | null>>({});
@@ -36,14 +42,19 @@ export function RequirementImportPanel({ projectId, projectName, onDone, onCance
   const [preview, setPreview] = useState<RequirementImport | null>(null);
   const [done, setDone] = useState<RequirementImport | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [run, { isLoading }] = useImportRequirementsMutation();
+  const [readFile, { isLoading: readingFile }] = useImportRequirementsMutation();
+  const [readJira, { isLoading: readingJira }] = useImportFromJiraMutation();
+  const isLoading = readingFile || readingJira;
 
   const ask = async (from: Source, options: { columns?: Record<string, string | null>; sheet?: string; dryRun: boolean }) => {
     setError(null);
     try {
-      const { import: result } = await run({
-        ...from, columns: options.columns ?? columns, sheet: (options.sheet ?? sheet) || undefined, project_id: projectId, dry_run: options.dryRun,
-      }).unwrap();
+      const { import: result } = from.kind === 'jira'
+        ? await readJira({ jql: from.jql, sync: from.sync, project_id: projectId, dry_run: options.dryRun }).unwrap()
+        : await readFile({
+          filename: from.filename, content: from.content, content_base64: from.content_base64,
+          columns: options.columns ?? columns, sheet: (options.sheet ?? sheet) || undefined, project_id: projectId, dry_run: options.dryRun,
+        }).unwrap();
       if (options.dryRun) setPreview(result);
       else { setDone(result); setPreview(null); }
     } catch (err) {
@@ -51,26 +62,21 @@ export function RequirementImportPanel({ projectId, projectName, onDone, onCance
       if (options.dryRun) setPreview(null);
     }
   };
-
-  const choose = async (file: File | undefined) => {
-    if (!file) return;
-    const from = { filename: file.name, content_base64: base64Of(await file.arrayBuffer()) };
+  const start = (from: Source) => {
     setSource(from);
     setColumns({});
     setSheet('');
-    await ask(from, { columns: {}, sheet: '', dryRun: true });
+    return ask(from, { columns: {}, sheet: '', dryRun: true });
   };
-  const readPasted = async () => {
-    const from = { filename: '' as const, content: pasted };
-    setSource(from);
-    setColumns({});
-    await ask(from, { columns: {}, dryRun: true });
+  const choose = async (file: File | undefined) => {
+    if (file) await start({ kind: 'file', filename: file.name, content_base64: base64Of(await file.arrayBuffer()) });
   };
   const remap = (field: string, header: string) => {
     const next = { ...columns, [field]: header || null };
     setColumns(next);
     if (source) ask(source, { columns: next, dryRun: true });
   };
+  const switchTo = (next: 'file' | 'jira') => { setTab(next); setPreview(null); setSource(null); setError(null); };
 
   if (done) {
     return (
@@ -85,19 +91,29 @@ export function RequirementImportPanel({ projectId, projectName, onDone, onCance
 
   return (
     <div className="requirement-form import-panel">
-      <p className="explore-help">
-        A test plan in a spreadsheet (CSV, Excel), a Jira CSV export, JSON, or a Markdown spec. Columns are found by their names —
-        Key, Title, Description, Acceptance criteria, Priority, Link, in English or French —; one criterion per line in a cell, or
-        per row under it. Imported again, a requirement is updated under its key (or title): its unchanged criteria keep their tests.
-        Into: <strong>{projectName ?? 'no project'}</strong>.
-      </p>
-      <label className="import-file">
-        <Upload size={14} /> Choose a file
-        <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.json,.md,.markdown" onChange={(e) => choose(e.target.files?.[0])} />
-        {source && 'filename' in source && source.filename && <span className="dash-table__muted">{source.filename}</span>}
-      </label>
-      <textarea rows={4} placeholder="…or paste CSV, JSON or Markdown here" value={pasted} onChange={(e) => setPasted(e.target.value)} />
-      {pasted.trim() && <div><Button size="sm" variant="action" disabled={isLoading} onClick={readPasted}>Preview the pasted text</Button></div>}
+      <div className="import-tabs">
+        <button type="button" className={tab === 'file' ? 'active' : ''} onClick={() => switchTo('file')}>From a file</button>
+        <button type="button" className={tab === 'jira' ? 'active' : ''} onClick={() => switchTo('jira')}>From Jira</button>
+      </div>
+      {tab === 'file' ? (
+        <>
+          <p className="explore-help">
+            A test plan in a spreadsheet (CSV, Excel), a Jira CSV export, JSON, or a Markdown spec. Columns are found by their names —
+            Key, Title, Description, Acceptance criteria, Priority, Link, in English or French —; one criterion per line in a cell, or
+            per row under it. Imported again, a requirement is updated under its key (or title): its unchanged criteria keep their tests.
+            Into: <strong>{projectName ?? 'no project'}</strong>.
+          </p>
+          <label className="import-file">
+            <Upload size={14} /> Choose a file
+            <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.json,.md,.markdown" onChange={(e) => choose(e.target.files?.[0])} />
+            {source?.kind === 'file' && source.filename && <span className="dash-table__muted">{source.filename}</span>}
+          </label>
+          <textarea rows={4} placeholder="…or paste CSV, JSON or Markdown here" value={pasted} onChange={(e) => setPasted(e.target.value)} />
+          {pasted.trim() && <div><Button size="sm" variant="action" disabled={isLoading} onClick={() => start({ kind: 'file', filename: '', content: pasted })}>Preview the pasted text</Button></div>}
+        </>
+      ) : (
+        <JiraSource projectName={projectName} busy={isLoading} onRead={start} />
+      )}
       {isLoading && <p className="explore-help"><Loader2 size={12} className="spin" /> Reading…</p>}
       {error && <div className="repair-error">{error}</div>}
       {preview && <ImportPreview preview={preview} columns={columns} onRemap={remap} sheet={sheet}
@@ -109,6 +125,38 @@ export function RequirementImportPanel({ projectId, projectName, onDone, onCance
         <Button size="sm" variant="cancel" onClick={onCancel}>Cancel</Button>
       </div>
     </div>
+  );
+}
+
+/** Stories of the Jira site set in Settings: a JQL query (a project's stories to start from), or the ones imported already, read again. */
+function JiraSource({ projectName, busy, onRead }: { projectName: string | null; busy: boolean; onRead: (from: Source) => void }) {
+  const { data: config, isLoading } = useGetJiraConfigQuery();
+  const { data: projects = [], error } = useGetJiraProjectsQuery(undefined, { skip: !config });
+  const [jql, setJql] = useState('');
+  if (isLoading) return null;
+  if (!config) return <p className="explore-help">No Jira site set: Settings → Jira (its address, your email, an API token).</p>;
+  return (
+    <>
+      <p className="explore-help">
+        Stories of <strong>{config.baseUrl}</strong>, read as requirements: summary, description, priority, link, and their acceptance
+        criteria — from an "Acceptance Criteria" field, or the list under "Acceptance criteria" in the description. Nothing is written
+        to Jira. Into: <strong>{projectName ?? 'no project'}</strong>.
+      </p>
+      {error && <div className="repair-error">{errorOf(error)}</div>}
+      <div className="requirement-form__row">
+        <select value="" onChange={(e) => e.target.value && setJql(e.target.value)}>
+          <option value="">A project's stories…</option>
+          {projects.map((p) => <option key={p.key} value={p.jql}>{p.key} — {p.name}</option>)}
+        </select>
+      </div>
+      <textarea rows={2} placeholder='JQL, e.g. project = SHOP AND issuetype = Story ORDER BY key' value={jql} onChange={(e) => setJql(e.target.value)} spellCheck={false} />
+      <div className="repair-actions">
+        <Button size="sm" variant="action" icon={Search} disabled={!jql.trim() || busy} onClick={() => onRead({ kind: 'jira', jql })}>Preview</Button>
+        <Button size="sm" variant="action" icon={RefreshCw} disabled={busy} title="Read again the requirements imported from Jira: which changed?" onClick={() => onRead({ kind: 'jira', sync: true })}>
+          Check the imported ones for changes
+        </Button>
+      </div>
+    </>
   );
 }
 

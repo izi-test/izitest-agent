@@ -119,6 +119,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
 | `save_requirement` | Saves a requirement — from a request, written by hand, or a Jira story — with its acceptance criteria (see below). |
 | `import_requirements` | Imports requirements from a file — CSV, TSV, Excel, a Jira CSV export, JSON, Markdown —, a dry run first (see below). |
+| `import_from_jira` | Reads stories from the Jira site set in the dashboard — a JQL query, their keys, or again (`sync`) — as requirements, a dry run first. |
 | `design_tests` | Lays out how to design a requirement's tests: its criteria, its cases, the app, the project's Gherkin phrases, and the method — review, what is left unsaid, scenarios by test technique (see below). |
 | `plan_tests` | Plans a requirement's test cases: per criterion, nominal, alternative, error, boundary — with their technique, priority and scenario in Gherkin; says which scenarios are ready and which have steps to record. |
 | `link_test` | Links a saved test to a requirement: to a planned case, a criterion, or the whole requirement. |
@@ -468,6 +469,7 @@ les testent. Le même objet, d'où qu'elle vienne :
 | :--- | :--- |
 | Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré. |
 | Un fichier (un cahier de recette, un export) | `import_requirements(path)` ou le bouton **Import** de la page Requirements (voir plus bas). |
+| Un site Jira | `import_from_jira(jql)` ou l'onglet **From Jira** de l'import (voir plus bas), une fois le site réglé dans Settings → Jira. |
 | Un outil (une story Jira) | l'agent la lit (par exemple avec un serveur MCP Atlassian) et la garde : `source: "jira"`, sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |
 | Un testeur | page **Requirements** du tableau de bord : écrire l'exigence et ses critères, demander des scénarios (« Propose scenarios »), planifier des cas, y lier des tests. |
 
@@ -516,12 +518,44 @@ Beaucoup de cahiers de recette vivent dans des tableurs. L'import lit :
 Sans colonne de critères, ceux qu'une description range sous « Acceptance criteria » ou « Critères
 d'acceptation » (y compris le `h3.` et les listes `#` de Jira) en sont extraits.
 
+Des critères écrits en **Gherkin** — `Given` / `When` / `Then` / `And` ou `Étant donné` / `Quand` /
+`Alors` / `Et`, une étape par ligne, en liste ou non — donnent un critère par scénario : « Étant donné
+que je suis sur mon profil, quand je coche « Profil public », alors … », précédé de son nom quand une
+ligne `Scénario :` le donne. Une action ou un contexte après un `Alors` ouvre le scénario suivant ; des
+lignes sans `Alors` (« Quand je clique sur A, B s'affiche ») restent des critères à part. C'est vrai
+dans une cellule, un champ de critères Jira, une description ou du Markdown.
+
 C'est d'abord un **essai** (`dry_run`, par défaut) : chaque exigence est dite nouvelle, modifiée ou
 inchangée, rien n'est enregistré. Importée à nouveau, une exigence est mise à jour sous sa clé (ou son
 titre) et ses critères inchangés gardent leurs tests ; une exigence modifiée qui a des tests liés est
 signalée. Dans le tableau de bord, le bouton **Import** de la page Requirements prend un fichier ou un
 texte collé, montre l'aperçu et la colonne de chaque champ (modifiable), puis importe dans le projet
 choisi.
+
+#### Lire les stories d'un site Jira : `import_from_jira`
+
+Le site se règle dans le tableau de bord (**Settings → Jira**) : son adresse
+(`https://votre-equipe.atlassian.net`), l'email du compte, et un jeton d'API de ce compte (créé sur
+id.atlassian.com → Security → API tokens). Il est gardé sur la machine, et jamais réaffiché : le tableau de
+bord le montre masqué. « Test the connection » dit sous quel compte IziTest lit. À défaut, `JIRA_BASE_URL`,
+`JIRA_EMAIL` et `JIRA_API_TOKEN` en tiennent lieu. **Rien n'est écrit dans Jira.**
+
+`import_from_jira` lit, par l'API REST v3 de Jira Cloud (la recherche JQL « enhanced », page après page,
+500 stories au plus) :
+- les stories d'une requête JQL (`project = SHOP AND issuetype = Story ORDER BY key` : une requête
+  bornée, Jira refuse les autres) ;
+- ou celles de leurs clés (`keys`) — une clé que Jira ne connaît pas, ou que ce compte ne voit pas, est
+  dite, les autres sont lues ;
+- ou, `sync: true`, celles déjà importées de Jira (du projet, ou toutes) : pour voir lesquelles ont changé.
+
+Chaque story devient une exigence (source `jira`) : sa clé, son résumé, sa description (le format riche
+d'Atlassian, mis en texte), sa priorité, son lien. Ses critères d'acceptation viennent d'un champ à eux
+(« Acceptance Criteria », un champ personnalisé) quand le site en a un, sinon de la liste sous
+« Acceptance criteria » dans sa description. Comme pour un fichier : un essai d'abord, puis l'import ;
+une story modifiée depuis, qui a des tests liés, est signalée. Dans le tableau de bord : **Requirements
+→ Import → From Jira**, avec les projets du site pour partir d'une requête (choisir un projet propose ses
+stories, `issuetype = Story` ; sans type Story, ses tickets sauf les sous-tâches), et « Check the
+imported ones for changes ».
 
 #### Concevoir les tests d'une exigence : `design_tests`
 

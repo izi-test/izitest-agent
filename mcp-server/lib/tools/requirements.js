@@ -10,6 +10,7 @@ import {
 } from '../requirements.js';
 import { designBrief, withResolution } from '../requirement-design.js';
 import { FORMATS, importRequirements, formatImport } from '../requirement-import.js';
+import { importFromJira } from '../jira.js';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, extname } from 'node:path';
 
@@ -90,6 +91,34 @@ export function registerRequirementTools(server) {
         const result = importRequirements({
           content: data, filename: path ?? '', format, sheet, columns: columns ?? {}, projectId: project_id ?? null, dryRun: dry_run !== false,
         });
+        return text(formatImport(result));
+      } catch (err) {
+        return text(err.message, true);
+      }
+    }
+  );
+
+  // --- Tool: import_from_jira ---
+  server.tool(
+    'import_from_jira',
+    [
+      'Read stories from the Jira site set in the dashboard (Settings → Jira) and import them as requirements: those a JQL query',
+      'finds ("project = SHOP AND issuetype = Story"), those of their keys, or — sync: true — the ones imported from Jira already,',
+      'to see which changed since. Each keeps its key, summary, description, priority and link; its acceptance criteria come',
+      'from a field of their own ("Acceptance Criteria") when the site has one, else from the list under "Acceptance criteria" in',
+      'its description. By default a dry run: new, changed, unchanged — nothing saved; show it to the user, then call again',
+      'with dry_run: false. A changed story with tests linked is flagged: check they still match it. Nothing is written to Jira.',
+    ].join('\n'),
+    {
+      jql: z.string().optional().describe('A JQL query, bounded (e.g. "project = SHOP AND issuetype = Story ORDER BY key")'),
+      keys: z.array(z.string()).optional().describe('Or the stories\' keys (e.g. ["SHOP-12", "SHOP-14"])'),
+      sync: z.boolean().optional().describe('Or read again the requirements imported from Jira (of project_id, or all)'),
+      project_id: z.number().optional().describe('The IziTest project the requirements belong to'),
+      dry_run: z.boolean().optional().describe('Default true: show what would be imported, save nothing'),
+    },
+    async ({ jql, keys, sync, project_id, dry_run }) => {
+      try {
+        const result = await importFromJira({ jql, keys, sync: !!sync, projectId: project_id ?? null, dryRun: dry_run !== false });
         return text(formatImport(result));
       } catch (err) {
         return text(err.message, true);

@@ -121,6 +121,41 @@ test('the format from the name, else from what the file holds', () => {
   assert.deepEqual(criteriaFromText('Intro\n*Acceptance criteria:*\n- a\n- b').criteria, ['a', 'b']);
 });
 
+test('Gherkin criteria: a scenario one criterion — in a cell, under a heading in a description, in Markdown', () => {
+  assert.deepEqual(splitCriteria([
+    'Given I am on the login page', 'When I sign in with a wrong password', 'Then "Invalid credentials" shows.', 'And I stay on the page',
+    'When I sign in with the right one', 'Then I am signed in', 'Shown in under a second',
+  ].join('\n')), [
+    'Given I am on the login page, when I sign in with a wrong password, then "Invalid credentials" shows, and I stay on the page',
+    'When I sign in with the right one, then I am signed in',
+    'Shown in under a second',
+  ], 'an action after an outcome: the next scenario');
+  assert.deepEqual(splitCriteria("Quand je clique sur A, B s'affiche\nQuand je clique sur C, D s'affiche"),
+    ["Quand je clique sur A, B s'affiche", "Quand je clique sur C, D s'affiche"], 'no outcome of their own: no scenario');
+
+  const story = criteriaFromText([
+    "En tant qu'utilisateur, je veux que mes préférences restent enregistrées.", "Critères d'acceptation",
+    'Scénario : Profil public', 'Étant donné que je suis sur mon profil', "Quand je coche « Profil public » et que j'enregistre",
+    'Alors « Profil public » est toujours coché après rechargement', '',
+    'Soit un profil privé', 'Lorsque je le consulte déconnecté', 'Alors il ne s\'affiche pas', '',
+    'Et voilà la suite de la description.',
+  ].join('\n'));
+  assert.deepEqual(story.criteria, [
+    "Profil public — Étant donné que je suis sur mon profil, quand je coche « Profil public » et que j'enregistre, alors « Profil public » est toujours coché après rechargement",
+    "Soit un profil privé, lorsque je le consulte déconnecté, alors il ne s'affiche pas",
+  ]);
+  assert.equal(story.description, "En tant qu'utilisateur, je veux que mes préférences restent enregistrées.\n\nEt voilà la suite de la description.");
+
+  const { requirements } = parseRequirements({ filename: 'spec.md', content: [
+    '## Connexion', 'Se connecter.', '### Critères d\'acceptation', '- Given a wrong password', '- When I sign in', '- Then "Invalid credentials" shows',
+    '## Profil', 'Ses préférences.', "Critères d'acceptation :", 'Étant donné mon profil', 'Quand je l\'enregistre', 'Alors il est enregistré',
+  ].join('\n') });
+  assert.deepEqual(requirements.map((r) => [r.title, r.description, r.criteria]), [
+    ['Connexion', 'Se connecter.', ['Given a wrong password, when I sign in, then "Invalid credentials" shows']],
+    ['Profil', 'Ses préférences.', ["Étant donné mon profil, quand je l'enregistre, alors il est enregistré"]],
+  ]);
+});
+
 test('a dry run saves nothing; saved, imported again: unchanged, or changed with the tests to check', () => {
   const project = db.prepare("INSERT INTO projects (name) VALUES ('Shop') RETURNING id").get().id;
   const dry = importRequirements({ content: PLAN, filename: 'plan.csv', projectId: project, dryRun: true });

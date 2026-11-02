@@ -33,10 +33,18 @@ export interface OpenRouterModel {
   pricing: { prompt: string; completion: string };
 }
 
+/** The Jira site requirements are read from (mcp-server/lib/jira.js): its token comes back masked. */
+export interface JiraConfig {
+  baseUrl: string;
+  email: string;
+  apiToken: string;
+  from?: 'settings' | 'env';
+}
+
 export const settingsApi = createApi({
   reducerPath: 'settingsApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
-  tagTypes: ['AgentConfig'],
+  tagTypes: ['AgentConfig', 'JiraConfig'],
   endpoints: (builder) => ({
 
     getAgentConfig: builder.query<AgentConfig, void>({
@@ -58,6 +66,21 @@ export const settingsApi = createApi({
       query: (body) => ({ url: 'api/settings/agent/test-api', method: 'POST', body }),
     }),
 
+    getJiraConfig: builder.query<JiraConfig | null, void>({
+      query: () => 'api/settings/jira',
+      transformResponse: (response: { jira: JiraConfig | null }) => response.jira,
+      providesTags: ['JiraConfig'],
+    }),
+
+    updateJiraConfig: builder.mutation<{ jira: JiraConfig | null }, JiraConfig>({
+      query: (body) => ({ url: 'api/settings/jira', method: 'PUT', body }),
+      invalidatesTags: ['JiraConfig'],
+    }),
+
+    testJira: builder.mutation<{ success: boolean; user?: string; site?: string; error?: string }, Partial<JiraConfig>>({
+      query: (body) => ({ url: 'api/settings/jira/test', method: 'POST', body }),
+    }),
+
     getModels: builder.query<OpenRouterModel[], void>({
       query: () => 'api/models',
       transformResponse: (response: { models: OpenRouterModel[] }) => response.models,
@@ -71,4 +94,7 @@ export const {
   useTestAgentMutation,
   useTestApiKeyMutation,
   useGetModelsQuery,
+  useGetJiraConfigQuery,
+  useUpdateJiraConfigMutation,
+  useTestJiraMutation,
 } = settingsApi;

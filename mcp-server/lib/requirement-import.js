@@ -26,16 +26,65 @@ export function textOf(content) {
 }
 
 const plain = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-const fold = (s) => plain(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/** A name as it is compared: no accents, no case, words between single spaces. */
+export const fold = (s) => plain(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 // A list item's marker: "- ", "* ", "• ", "1.", "1)", "# " (Jira's numbered list), a task box, "AC1:".
 const BULLET = /^\s*(?:[-*+•▪◦#]\s+|\d+[.)]\s+|\[[ xX]\]\s+|(?:AC|CA)\s*\d+\s*[:.)-]\s*)/;
 
-/** A cell or a block of text as criteria: one per line, its list marker dropped. */
+/** A cell or a block of text as criteria: one per line, its list marker dropped — a Gherkin scenario's steps one. */
 export function splitCriteria(text) {
-  return String(text ?? '').split(/\r?\n/)
+  return scenarios(String(text ?? '').split(/\r?\n/)
     .map((line) => line.replace(BULLET, '').replace(/^\[[ xX]\]\s+/, '').trim())
-    .filter(Boolean);
+    .filter(Boolean));
+}
+
+// A Gherkin step, in English or French: its context ("Given", "Étant donné", "Soit"), its action
+// ("When", "Quand", "Lorsque"), its outcome ("Then", "Alors"), or one going on ("And", "Et",
+// "But", "Mais"); a scenario's name ("Scenario:", "Scénario :").
+const STEPS = [
+  ['given', /^(?:given|etant donnee?s?|soit|sachant que?)\b/i],
+  ['when', /^(?:when|quand|lorsque?)\b/i],
+  ['then', /^(?:then|alors)\b/i],
+  ['and', /^(?:and|but|et|mais)\b/i],
+];
+const SCENARIO = /^(?:scenario(?: outline| template)?|plan du scenario|example|exemple)\s*:/i;
+const stepOf = (line) => {
+  const text = plain(line).trim();
+  return SCENARIO.test(text) ? 'name' : STEPS.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
+};
+
+/**
+ * Criteria with Gherkin scenarios among them, one criterion a scenario: "Étant donné …, quand
+ * …, alors …", its name before it. A context or an action after an outcome starts the next one;
+ * steps that make no whole scenario (no outcome) stay criteria of their own.
+ */
+function scenarios(lines) {
+  const criteria = [];
+  let run = { name: null, steps: [], phase: null };
+  const flush = () => {
+    if (run.steps.length > 1 && run.steps.some((s) => s.kind === 'then')) {
+      const text = run.steps.map((s, i) => (i ? s.text[0].toLowerCase() + s.text.slice(1) : s.text).replace(/[\s.,;]+$/, '')).join(', ');
+      criteria.push(run.name ? `${run.name} — ${text}` : text);
+    } else criteria.push(...(run.name ? [run.name] : []), ...run.steps.map((s) => s.text));
+    run = { name: null, steps: [], phase: null };
+  };
+  for (const line of lines) {
+    const kind = stepOf(line);
+    if (kind === 'name') {
+      flush();
+      run.name = line.slice(line.indexOf(':') + 1).trim() || null;
+    } else if (!kind || (kind === 'and' && !run.steps.length)) {
+      flush();
+      criteria.push(line);
+    } else {
+      if (run.phase === 'then' ? kind !== 'then' && kind !== 'and' : run.phase === 'when' && kind === 'given') flush();
+      run.steps.push({ kind, text: line });
+      if (kind !== 'and') run.phase = kind;
+    }
+  }
+  flush();
+  return criteria;
 }
 
 // The line that opens a list of criteria: "Acceptance criteria:", "## Critères d'acceptation",
@@ -44,15 +93,18 @@ const CRITERIA_HEADING = /^\s*(?:h\d\.\s*|#+\s*)?[*_]*\s*(?:acceptance criteria|
 const isCriteriaHeading = (line) => CRITERIA_HEADING.test(plain(line));
 
 /**
- * Criteria written inside a description, as a Jira story often has them: the list under an
- * "Acceptance criteria" line. The criteria, and the description without them.
+ * Criteria written inside a description, as a Jira story often has them: the list, or the
+ * Gherkin steps, under an "Acceptance criteria" line. The criteria, and the description without them.
  */
 export function criteriaFromText(text) {
   const lines = String(text ?? '').split(/\r?\n/);
   const at = lines.findIndex(isCriteriaHeading);
   if (at < 0) return { criteria: [], description: String(text ?? '').trim() };
+  // A list item, a step ("And" only after one), a scenario's name.
+  const listed = (i) => BULLET.test(lines[i]) || ['given', 'when', 'then', 'name'].includes(stepOf(lines[i]))
+    || (stepOf(lines[i]) === 'and' && i > at + 1 && !!stepOf(lines[i - 1]));
   let end = at + 1;
-  while (end < lines.length && (BULLET.test(lines[end]) || (!lines[end].trim() && end + 1 < lines.length && BULLET.test(lines[end + 1])))) end++;
+  while (end < lines.length && (listed(end) || (!lines[end].trim() && end + 1 < lines.length && listed(end + 1)))) end++;
   const criteria = splitCriteria(lines.slice(at + 1, end).join('\n'));
   return { criteria, description: [...lines.slice(0, at), ...lines.slice(end)].join('\n').trim() };
 }
@@ -314,7 +366,8 @@ const FIELD_LINE = /^\s*(?:\*\*)?\s*(priority|priorite|priorité|link|lien|url|k
 
 /**
  * Requirements from Markdown: each heading with something under it is one — its key when the
- * heading starts with one ("## SHOP-12 — Title"), the items of its lists as criteria, a
+ * heading starts with one ("## SHOP-12 — Title"), the items of its lists as criteria (and the
+ * Gherkin steps under an "Acceptance criteria" line, a scenario one), a
  * "Priority:" or "Link:" line, the rest as its description. A heading with only headings
  * under it (the document's title, a chapter) is not one.
  */
@@ -340,6 +393,7 @@ export function requirementsFromMarkdown(text) {
     const requirement = { key, title: (rest || block.heading).trim(), description: '', criteria: [], priority: 'medium', url: null, source: 'import' };
     const description = [];
     let code = false;
+    let underCriteria = false;
     for (const line of block.lines) {
       // A code block is description, whatever it holds; "#" is no list marker in Markdown.
       if (/^\s*(```|~~~)/.test(line)) code = !code;
@@ -355,8 +409,12 @@ export function requirementsFromMarkdown(text) {
         else if (name === 'key' || name === 'cle' || name === 'id') requirement.key = field[2];
         else requirement.url = field[2];
       } else if (item) requirement.criteria.push(...splitCriteria(line));
-      else if (!isCriteriaHeading(line)) description.push(line);
+      else if (isCriteriaHeading(line)) underCriteria = true;
+      else if (underCriteria && stepOf(line)) requirement.criteria.push(line.trim());
+      else description.push(line);
     }
+    // Steps a line each, as list items or not: a scenario one criterion.
+    requirement.criteria = scenarios(requirement.criteria);
     requirement.description = description.join('\n').replace(/\n{3,}/g, '\n\n').trim();
     if (!requirement.title) {
       warnings.push(`Heading "${block.heading}": no title — skipped`);
@@ -412,12 +470,20 @@ function existingOf(requirement, projectId) {
 
 /**
  * Import the requirements of a file: each new one, changed or unchanged against what is
- * saved — and, unless `dryRun`, saved (in `projectId`). Criteria found in a description
- * ("Acceptance criteria" and its list) are taken out of it when no column gave any.
+ * saved — and, unless `dryRun`, saved (in `projectId`).
  */
 export function importRequirements({ content, filename = '', format = null, columns = {}, sheet = null, projectId = null, dryRun = false }) {
   const parsed = parseRequirements({ content, filename, format, columns, sheet });
-  const items = parsed.requirements.map((r) => {
+  return applyImport(parsed.requirements, { ...parsed, projectId, dryRun });
+}
+
+/**
+ * Requirements read from anywhere (a file, Jira) against what is saved: each new, changed or
+ * unchanged — and, unless `dryRun`, saved. Criteria found in a description ("Acceptance
+ * criteria" and its list) are taken out of it when nothing else gave any.
+ */
+export function applyImport(requirements, { format, headers = null, columns = null, warnings = [], projectId = null, dryRun = false }) {
+  const items = requirements.map((r) => {
     const extracted = r.criteria.length ? null : criteriaFromText(r.description);
     const requirement = extracted?.criteria.length ? { ...r, criteria: extracted.criteria, description: extracted.description } : r;
     const existing = existingOf(requirement, projectId);
@@ -438,7 +504,7 @@ export function importRequirements({ content, filename = '', format = null, colu
   }
   const count = (status) => items.filter((i) => i.status === status).length;
   return {
-    format: parsed.format, headers: parsed.headers ?? null, columns: parsed.columns ?? null, warnings: parsed.warnings,
+    format, headers, columns, warnings,
     saved: !dryRun, items, new: count('new'), changed: count('changed'), unchanged: count('unchanged'),
   };
 }

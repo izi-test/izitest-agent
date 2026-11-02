@@ -26,6 +26,7 @@ import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
 import { designTests, planDesigned, withResolution, recordingBrief } from './requirement-design.js';
 import { importRequirements } from './requirement-import.js';
+import { jiraConfig, maskedJiraConfig, saveJiraConfig, siteOf, jiraClient, testJira, jiraProjects, importFromJira } from './jira.js';
 import { complete, agentName } from './agent/complete.js';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport } from './campaigns.js';
 import { generateTestCode } from './codegen/index.js';
@@ -441,6 +442,56 @@ export async function apiRouter(req, res, url) {
         const content = body.content_base64 != null ? Buffer.from(body.content_base64, 'base64') : body.content;
         const result = importRequirements({
           content, filename: body.filename ?? '', format: body.format || null, sheet: body.sheet || null, columns: body.columns ?? {},
+          projectId: body.project_id ?? null, dryRun: body.dry_run !== false,
+        });
+        return json(res, 200, { import: result });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // ── Jira (lib/jira.js): the site to read stories from, and the stories read ──
+
+    // GET | PUT /api/settings/jira — { baseUrl, email, apiToken }: the token masked when read, kept when given masked
+    if (path === '/api/settings/jira' && (method === 'GET' || method === 'PUT')) {
+      if (method === 'GET') return json(res, 200, { jira: maskedJiraConfig() });
+      const body = await readBody(req);
+      try {
+        return json(res, 200, { jira: saveJiraConfig(body) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/settings/jira/test — { baseUrl, email, apiToken } (a token given masked: the one saved): who it reads as
+    if (method === 'POST' && path === '/api/settings/jira/test') {
+      const body = await readBody(req);
+      try {
+        const saved = jiraConfig();
+        const config = body.baseUrl ? {
+          baseUrl: siteOf(body.baseUrl), email: body.email, apiToken: body.apiToken?.includes('•') ? saved?.apiToken : body.apiToken,
+        } : saved;
+        return json(res, 200, { success: true, ...(await testJira(jiraClient(config))) });
+      } catch (err) {
+        return json(res, 200, { success: false, error: err.message });
+      }
+    }
+
+    // GET /api/jira/projects — the site's projects, for a query to start from
+    if (method === 'GET' && path === '/api/jira/projects') {
+      try {
+        return json(res, 200, { projects: await jiraProjects(jiraClient()) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/jira/import — { jql | keys | sync, project_id, dry_run }: stories read as requirements, saved unless dry_run
+    if (method === 'POST' && path === '/api/jira/import') {
+      const body = await readBody(req);
+      try {
+        const result = await importFromJira({
+          jql: body.jql, keys: Array.isArray(body.keys) ? body.keys : undefined, sync: !!body.sync,
           projectId: body.project_id ?? null, dryRun: body.dry_run !== false,
         });
         return json(res, 200, { import: result });
@@ -997,9 +1048,10 @@ export async function apiRouter(req, res, url) {
     // ── GET /api/settings/agent ──
     if (method === 'GET' && path === '/api/settings/agent') {
       const row = db.prepare("SELECT value FROM settings WHERE key = 'agent'").get();
+      // The agent the server falls back on when none is set (lib/agent/complete.js): shown as it is.
       const defaults = {
         mode: 'cli',
-        cli: { provider: 'copilot', command: 'copilot' },
+        cli: { provider: 'claude', command: 'claude' },
         api: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', apiKey: '' }
       };
       const value = row ? { ...defaults, ...parseJson(row.value) } : defaults;

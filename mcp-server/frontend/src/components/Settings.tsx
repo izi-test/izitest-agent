@@ -4,6 +4,7 @@ import { showToast } from '../store/slices/uiSlice';
 import { useGetAgentConfigQuery, useUpdateAgentConfigMutation, useTestAgentMutation, useTestApiKeyMutation, useGetModelsQuery } from '../store/services/settingsApi';
 import type { AgentConfig } from '../store/services/settingsApi';
 import { Button } from './Button';
+import { JiraSettings } from './JiraSettings';
 import { ArrowLeft, Save, Play, Check, X, Terminal, Cloud, Search } from 'lucide-react';
 
 const CLI_PROVIDERS = [
@@ -341,6 +342,8 @@ export function Settings({ onBack }: SettingsProps) {
           </>
         )}
       </div>
+
+      <JiraSettings />
     </section>
   );
 }
