@@ -1,0 +1,362 @@
+// Campaigns: tests replayed together — a project's, a requirement's, or a list of them — for
+// a version of the app. Each test runs in a window of its own, a few at a time, in a session
+// of the campaign's own; a failure is diagnosed as any run's is (lib/triage.js). The report
+// says, for that version: what passed, what failed and why, what regressed or was fixed since
+// the last campaign of the same tests, and where each requirement they check stands —
+// criterion by criterion, from this campaign's runs. It is also written as JUnit XML, for a
+// CI, and as an HTML page to share.
+
+import { db, parseJson } from './db.js';
+import { log } from './logger.js';
+import { createAdHocSession, destroySession, runInSession, listSessions } from './session.js';
+import { getRequirement, coverageOf, requirementsOfTest } from './requirements.js';
+
+// The campaigns running now, and whether each was asked to stop.
+const running = new Map();
+
+export const MAX_CONCURRENCY = 6;
+
+/** The tests a scope stands for: a list, the tests linked to a requirement, or a project's. */
+export function testsOfScope({ tests, requirement, projectId }) {
+  if (tests?.length) {
+    const missing = tests.filter((name) => !db.prepare('SELECT 1 FROM tests WHERE name = ?').get(name));
+    if (missing.length) throw new Error(`No test ${missing.map((name) => `"${name}"`).join(', ')}`);
+    return [...new Set(tests)];
+  }
+  if (requirement) {
+    const found = getRequirement(requirement);
+    if (!found) throw new Error(`No requirement ${requirement}`);
+    return [...new Set(found.cases.filter((c) => c.test).map((c) => c.test))];
+  }
+  if (projectId) return db.prepare('SELECT name FROM tests WHERE project_id = ? ORDER BY name').all(projectId).map((r) => r.name);
+  throw new Error('A campaign needs its tests: a project, a requirement, or a list of tests');
+}
+
+/** What makes two campaigns comparable: the same project, the same requirement, or the same tests. */
+function scopeKeyOf(scope, names) {
+  if (scope.requirement) return `requirement:${scope.requirement}`;
+  if (scope.project_id) return `project:${scope.project_id}`;
+  return `tests:${[...names].sort().join(',')}`;
+}
+
+function defaultName(scope, projectId, names) {
+  if (scope.requirement) {
+    const requirement = getRequirement(scope.requirement);
+    return `${requirement.key} — ${requirement.title}`;
+  }
+  const project = projectId ? db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId) : null;
+  return scope.project_id && project ? project.name : `${names.length} test${names.length === 1 ? '' : 's'}`;
+}
+
+/**
+ * Start a campaign: its tests replayed `concurrency` at a time, each in a new window closed
+ * after. `sendCommand` is the extension's, unscoped: the campaign runs in a session of its
+ * own. The campaign as it starts, and `finished`, settled once its last test ran.
+ */
+export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3 }, { sendCommand }) {
+  const scope = tests?.length ? { tests: [...new Set(tests)] }
+    : requirement ? { requirement: getRequirement(requirement)?.key ?? String(requirement) }
+      : { project_id: projectId };
+  const names = testsOfScope({ tests, requirement, projectId });
+  if (!names.length) throw new Error('No test to run: none in that scope');
+  const lanes = Math.min(Math.max(1, Math.floor(Number(concurrency)) || 3), MAX_CONCURRENCY);
+  const project = projectId ?? (scope.requirement ? getRequirement(scope.requirement).project_id : null);
+  const { id } = db.prepare(
+    `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency)
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`
+  ).get(name?.trim() || defaultName(scope, project, names), project, JSON.stringify(scope), scopeKeyOf(scope, names),
+    version?.trim() || null, JSON.stringify(names), lanes);
+  const state = { stop: false };
+  running.set(id, state);
+  log(`Campaign #${id} started: ${names.length} test(s), ${lanes} at a time${version ? `, version ${version}` : ''}`);
+  const finished = runCampaign(id, names, lanes, state, sendCommand)
+    .catch((err) => log(`Campaign #${id} failed: ${err.message}`))
+    .finally(() => running.delete(id));
+  return { campaign: getCampaign(id), finished };
+}
+
+async function runCampaign(id, names, lanes, state, dispatch) {
+  const { executeTest } = await import('./test-execute.js');
+  const session = createAdHocSession(`campaign-${id}`);
+  const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, session.scope(params), ...rest);
+  let next = 0;
+  const lane = async () => {
+    while (next < names.length && !state.stop) {
+      const name = names[next++];
+      let tabId = null;
+      try {
+        const result = await executeTest(name, null, null, null, true, sendCommand, 'campaign', null, null, { campaignId: id });
+        tabId = result.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
+      } catch (err) {
+        tabId = err.tabId ?? null;
+        // A failed run is kept with its execution; one that never started is told here.
+        if (!err.executionId) noteError(id, name, err.message);
+      }
+      if (tabId) await sendCommand(undefined, 'close_window', { tabId, liveSessions: listSessions().map((s) => s.id) }).catch(() => {});
+    }
+  };
+  try {
+    await runInSession(session, {}, () => Promise.all(Array.from({ length: Math.min(lanes, names.length) }, lane)));
+  } finally {
+    destroySession(session.id);
+    db.prepare(`UPDATE campaigns SET status = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
+      .run(state.stop ? 'stopped' : 'done', id);
+    log(`Campaign #${id} ${state.stop ? 'stopped' : 'done'}`);
+  }
+}
+
+function noteError(id, name, message) {
+  const errors = parseJson(db.prepare('SELECT errors FROM campaigns WHERE id = ?').get(id)?.errors) ?? {};
+  errors[name] = message;
+  db.prepare('UPDATE campaigns SET errors = ? WHERE id = ?').run(JSON.stringify(errors), id);
+}
+
+/** Stop a campaign: the tests running finish, the others are not started. */
+export function stopCampaign(id) {
+  const state = running.get(Number(id));
+  if (!state) throw new Error(`Campaign #${id} is not running`);
+  state.stop = true;
+  return getCampaign(id);
+}
+
+/** Campaigns left running when the server stopped: they will not finish. */
+export function closeInterruptedCampaigns() {
+  const { changes } = db.prepare(`UPDATE campaigns SET status = 'interrupted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE status = 'running'`).run();
+  if (changes) log(`${changes} campaign(s) left running by the last server marked interrupted`);
+}
+
+/** Where each test of a campaign stands, from its run in the campaign. */
+function testsOf(row) {
+  const errors = parseJson(row.errors) ?? {};
+  const runs = new Map(db.prepare(
+    `SELECT id, test_name, status, failed_step, total_steps, error, duration_ms, triage, assertions_total, assertions_failed
+     FROM test_executions WHERE campaign_id = ? ORDER BY id`
+  ).all(row.id).map((run) => [run.test_name, run]));
+  const live = running.has(row.id);
+  return parseJson(row.tests).map((name) => {
+    const run = runs.get(name);
+    const triage = parseJson(run?.triage);
+    const status = run ? ({ success: 'passed', failed: 'failed' }[run.status] ?? 'running')
+      : errors[name] ? 'error' : live ? 'pending' : 'skipped';
+    return {
+      name, status, execution_id: run?.id ?? null, duration_ms: run?.duration_ms ?? null,
+      failed_step: run?.failed_step ?? null, total_steps: run?.total_steps ?? null,
+      error: status === 'failed' || status === 'error' ? (run?.error ?? errors[name]) : null,
+      triage: triage ? { cause: triage.cause, confidence: triage.confidence, summary: triage.summary } : null,
+    };
+  });
+}
+
+const STATUSES = ['passed', 'failed', 'error', 'running', 'pending', 'skipped'];
+
+/**
+ * Where each requirement the campaign's tests check stands, from the campaign's runs: per
+ * criterion, failing (a test of it failed), passing (all of them passed), not_run (one of
+ * them was not run here), not_covered (it has no test at all).
+ */
+function requirementsOf(tests) {
+  if (!tests.length) return [];
+  const statusOf = new Map(tests.map((t) => [t.name, t.status]));
+  const ids = db.prepare(
+    `SELECT DISTINCT c.requirement_id AS id FROM requirement_cases c JOIN tests t ON t.id = c.test_id
+     WHERE t.name IN (${tests.map(() => '?').join(',')}) ORDER BY c.requirement_id`
+  ).all(...tests.map((t) => t.name)).map((r) => r.id);
+  return ids.map((id) => {
+    const requirement = getRequirement(id);
+    const asRun = (c) => {
+      const status = c.test ? statusOf.get(c.test) : null;
+      return { ...c, last_run: status === 'passed' ? { status: 'success' } : status === 'failed' ? { status: 'failed' } : null };
+    };
+    const cases = requirement.cases.map(asRun);
+    const criterionStatus = (criterion) => {
+      const tested = cases.filter((c) => c.criterion_id === criterion.id && c.test);
+      if (!tested.length) return 'not_covered';
+      if (tested.some((c) => c.last_run?.status === 'failed')) return 'failing';
+      return tested.every((c) => c.last_run?.status === 'success') ? 'passing' : 'not_run';
+    };
+    return {
+      key: requirement.key, title: requirement.title,
+      status: coverageOf(requirement.criteria, cases).status,
+      criteria: requirement.criteria.map((c) => ({ number: c.position, text: c.text, status: criterionStatus(c) })),
+    };
+  });
+}
+
+/** The last campaign of the same tests before this one that went to its end. */
+function previousOf(row) {
+  return db.prepare(`SELECT * FROM campaigns WHERE scope_key = ? AND id < ? AND status = 'done' ORDER BY id DESC LIMIT 1`).get(row.scope_key, row.id) ?? null;
+}
+
+/**
+ * A campaign: its tests and how each did, the totals, the requirements they check, and —
+ * against the last campaign of the same tests — what regressed (passed there, fails here)
+ * and what was fixed.
+ */
+export function getCampaign(id) {
+  const row = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(Number(id));
+  if (!row) return null;
+  const tests = testsOf(row);
+  const totals = Object.fromEntries(STATUSES.map((s) => [s, tests.filter((t) => t.status === s).length]));
+  const previous = previousOf(row);
+  let changes = null;
+  if (previous) {
+    const before = new Map(testsOf(previous).map((t) => [t.name, t.status]));
+    changes = {
+      since: { id: previous.id, version: previous.version, created_at: previous.created_at },
+      regressed: tests.filter((t) => t.status === 'failed' && before.get(t.name) === 'passed').map((t) => t.name),
+      fixed: tests.filter((t) => t.status === 'passed' && before.get(t.name) === 'failed').map((t) => t.name),
+    };
+  }
+  const project = row.project_id ? db.prepare('SELECT name FROM projects WHERE id = ?').get(row.project_id)?.name ?? null : null;
+  return {
+    ...row, scope: parseJson(row.scope), tests: undefined, errors: undefined, project,
+    running: running.has(row.id), totals, total: tests.length,
+    duration_ms: row.finished_at ? Date.parse(row.finished_at) - Date.parse(row.created_at) : null,
+    changes, requirements: requirementsOf(tests),
+    non_conformities: tests.filter((t) => t.triage?.cause === 'non_conformity').map((t) => t.name),
+    runs: tests,
+  };
+}
+
+/** Campaigns, newest first: of a project, or all. Without their requirements. */
+export function listCampaigns({ projectId, limit = 50 } = {}) {
+  const rows = projectId
+    ? db.prepare('SELECT id FROM campaigns WHERE project_id = ? ORDER BY id DESC LIMIT ?').all(projectId, limit)
+    : db.prepare('SELECT id FROM campaigns ORDER BY id DESC LIMIT ?').all(limit);
+  return rows.map((r) => {
+    const { requirements, runs, ...campaign } = getCampaign(r.id);
+    return { ...campaign, failing_requirements: requirements.filter((x) => x.status === 'failing').map((x) => x.key), failed: runs.filter((t) => t.status === 'failed').map((t) => t.name) };
+  });
+}
+
+export function deleteCampaign(id) {
+  if (running.has(Number(id))) throw new Error(`Campaign #${id} is running: stop it first`);
+  const { changes } = db.prepare('DELETE FROM campaigns WHERE id = ?').run(Number(id));
+  if (!changes) throw new Error(`No campaign #${id}`);
+}
+
+const seconds = (ms) => (ms == null ? '' : ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m${String(Math.round((ms % 60_000) / 1000)).padStart(2, '0')}s`);
+
+/** A campaign as the agent reads it. */
+export function formatCampaign(c) {
+  const { totals } = c;
+  const counts = STATUSES.filter((s) => totals[s]).map((s) => `${totals[s]} ${s}`).join(', ');
+  const lines = [
+    `Campaign #${c.id} "${c.name}"${c.version ? ` — version ${c.version}` : ''} — ${c.running ? 'RUNNING' : c.status}: ${counts} (${c.total} test(s), ${c.concurrency} at a time${c.duration_ms != null ? `, ${seconds(c.duration_ms)}` : ''})`,
+  ];
+  if (c.changes) {
+    const { since, regressed, fixed } = c.changes;
+    lines.push(`Since campaign #${since.id}${since.version ? ` (version ${since.version})` : ''}: ${regressed.length ? `REGRESSED ${regressed.join(', ')}` : 'nothing regressed'}${fixed.length ? `; fixed ${fixed.join(', ')}` : ''}`);
+  }
+  const failed = c.runs.filter((t) => t.status === 'failed' || t.status === 'error');
+  if (failed.length) {
+    lines.push('Failed:');
+    for (const t of failed) {
+      lines.push(`  ${t.name}${t.failed_step ? ` — step ${t.failed_step}/${t.total_steps}` : ''}: ${String(t.error ?? '').split('\n')[0].slice(0, 200)}`);
+      if (t.triage) lines.push(`    → ${t.triage.cause} (${t.triage.confidence}): ${t.triage.summary.slice(0, 300)}`);
+    }
+  }
+  if (c.requirements.length) {
+    lines.push('Requirements:');
+    for (const r of c.requirements) {
+      lines.push(`  ${r.key} — ${r.title}: ${r.status.replace('_', ' ')}${r.criteria.length ? ` (${r.criteria.map((x) => `${x.number}: ${x.status.replace('_', ' ')}`).join(', ')})` : ''}`);
+    }
+  }
+  if (c.non_conformities.length) lines.push(`Non-conformities — the app does not do what its requirement says: ${c.non_conformities.join(', ')}. Report them; do not change the tests.`);
+  if (c.running) lines.push(`Still running: get_campaign(id: ${c.id}) to follow it.`);
+  return lines.join('\n');
+}
+
+const xml = (value) => String(value ?? '').replace(/[<>&"']/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[ch])
+  // Characters XML 1.0 does not allow (a page's text can hold them).
+  .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ''); // eslint-disable-line no-control-regex
+
+/**
+ * The campaign as JUnit XML, for a CI: one testcase per test, a failure with the step that
+ * failed and why (the triage's cause as its type), the requirements it checks as properties.
+ */
+export function junitReport(c) {
+  const time = (ms) => ((ms ?? 0) / 1000).toFixed(3);
+  const failures = c.totals.failed;
+  const errors = c.totals.error;
+  const skipped = c.totals.skipped + c.totals.pending + c.totals.running;
+  const suite = `${c.name}${c.version ? ` (${c.version})` : ''}`;
+  const cases = c.runs.map((t) => {
+    const requirements = requirementsOfTest(t.name);
+    const properties = requirements.length
+      ? `\n      <properties>${requirements.map((r) => `\n        <property name="requirement" value="${xml(r.key)}"/>`).join('')}\n      </properties>`
+      : '';
+    const message = `${t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}${String(t.error ?? '').split('\n')[0]}`;
+    const body = t.status === 'failed'
+      ? `\n      <failure message="${xml(message)}" type="${xml(t.triage?.cause ?? 'failed')}">${xml([t.triage && `${t.triage.cause} (${t.triage.confidence}): ${t.triage.summary}`, t.error].filter(Boolean).join('\n\n'))}</failure>`
+      : t.status === 'error' ? `\n      <error message="${xml(message)}"/>`
+        : t.status !== 'passed' ? `\n      <skipped message="${xml(t.status === 'skipped' ? 'not run: the campaign was stopped' : `still ${t.status}`)}"/>` : '';
+    return `    <testcase name="${xml(t.name)}" classname="${xml(c.project ?? 'izitest')}" time="${time(t.duration_ms)}">${properties}${body}${properties || body ? '\n    ' : ''}</testcase>`;
+  });
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<testsuites name="IziTest" tests="${c.total}" failures="${failures}" errors="${errors}" skipped="${skipped}" time="${time(c.duration_ms)}">`,
+    `  <testsuite name="${xml(suite)}" tests="${c.total}" failures="${failures}" errors="${errors}" skipped="${skipped}" time="${time(c.duration_ms)}" timestamp="${xml(c.created_at)}">`,
+    '    <properties>',
+    `      <property name="campaign" value="${c.id}"/>`,
+    ...(c.version ? [`      <property name="version" value="${xml(c.version)}"/>`] : []),
+    '    </properties>',
+    ...cases,
+    '  </testsuite>',
+    '</testsuites>',
+    '',
+  ].join('\n');
+}
+
+const html = (value) => String(value ?? '').replace(/[<>&"]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[ch]);
+
+const STATUS_COLORS = { passed: '#15803d', failed: '#b91c1c', error: '#b91c1c', running: '#1d4ed8', pending: '#6b7280', skipped: '#6b7280' };
+const REQUIREMENT_COLORS = { passing: '#15803d', failing: '#b91c1c', not_run: '#1d4ed8', not_covered: '#b45309' };
+
+/** The campaign as an HTML page of its own, to share: the totals, what changed, the requirements, each test. */
+export function htmlReport(c) {
+  const chip = (text, color) => `<span class="chip" style="color:${color};border-color:${color}">${html(text)}</span>`;
+  const when = new Date(c.created_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const changes = c.changes
+    ? `<section><h2>Since campaign #${c.changes.since.id}${c.changes.since.version ? ` (version ${html(c.changes.since.version)})` : ''}</h2>
+       <p>${c.changes.regressed.length ? `<strong class="bad">Regressed:</strong> ${c.changes.regressed.map(html).join(', ')}` : 'Nothing regressed.'}
+       ${c.changes.fixed.length ? `<br><strong class="good">Fixed:</strong> ${c.changes.fixed.map(html).join(', ')}` : ''}</p></section>`
+    : '';
+  const requirements = c.requirements.length
+    ? `<section><h2>Requirements</h2>${c.requirements.map((r) => `
+       <div class="requirement"><div><strong>${html(r.key)}</strong> ${html(r.title)} ${chip(r.status.replace('_', ' '), REQUIREMENT_COLORS[r.status])}</div>
+       <ol>${r.criteria.map((x) => `<li>${html(x.text)} ${chip(x.status.replace('_', ' '), REQUIREMENT_COLORS[x.status])}</li>`).join('')}</ol></div>`).join('')}</section>`
+    : '';
+  const rows = c.runs.map((t) => `
+    <tr><td>${html(t.name)}</td><td>${chip(t.status, STATUS_COLORS[t.status])}</td><td>${seconds(t.duration_ms)}</td>
+    <td>${t.status === 'failed' || t.status === 'error'
+      ? `${t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}${html(String(t.error ?? '').split('\n')[0].slice(0, 300))}${t.triage ? `<div class="why"><strong>${html(t.triage.cause.replace('_', ' '))}</strong> — ${html(t.triage.summary)}</div>` : ''}`
+      : ''}</td></tr>`).join('');
+  const { totals } = c;
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campaign #${c.id} — ${html(c.name)}</title>
+<style>
+  body { font: 14px/1.5 system-ui, -apple-system, sans-serif; color: #111827; background: #f9fafb; margin: 0; padding: 24px 16px; }
+  main { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 15px; margin: 0 0 8px; }
+  section { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .meta { color: #6b7280; } .bad { color: #b91c1c; } .good { color: #15803d; }
+  .totals { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+  .totals div { font-size: 22px; font-weight: 600; } .totals span { display: block; font-size: 12px; font-weight: 400; color: #6b7280; }
+  .chip { display: inline-block; font-size: 11px; padding: 0 6px; border: 1px solid; border-radius: 999px; white-space: nowrap; }
+  table { width: 100%; border-collapse: collapse; } td, th { text-align: left; padding: 6px 8px; border-top: 1px solid #f3f4f6; vertical-align: top; }
+  th { font-size: 12px; color: #6b7280; font-weight: 500; } .why { color: #6b7280; margin-top: 2px; }
+  .requirement + .requirement { margin-top: 10px; } ol { margin: 4px 0 0; padding-left: 20px; }
+</style></head>
+<body><main>
+<h1>Campaign #${c.id} — ${html(c.name)}</h1>
+<div class="meta">${c.version ? `Version ${html(c.version)} · ` : ''}${html(when)} · ${c.total} test(s), ${c.concurrency} at a time${c.duration_ms != null ? ` · ${seconds(c.duration_ms)}` : ''} · ${html(c.running ? 'running' : c.status)}</div>
+<div class="totals">${STATUSES.filter((s) => totals[s]).map((s) => `<div style="color:${STATUS_COLORS[s]}">${totals[s]}<span>${s}</span></div>`).join('')}</div>
+${c.non_conformities.length ? `<section><h2 class="bad">Non-conformities</h2><p>The app does not do what the requirement says: ${c.non_conformities.map(html).join(', ')}.</p></section>` : ''}
+${changes}
+${requirements}
+<section><h2>Tests</h2><table><tr><th>Test</th><th>Result</th><th>Time</th><th>Failure</th></tr>${rows}</table></section>
+</main></body></html>
+`;
+}

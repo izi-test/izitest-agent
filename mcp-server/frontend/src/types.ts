@@ -261,3 +261,50 @@ export interface TestRequirement {
   title: string;
   criteria: Array<{ number: number; text: string; kind: string }>;
 }
+
+/** How a test did in a campaign (mcp-server/lib/campaigns.js). */
+export type CampaignTestStatus = 'passed' | 'failed' | 'error' | 'running' | 'pending' | 'skipped';
+
+export interface CampaignRun {
+  name: string;
+  status: CampaignTestStatus;
+  execution_id: number | null;
+  duration_ms: number | null;
+  failed_step: number | null;
+  total_steps: number | null;
+  error: string | null;
+  triage: { cause: Triage['cause']; confidence: string; summary: string } | null;
+}
+
+/** A requirement as the campaign's runs leave it, criterion by criterion. */
+export interface CampaignRequirement {
+  key: string;
+  title: string;
+  status: Requirement['coverage']['status'];
+  criteria: Array<{ number: number; text: string; status: 'passing' | 'failing' | 'not_run' | 'not_covered' }>;
+}
+
+/** Tests replayed together for a version of the app: a project's, a requirement's, or a list. */
+export interface Campaign {
+  id: number;
+  name: string;
+  project_id: number | null;
+  project: string | null;
+  scope: { project_id?: number; requirement?: string; tests?: string[] };
+  version: string | null;
+  concurrency: number;
+  status: 'running' | 'done' | 'stopped' | 'interrupted';
+  created_at: string;
+  finished_at: string | null;
+  running: boolean;
+  totals: Record<CampaignTestStatus, number>;
+  total: number;
+  duration_ms: number | null;
+  changes: { since: { id: number; version: string | null; created_at: string }; regressed: string[]; fixed: string[] } | null;
+  requirements: CampaignRequirement[];
+  non_conformities: string[];
+  runs: CampaignRun[];
+}
+
+/** A campaign as listed: without its runs and requirements, with what failed. */
+export type CampaignSummary = Omit<Campaign, 'requirements' | 'runs'> & { failing_requirements: string[]; failed: string[] };

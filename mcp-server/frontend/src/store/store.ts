@@ -10,6 +10,7 @@ import { chatApi } from './services/chatApi';
 import { statsApi } from './services/statsApi';
 import { bugsApi } from './services/bugsApi';
 import { requirementsApi } from './services/requirementsApi';
+import { campaignsApi } from './services/campaignsApi';
 
 export const store = configureStore({
   reducer: {
@@ -24,6 +25,7 @@ export const store = configureStore({
     [statsApi.reducerPath]: statsApi.reducer,
     [bugsApi.reducerPath]: bugsApi.reducer,
     [requirementsApi.reducerPath]: requirementsApi.reducer,
+    [campaignsApi.reducerPath]: campaignsApi.reducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware()
@@ -34,7 +36,8 @@ export const store = configureStore({
       .concat(chatApi.middleware)
       .concat(statsApi.middleware)
       .concat(bugsApi.middleware)
-      .concat(requirementsApi.middleware),
+      .concat(requirementsApi.middleware)
+      .concat(campaignsApi.middleware),
 });
 
 export type RootState = ReturnType<typeof store.getState>;

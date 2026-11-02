@@ -264,7 +264,8 @@ export function actionPlan(steps, startStep) {
 /**
  * Run a saved test. `options.test` runs that test instead of the saved one under `name` —
  * a repair being checked (lib/repairs.js) — and a failure is diagnosed (lib/triage.js)
- * except in such a check or in debug mode.
+ * except in such a check or in debug mode. `options.campaignId`: the run is part of that
+ * campaign (lib/campaigns.js).
  */
 export async function executeTest(name, variables, substitutions, start_step, new_window, sendCommand, trigger = 'manual', onProgress = null, debugController = null, options = {}) {
   const test = options.test ?? loadTest(name);
@@ -341,9 +342,9 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   // ─── Create execution record ──────────────────────────────────
   const execResult = db.prepare(
-    `INSERT INTO test_executions (test_id, test_name, status, total_steps, variables, new_window, trigger, assertions_total)
-     VALUES (?, ?, 'running', ?, ?, ?, ?, ?) RETURNING id`
-  ).get(testId, name, hydratedSteps.length, JSON.stringify(mergedVariables), new_window ? 1 : 0, trigger, assertionsTotal);
+    `INSERT INTO test_executions (test_id, test_name, status, total_steps, variables, new_window, trigger, assertions_total, campaign_id)
+     VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?) RETURNING id`
+  ).get(testId, name, hydratedSteps.length, JSON.stringify(mergedVariables), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null);
   const executionId = execResult.id;
 
   // ─── Initialize pending step rows ─────────────────────────────
@@ -691,10 +692,6 @@ async function triageRun({ name, test, executionId, failedStepOrder, globalError
 }
 
 /**
- * Evaluate a single assertion by querying the browser.
- * Returns { passed, expected, actual, type }
- */
-/**
  * What a whole page shows, for a check of a phrase in it: where the phrase is, when it is
  * there; otherwise the page's text, cut short.
  */
@@ -705,6 +702,10 @@ function pageExcerpt(text, expected) {
   return `the page: ${flat.length > 240 ? `${flat.slice(0, 240)}…` : flat}`;
 }
 
+/**
+ * Evaluate a single assertion by querying the browser.
+ * Returns { passed, expected, actual, type }
+ */
 export async function evaluateAssertion(sendCommand, assertion, tabId) {
   const type = assertion.type;
   const selector = assertion.selector;

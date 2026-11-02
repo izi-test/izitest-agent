@@ -26,6 +26,7 @@ import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
 import { designTests, planDesigned, withResolution, recordingBrief } from './requirement-design.js';
 import { complete, agentName } from './agent/complete.js';
+import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport } from './campaigns.js';
 import { generateTestCode } from './codegen/index.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
@@ -533,6 +534,67 @@ export async function apiRouter(req, res, url) {
       } catch (err) {
         return json(res, 400, { error: err.message });
       }
+    }
+
+    // ── Campaigns (lib/campaigns.js): tests replayed together for a version of the app ──
+
+    // GET /api/campaigns?project_id= — newest first
+    if (method === 'GET' && path === '/api/campaigns') {
+      const projectId = url.searchParams.get('project_id');
+      return json(res, 200, { campaigns: listCampaigns({ projectId: projectId ? Number(projectId) : undefined }) });
+    }
+
+    // POST /api/campaigns — { project_id | requirement | tests, version, name, concurrency }: started, runs on its own
+    if (method === 'POST' && path === '/api/campaigns') {
+      const body = await readBody(req);
+      try {
+        const { campaign } = startCampaign({
+          name: body.name, tests: Array.isArray(body.tests) ? body.tests : undefined, requirement: body.requirement || undefined,
+          projectId: body.project_id ?? null, version: body.version ?? null, concurrency: body.concurrency ?? 3,
+        }, { sendCommand });
+        return json(res, 201, { campaign });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // GET | DELETE /api/campaigns/:id — its report; gone (its runs stay, as runs of their tests)
+    params = matchRoute(path, '/api/campaigns/:id');
+    if (params && (method === 'GET' || method === 'DELETE')) {
+      if (method === 'GET') {
+        const campaign = getCampaign(params.id);
+        return campaign ? json(res, 200, { campaign }) : json(res, 404, { error: 'Campaign not found' });
+      }
+      try {
+        deleteCampaign(params.id);
+        return json(res, 200, { success: true });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/campaigns/:id/stop — the tests running finish, the others are not started
+    params = matchRoute(path, '/api/campaigns/:id/stop');
+    if (method === 'POST' && params) {
+      try {
+        return json(res, 200, { campaign: stopCampaign(params.id) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // GET /api/campaigns/:id/junit.xml | report.html — the report for a CI, and to share
+    params = matchRoute(path, '/api/campaigns/:id/:file');
+    if (method === 'GET' && params && ['junit.xml', 'report.html'].includes(params.file)) {
+      const campaign = getCampaign(params.id);
+      if (!campaign) return json(res, 404, { error: 'Campaign not found' });
+      const isXml = params.file === 'junit.xml';
+      res.writeHead(200, {
+        'Content-Type': isXml ? 'application/xml; charset=utf-8' : 'text/html; charset=utf-8',
+        ...(isXml ? { 'Content-Disposition': `attachment; filename="campaign-${campaign.id}-junit.xml"` } : {}),
+      });
+      res.end(isXml ? junitReport(campaign) : htmlReport(campaign));
+      return;
     }
 
     // ── Bugs the explorer found (lib/bugs.js), and its explorations ──

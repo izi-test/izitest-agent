@@ -320,6 +320,35 @@ export function initDatabase() {
     log(`Migration warning (test design): ${err.message}`);
   }
 
+  // Campaigns (lib/campaigns.js): tests replayed together for a version of the app — a
+  // project's, a requirement's, or a list — and the runs that belong to each.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaigns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      scope TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      version TEXT,
+      tests TEXT NOT NULL,
+      concurrency INTEGER NOT NULL DEFAULT 3,
+      status TEXT NOT NULL DEFAULT 'running',
+      errors TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      finished_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_campaigns_scope ON campaigns(scope_key);
+  `);
+  try {
+    const execCols = db.prepare('PRAGMA table_info(test_executions)').all().map(c => c.name);
+    if (!execCols.includes('campaign_id')) {
+      db.exec('ALTER TABLE test_executions ADD COLUMN campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_executions_campaign ON test_executions(campaign_id)');
+  } catch (err) {
+    log(`Migration warning (campaigns): ${err.message}`);
+  }
+
   log('SQLite database initialized');
 }
 

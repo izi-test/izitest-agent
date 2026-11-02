@@ -14,11 +14,13 @@ import { ChatPanel } from './components/ChatPanel';
 import { Dashboard } from './components/Dashboard';
 import { BugsPage } from './components/BugsPage';
 import { RequirementsPage, RequirementPage } from './components/Requirements';
+import { CampaignsPage, CampaignPage } from './components/Campaigns';
 import { Button } from './components/Button';
 import { useGetTestsQuery } from './store/services/testsApi';
 import {
   Bug,
   ClipboardList,
+  Layers,
   FlaskConical,
   Plus,
   MessageSquare,
@@ -121,6 +123,14 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               </button>
 
               <button
+                className={`sidebar-nav__item ${location.pathname.startsWith('/campaigns') ? 'active' : ''}`}
+                onClick={() => navigate('/campaigns')}
+              >
+                <Layers size={18} />
+                <span>Campaigns</span>
+              </button>
+
+              <button
                 className={`sidebar-nav__item ${location.pathname === '/bugs' ? 'active' : ''}`}
                 onClick={() => navigate('/bugs')}
               >
@@ -168,6 +178,8 @@ export default function App() {
         <Route path="/tests/:testName" element={<TestDetailPage />} />
         <Route path="/requirements" element={<RequirementsRoute />} />
         <Route path="/requirements/:key" element={<RequirementRoute />} />
+        <Route path="/campaigns" element={<CampaignsRoute />} />
+        <Route path="/campaigns/:id" element={<CampaignRoute />} />
         <Route path="/bugs" element={<BugsRoute />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/chat" element={<ChatPage />} />
@@ -224,6 +236,28 @@ function RequirementRoute() {
       requirementKey={decodeURIComponent(key)}
       onBack={() => navigate('/requirements')}
       onOpenTest={(name) => navigate(`/tests/${encodeURIComponent(name)}`)}
+      onOpenCampaign={(id) => navigate(`/campaigns/${id}`)}
+    />
+  );
+}
+
+function CampaignsRoute() {
+  const navigate = useNavigate();
+  return <CampaignsPage onOpen={(id) => navigate(`/campaigns/${id}`)} />;
+}
+
+function CampaignRoute() {
+  const navigate = useNavigate();
+  const { id } = useParams();
+  if (!id || !/^\d+$/.test(id)) return <Navigate to="/campaigns" replace />;
+  return (
+    <CampaignPage
+      key={id}
+      id={Number(id)}
+      onBack={() => navigate('/campaigns')}
+      onOpen={(next) => navigate(`/campaigns/${next}`)}
+      onOpenTest={(name) => navigate(`/tests/${encodeURIComponent(name)}`)}
+      onOpenRequirement={(key) => navigate(`/requirements/${encodeURIComponent(key)}`)}
     />
   );
 }

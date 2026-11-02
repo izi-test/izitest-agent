@@ -22,6 +22,8 @@ import { registerBrowserTools } from './lib/tools/browser.js';
 import { registerTestTools } from './lib/tools/test.js';
 import { registerExploreTools } from './lib/tools/explore.js';
 import { registerRequirementTools } from './lib/tools/requirements.js';
+import { registerCampaignTools } from './lib/tools/campaigns.js';
+import { closeInterruptedCampaigns } from './lib/campaigns.js';
 import { instrumentTools, registerBenchTools } from './lib/bench.js';
 import { registerAgentTools } from './lib/agent/mcp-adapter.js';
 import { initDatabase } from './lib/db.js';
@@ -86,6 +88,7 @@ const USE_STDIO = process.argv.includes('--stdio');
 // ─── Initialize Database & Start WebSocket Bridge ───────────────────
 
 initDatabase();
+closeInterruptedCampaigns();
 // Built-in step definitions are seeded when a project is created: give older projects the
 // ones added since ("I check {string}"…).
 seedAllProjectsStepDefinitions();
@@ -135,6 +138,8 @@ function createMcpServer(connectionId) {
   unscope();
 
   registerRequirementTools(server);
+  // A campaign runs in a session of its own, not the caller's: its windows are its own.
+  registerCampaignTools(server, deps);
 
   registerAgentTools(server);
   registerBenchTools(server);

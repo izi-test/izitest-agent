@@ -125,6 +125,8 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `list_repairs` | Lists the repairs proposed for failed runs, and where each stands. |
 | `verify_repair` | Replays the test with a proposed repair made, without saving it. |
 | `resolve_repair` | Applies a repair to the saved test, or rejects it — on the user's word. |
+| `run_campaign` | Replays a project's tests, a requirement's or a list together, for a version of the app, and answers with the report (see below). |
+| `get_campaign` / `list_campaigns` / `stop_campaign` | A campaign's report; the campaigns, newest first; stop one that runs. |
 | `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
@@ -529,6 +531,41 @@ case_id)`).
 - **Un cas planifié** se crée depuis son scénario (« Create » : le modal Gherkin, prérempli, lie le
   test au cas) ou s'enregistre (« Record » : l'agent reçoit les critères, le scénario à suivre, et la
   règle des non-conformités). « Scenario » ouvre son Gherkin : modifié, il est revérifié.
+
+### Campagnes : `run_campaign`
+
+Une campagne rejoue ensemble les tests d'un **projet**, d'une **exigence** (les tests qui y sont liés)
+ou une **liste**, pour une **version** de l'appli (`version: "1.4.0"`, un commit). Chaque test tourne
+dans sa propre fenêtre, fermée après, quelques-uns à la fois (`concurrency`, 3 par défaut, 6 au plus),
+dans une session à la campagne : pas celle de l'agent qui l'a lancée. Un échec est diagnostiqué comme
+au `run_test` ; ces rejeux comptent dans la couverture des exigences (déclencheur `campaign`).
+
+Le rapport dit :
+- ce qui est passé, ce qui a échoué et pourquoi (la cause du triage) ;
+- **ce qui a régressé** (passait à la dernière campagne des mêmes tests, échoue maintenant) et ce qui a
+  été corrigé ;
+- **où en est chaque exigence**, critère par critère, d'après les rejeux de cette campagne : `passing`,
+  `failing`, `not run` (un de ses tests n'a pas tourné ici), `no test` ;
+- les **non-conformités** : à signaler, pas à « réparer » dans les tests.
+
+`run_campaign` attend la fin (10 minutes au plus ; au-delà, `get_campaign(id)` la suit) et répond par le
+rapport. Dans le tableau de bord, la page **Campaigns** lance une campagne (un projet, une exigence ou
+des tests choisis, une version, combien à la fois), la suit en direct, l'arrête (les tests en cours
+finissent, les autres ne démarrent pas), la relance, et en donne le **JUnit** et le **rapport HTML**.
+Une exigence a son bouton « Run its tests ».
+
+Pour une CI ou un terminal, sur une machine où tourne le serveur (et le Chrome de l'extension) :
+
+```bash
+IZITEST_TOKEN=… node mcp-server/bin/campaign.js --project 3 --version 1.4.0 --junit reports/junit.xml --html reports/campaign.html
+```
+
+`--requirement REQ-12` ou `--tests a,b` à la place de `--project` ; `--concurrency`, `--name`.
+`IZITEST_URL` donne le serveur (par défaut `http://127.0.0.1:3467`). Code de sortie : 0 si tout passe,
+1 si un test échoue ou n'a pas tourné, 2 si la campagne n'a pas pu être lancée. Dans le JUnit, la cause
+du triage est le `type` de chaque `failure`, et les exigences d'un test sont ses `property
+name="requirement"`. Une campagne laissée en cours par un serveur arrêté est marquée `interrupted` au
+redémarrage.
 
 ### Exploration autonome : `explore_app`
 

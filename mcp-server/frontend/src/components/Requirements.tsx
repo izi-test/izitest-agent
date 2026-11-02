@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  ClipboardList, Plus, Trash2, Save, ArrowLeft, FlaskConical, Link2, X, ExternalLink, Sparkles, AlertTriangle, FileCode, Bot, Loader2,
+  ClipboardList, Plus, Trash2, Save, ArrowLeft, FlaskConical, Link2, X, ExternalLink, Sparkles, AlertTriangle, FileCode, Bot, Loader2, Play,
 } from 'lucide-react';
 import {
   useGetRequirementsQuery, useGetRequirementQuery, useCreateRequirementMutation, useUpdateRequirementMutation,
@@ -8,6 +8,7 @@ import {
   useDesignRequirementMutation, usePlanDesignMutation, useDismissDesignMutation,
 } from '../store/services/requirementsApi';
 import { useGetTestsQuery } from '../store/services/testsApi';
+import { useStartCampaignMutation } from '../store/services/campaignsApi';
 import { useAppSelector } from '../store/hooks';
 import { Button } from './Button';
 import { CreateTestModal, type CreateMode, type CreateTestPreset } from './CreateTestModal';
@@ -136,15 +137,17 @@ function RequirementForm({ projectId, onSaved, onCancel }: { projectId: number |
 
 // ─── One requirement ─────────────────────────────────────────────────
 
-export function RequirementPage({ requirementKey, onBack, onOpenTest }: { requirementKey: string; onBack: () => void; onOpenTest: (name: string) => void }) {
+type RequirementPageProps = { onBack: () => void; onOpenTest: (name: string) => void; onOpenCampaign: (id: number) => void };
+
+export function RequirementPage({ requirementKey, ...props }: { requirementKey: string } & RequirementPageProps) {
   const { data: requirement, isLoading } = useGetRequirementQuery(requirementKey);
   if (isLoading) return <p className="empty-state">Loading…</p>;
   if (!requirement) return <p className="empty-state">No requirement {requirementKey}.</p>;
   // Keyed by its last update: a save elsewhere (an agent) shows here as it is now.
-  return <RequirementEditor key={requirement.updated_at} requirement={requirement} onBack={onBack} onOpenTest={onOpenTest} />;
+  return <RequirementEditor key={requirement.updated_at} requirement={requirement} {...props} />;
 }
 
-function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: Requirement; onBack: () => void; onOpenTest: (name: string) => void }) {
+function RequirementEditor({ requirement, onBack, onOpenTest, onOpenCampaign }: { requirement: Requirement } & RequirementPageProps) {
   const [title, setTitle] = useState(requirement.title);
   const [description, setDescription] = useState(requirement.description);
   const [priority, setPriority] = useState(requirement.priority);
@@ -153,6 +156,7 @@ function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: R
   const [preset, setPreset] = useState<CreateTestPreset | null>(null);
   const [update, { isLoading: saving }] = useUpdateRequirementMutation();
   const [remove] = useDeleteRequirementMutation();
+  const [startCampaign, { isLoading: launching }] = useStartCampaignMutation();
   const design = requirement.design;
   const missing = (design?.missing ?? []).filter((m) => !criteria.some((c) => sameText(c.text, m)));
   const dirty = title !== requirement.title || description !== requirement.description || priority !== requirement.priority
@@ -170,6 +174,16 @@ function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: R
     if (!window.confirm(`Delete ${requirement.key}? Its tests stay; only the requirement and its links go.`)) return;
     await remove(requirement.key).unwrap();
     onBack();
+  };
+  // Its tests replayed together, as a campaign: where it stands now, criterion by criterion.
+  const runTests = async () => {
+    setError(null);
+    try {
+      const { campaign } = await startCampaign({ requirement: requirement.key }).unwrap();
+      onOpenCampaign(campaign.id);
+    } catch (err) {
+      setError(errorOf(err));
+    }
   };
   // A planned case's test: created from its Gherkin, or recorded by the agent following it.
   const createFor = (c: RequirementCase, mode: CreateMode) => {
@@ -192,6 +206,13 @@ function RequirementEditor({ requirement, onBack, onOpenTest }: { requirement: R
           {requirement.external_url && (
             <a className="requirement-link" href={requirement.external_url} target="_blank" rel="noreferrer"><ExternalLink size={12} /> source</a>
           )}
+          <Button
+            size="sm" variant="action" icon={launching ? Loader2 : Play} className="requirements-new"
+            disabled={launching || requirement.coverage.tests === 0} title={requirement.coverage.tests ? 'Replay its tests together, as a campaign' : 'No test linked yet'}
+            onClick={runTests}
+          >
+            Run its tests
+          </Button>
         </div>
         <div className="requirement-form">
           <input value={title} onChange={(e) => setTitle(e.target.value)} />

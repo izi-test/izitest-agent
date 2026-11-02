@@ -3356,3 +3356,50 @@ body {
 .case-scenario__unresolved { margin: 6px 0; font-size: 12px; color: var(--text-muted); }
 .case-scenario__unresolved ul { margin: 4px 0 0 18px; padding: 0; }
 .create-wf-hint--linked { margin: 0 0 12px; color: var(--accent-bright); }
+
+/* Campaigns: tests replayed together for a version of the app */
+.campaign-row { align-items: center; }
+.campaign-row .requirement-title { display: flex; flex-direction: column; white-space: normal; }
+.campaign-row__meta { font-size: 11px; color: var(--text-muted); }
+.campaign-version { margin-left: 8px; font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.campaign-regressed { font-size: 11px; font-weight: 600; color: var(--red); white-space: nowrap; }
+.campaign-bar { display: flex; width: 120px; height: 6px; border-radius: var(--radius-full); overflow: hidden; background: var(--bg-elevated); flex-shrink: 0; }
+.dash-panel > .campaign-bar { width: 100%; margin: 8px 0 4px; }
+.campaign-bar__part { display: block; flex-basis: 0; }
+.campaign-bar__part.run-status--passed { background: var(--green); }
+.campaign-bar__part.run-status--failed, .campaign-bar__part.run-status--error { background: var(--red); }
+.campaign-bar__part.run-status--running { background: var(--blue); }
+.campaign-bar__part.run-status--pending, .campaign-bar__part.run-status--skipped { background: var(--border-hover); }
+.run-status { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; }
+.run-status--passed { color: var(--green); }
+.run-status--failed, .run-status--error { color: var(--red); }
+.run-status--running { color: var(--blue); }
+.run-status--pending, .run-status--skipped { color: var(--text-muted); }
+.campaign-status { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: var(--radius-full); white-space: nowrap; background: var(--bg-elevated); color: var(--text-muted); }
+.campaign-status--running { background: var(--blue-bg); color: var(--blue); }
+.campaign-status--done { background: var(--green-bg); color: var(--green); }
+.campaign-status--stopped, .campaign-status--interrupted { background: var(--orange-bg); color: var(--orange); }
+.campaign-form__scopes { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; }
+.campaign-form__scopes label, .campaign-form__tests label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.campaign-form__scopes input, .campaign-form__tests input { accent-color: var(--accent); }
+.campaign-form__tests { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 12px; max-height: 180px; overflow-y: auto; font-size: 12px; font-family: var(--mono); }
+.campaign-totals { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; }
+.campaign-totals strong { font-size: 20px; margin-right: 2px; }
+.campaign-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent-bright); }
+.campaign-bad { color: var(--red); }
+.campaign-good { color: var(--green); }
+.campaign-change { font-size: 12px; margin: 4px 0; }
+.campaign-change strong { margin-right: 6px; }
+.campaign-requirement + .campaign-requirement { margin-top: 12px; }
+.campaign-criteria { margin: 6px 0 0 18px; padding: 0; font-size: 12px; color: var(--text); }
+.campaign-criteria li { padding: 2px 0; }
+.criterion-status { font-size: 10px; padding: 1px 6px; border-radius: var(--radius-full); margin-left: 6px; white-space: nowrap; }
+.criterion-status--passing { background: var(--green-bg); color: var(--green); }
+.criterion-status--failing { background: var(--red-bg); color: var(--red); }
+.criterion-status--not_run { background: var(--blue-bg); color: var(--blue); }
+.criterion-status--not_covered { background: var(--orange-bg); color: var(--orange); }
+.campaign-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.campaign-table td { padding: 6px 8px; border-top: 1px solid var(--border-subtle); vertical-align: top; }
+.campaign-table td:first-child { white-space: nowrap; }
+.campaign-error { color: var(--text); word-break: break-word; }
+.campaign-why { margin-top: 2px; color: var(--text-muted); word-break: break-word; }
