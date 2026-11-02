@@ -16,6 +16,9 @@ These tools are used for direct, real-time control of the browser.
 | `fill` | Fills an input/textarea/contenteditable. A date, time, colour or range input gets its value set instead of typed (see below). | `ref` (@eX), `selector`, `value`, `clear` |
 | `upload_file` | Gives files to a file input, as picking them in the file dialog would. The ref may be the input — often hidden — or its drop zone, label or "Upload" button (see below). | `files` (paths), `ref` (@eX), `selector` |
 | `drag` | Drags an element and drops it on another, with the mouse: a sortable list, a card to another column. Works with `draggable="true"` (HTML5) and with pages that follow the mouse (see below). | `ref` / `selector`, `targetRef` / `target`, `position` (center, top, bottom, left, right) |
+| `explore_app` | Explores a site on its own and reports its bugs (console errors, failed requests, broken links, accessibility), each with a test that reproduces it (see below). | `url`, `max_pages`, `interact`, `checks` |
+| `check_page` | Runs the same checks on the page you are on; nothing is saved. | `checks`, `since_seconds` |
+| `list_bugs` | Lists the bugs found, worst first, with their tests. | `status` |
 | `extract` | Retrieves content (text, attributes) from the page. `attribute: "value"` on a field reads what it holds now. | `selector`, `attribute`, `multiple` |
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
 | `get_page_info` | Detailed info (title, URL, element counts). | `tabId`, `profile` |
@@ -355,6 +358,10 @@ Chaque type d'assertion se rejoue, s'exporte en Playwright et a sa phrase Gherki
 | `element_visible` / `element_hidden` | `toBeVisible` / `toBeHidden` | `"…" should be visible` / `should be hidden` |
 | `url_equals` / `url_contains` | `toHaveURL` | `the URL should be "…"` / `should contain` |
 | `title_equals` / `title_contains` | `toHaveTitle` | `the title should be "…"` / `should contain` |
+| `no_console_errors` | erreurs collectées dès le début du test, puis `expect(…).toEqual([])` | `the page should log no error containing "…"` |
+| `no_failed_requests` | réponses ≥ 400 et requêtes en échec collectées, puis `toEqual([])` | `no request to "…" should fail` |
+| `link_ok` | `page.request.get(href)`, statut < 400 | `the link "…" should work` |
+| `no_a11y_violations` | `@axe-core/playwright` : `new AxeBuilder({ page }).withRules([…])` | `the page should not break the accessibility rule "…"` |
 
 Pour `attribute_equals`, l'attribut `value` d'un champ est ce qu'il contient au moment du contrôle,
 comme le lit `toHaveValue` : l'attribut HTML n'est que la valeur de départ (absent d'un champ rempli
@@ -398,6 +405,43 @@ enregistré.
 | `substitutions` | object | Remplacement textuel brut dans tous les paramètres (clé → valeur) |
 | `start_step` | number | Reprendre l'exécution à une étape spécifique (1-indexed) |
 | `new_window` | boolean | Si `true`, exécute dans une nouvelle fenêtre au lieu d'un nouvel onglet |
+
+### Exploration autonome : `explore_app`
+
+L'explorateur parcourt un site tout seul et rapporte ce qui ne va pas sans qu'aucune assertion
+n'ait été écrite. Depuis `url`, il visite les pages du même site (même origine, en largeur, en
+suivant leurs liens, `max_pages` au plus — 8 par défaut) et, sur chacune, contrôle :
+
+| Contrôle | Ce qui est signalé |
+| :--- | :--- |
+| `console` | les erreurs que la page écrit dans la console, et les exceptions qu'elle lève (`Uncaught …`) |
+| `network` | les requêtes répondues 4xx/5xx ou en échec (le favicon excepté) |
+| `links` | les liens vers les pages du site qui ne répondent pas (demandés depuis la page, avec ses cookies ; les liens vers d'autres sites ne sont pas suivis : beaucoup refusent une requête qui n'est pas d'un navigateur) |
+| `a11y` | les règles d'accessibilité enfreintes, par axe-core (WCAG 2.1 A/AA et bonnes pratiques), d'impact *serious* ou *critical* (`include_moderate` pour plus) |
+
+Avec `interact` (par défaut), il clique aussi sur chaque contrôle inoffensif de la page — boutons,
+onglets, menus, nommés — et regarde ce que chaque clic fait écrire ou échouer. Jamais ce qui
+supprime, paie, commande, déconnecte, envoie, confirme ou annule (en français comme en anglais), ni
+un lien (il est suivi, pas cliqué). La page est rechargée après un clic qui l'a changée. Aucun
+formulaire n'est envoyé : pour explorer en profondeur (remplir, valider), l'agent connecté utilise
+`check_page` sur la page où il est.
+
+Chaque bug est gardé une fois (même type, même page, même clic, même message, requête, lien ou
+règle) : une exploration suivante le compte à nouveau sans le dupliquer, un bug marqué corrigé et
+revu est rouvert, un bug écarté reste écarté. Chaque nouveau bug reçoit un test qui le reproduit,
+`bug_<id>_<type>` : la page, le clic qui l'a causé, une seconde, puis le contrôle qui échoue tant que
+le bug est là — et passe le jour où il est corrigé. Ce test est rejoué aussitôt (`confirm`) : le bug
+est marqué *reproduit* s'il échoue bien sur ce contrôle. L'exploration tourne dans sa propre fenêtre,
+fermée à la fin, comme celles des tests rejoués. Compter de 2 à 10 s par page : Chrome ralentit une
+page dans une fenêtre en arrière-plan.
+
+Les quatre contrôles sont aussi des types d'assertion (`add_assertion`) : ajouté à un test qui
+échoue dessus, un tel contrôle n'est pas refusé — le test reproduit alors le bug ; s'il passe, il en
+protège. Un test de bug qui échoue est diagnostiqué `app_regression` : la page a toujours le bug.
+
+Le tableau de bord a une page **Bugs** : lancer une exploration (URL, nombre de pages, clics), suivre
+la dernière, et la liste des bugs du plus grave au moins grave, avec leur test et les actions
+*Fixed*, *Dismiss*, *Reopen*. API : `GET /api/bugs`, `PUT /api/bugs/:id`, `GET|POST /api/explorations`.
 
 ### Triage et réparation d'un test qui échoue
 

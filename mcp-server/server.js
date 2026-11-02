@@ -20,6 +20,7 @@ import { initLive, liveRouter } from './lib/live.js';
 import { scopeToolsToSession } from './lib/tools/session-scope.js';
 import { registerBrowserTools } from './lib/tools/browser.js';
 import { registerTestTools } from './lib/tools/test.js';
+import { registerExploreTools } from './lib/tools/explore.js';
 import { instrumentTools, registerBenchTools } from './lib/bench.js';
 import { registerAgentTools } from './lib/agent/mcp-adapter.js';
 import { initDatabase } from './lib/db.js';
@@ -129,6 +130,7 @@ function createMcpServer(connectionId) {
   const unscope = scopeToolsToSession(server, (name) => resolveSession(connectionId, name));
   registerBrowserTools(server, deps);
   registerTestTools(server, deps);
+  registerExploreTools(server, deps);
   unscope();
 
   registerAgentTools(server);

@@ -4,7 +4,7 @@
   "scripts": {
     "build": "npm run clean && npm run copy && node build.js",
     "watch": "npm run copy && node watch.js",
-    "copy": "mkdir -p dist && cp manifest.json popup.html popup.js dist/ && cp -R icons dist/",
+    "copy": "mkdir -p dist && cp manifest.json popup.html popup.js dist/ && cp -R icons dist/ && cp node_modules/axe-core/axe.min.js dist/",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.mjs"
@@ -16,7 +16,8 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
-    "puppeteer-core": "^24.40.0",
-    "jsonpath-plus": "^10.3.0"
+    "axe-core": "^4.14.0",
+    "jsonpath-plus": "^10.3.0",
+    "puppeteer-core": "^24.40.0"
   }
 }

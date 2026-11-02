@@ -147,3 +147,33 @@ export interface Execution {
   triage?: Triage | null;
   repairs?: Repair[];
 }
+
+/** A bug the explorer found (mcp-server/lib/bugs.js), with the test that reproduces it. */
+export interface Bug {
+  id: number;
+  kind: 'console_error' | 'failed_request' | 'broken_link' | 'a11y';
+  severity: 'high' | 'medium' | 'low';
+  title: string;
+  page_url: string;
+  details: Record<string, unknown>;
+  repro_test: string | null;
+  reproduced: boolean | null;
+  status: 'open' | 'dismissed' | 'fixed';
+  occurrences: number;
+  first_seen: string;
+  last_seen: string;
+  exploration_id: number | null;
+}
+
+/** One run of the explorer. */
+export interface Exploration {
+  id: number;
+  start_url: string;
+  status: 'running' | 'done' | 'failed';
+  pages: Array<{ url: string; findings: number; clicks: number; error?: string; skipped?: string }>;
+  bugs_found: number;
+  bugs_new: number;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}

@@ -35,6 +35,8 @@ const DEFAULT_SEARCH_MAX_MATCHES = 10;
 const SEARCH_SNIPPET_RADIUS = 100;
 
 const capturesByTab = new Map<number, CapturedEntry[]>();
+// Sent with the requests IziTest makes from a page (check_links), lowercase as Chrome reports it.
+export const CHECK_HEADER = 'x-izitest-check';
 const attachedTabs = new Set<number>();
 let idCounter = 0;
 
@@ -123,6 +125,8 @@ export async function cmdNetworkRequests({ tabId, sessionId, textFilter, method,
   const needle = textFilter?.toLowerCase();
   const bodyNeedle = requestBodyFilter?.toLowerCase();
   const filtered = (capturesByTab.get(resolvedTabId) ?? []).filter((entry) => {
+    // IziTest's own requests (check_links): not the page's.
+    if (entry.requestHeaders[CHECK_HEADER]) return false;
     if (needle && !entry.url.toLowerCase().includes(needle)) return false;
     if (method && entry.method.toUpperCase() !== method.toUpperCase()) return false;
     if (resourceType && entry.resourceType !== resourceType) return false;

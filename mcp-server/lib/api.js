@@ -21,6 +21,8 @@ import { serializeTestToFeature } from './gherkin/serialize.js';
 import { stepsForEditedFeature } from './gherkin/reconcile.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
+import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
+import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { generateTestCode } from './codegen/index.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
@@ -402,6 +404,56 @@ export async function apiRouter(req, res, url) {
       return json(res, 200, {
         execution: { ...execution, steps: parseRows(steps, 'assertion_result'), repairs: repairsById(repairIds).map(withDiff) }
       });
+    }
+
+    // ── Bugs the explorer found (lib/bugs.js), and its explorations ──
+
+    // GET /api/bugs?status=open|dismissed|fixed|all&project_id=
+    if (method === 'GET' && path === '/api/bugs') {
+      const projectId = url.searchParams.get('project_id');
+      return json(res, 200, { bugs: listBugs({ status: url.searchParams.get('status') || 'open', projectId: projectId ? Number(projectId) : undefined }) });
+    }
+
+    // PUT /api/bugs/:id — { status: open | dismissed | fixed }
+    params = matchRoute(path, '/api/bugs/:id');
+    if (method === 'PUT' && params) {
+      const body = await readBody(req);
+      try {
+        return json(res, 200, { bug: setBugStatus(parseInt(params.id), body.status) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // GET /api/explorations — the latest
+    if (method === 'GET' && path === '/api/explorations') {
+      return json(res, 200, { explorations: listExplorations(10) });
+    }
+
+    // GET /api/explorations/:id — one, with its bugs
+    params = matchRoute(path, '/api/explorations/:id');
+    if (method === 'GET' && params) {
+      const exploration = getExploration(parseInt(params.id));
+      if (!exploration) return json(res, 404, { error: 'Exploration not found' });
+      return json(res, 200, { exploration, bugs: listBugs({ status: 'all', explorationId: exploration.id }) });
+    }
+
+    // POST /api/explorations — { url, max_pages, interact, project_id }: starts one, answers at once
+    if (method === 'POST' && path === '/api/explorations') {
+      const body = await readBody(req);
+      if (!body.url || !/^https?:\/\//.test(body.url)) return json(res, 400, { error: 'An http(s) URL is needed' });
+      const started = new Promise((resolve) => {
+        runExploration({
+          url: body.url, sendCommand, projectId: body.project_id ?? null,
+          maxPages: Math.min(Number(body.max_pages) || 8, 50), interact: body.interact ?? true,
+          checks: CHECKS, impacts: DEFAULT_IMPACTS, budgetMs: 120000, onStart: resolve,
+        }).catch((err) => {
+          log(`Exploration of ${body.url} failed: ${err.message}`);
+          resolve(null);
+        });
+      });
+      const id = await started;
+      return id ? json(res, 202, { id }) : json(res, 500, { error: 'The exploration could not start' });
     }
 
     // ── Repairs: proposed when a run fails (lib/triage.js), accepted or not by the user ──

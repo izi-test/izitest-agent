@@ -234,6 +234,41 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_test_repairs_test ON test_repairs(test_id);
   `);
 
+  // What the explorer found (lib/explore.js): its runs, and the bugs, each with a test that
+  // reproduces it (lib/bugs.js).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS explorations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      start_url TEXT NOT NULL,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      options TEXT DEFAULT '{}',
+      pages TEXT DEFAULT '[]',
+      bugs_found INTEGER DEFAULT 0,
+      bugs_new INTEGER DEFAULT 0,
+      error TEXT,
+      started_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      finished_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS bugs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fingerprint TEXT NOT NULL UNIQUE,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      exploration_id INTEGER REFERENCES explorations(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      title TEXT NOT NULL,
+      page_url TEXT NOT NULL,
+      details TEXT DEFAULT '{}',
+      repro_test TEXT,
+      reproduced INTEGER,
+      status TEXT NOT NULL DEFAULT 'open',
+      occurrences INTEGER NOT NULL DEFAULT 1,
+      first_seen TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      last_seen TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+  `);
+
   log('SQLite database initialized');
 }
 

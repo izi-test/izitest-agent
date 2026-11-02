@@ -4,6 +4,7 @@ import { resolveTabId, waitForTabLoad, delay, ensureContentScript, SCROLL_SETTLE
 import { sendToFrame, frameOfRef, measureInFrame, findInFrames } from '../frames';
 import { CMD_KEY, MODIFIER_MAP, focusViaLocator, clearAndType } from './page-helpers';
 import { attachNetworkCapture } from './network';
+import { attachConsoleCapture } from './checks';
 import { adoptOpenedWindow, rememberOwnedWindow } from '../owned-windows';
 import { armEffects } from '../effects';
 import { dragBetween, dropPoint } from './drag';
@@ -284,6 +285,7 @@ export async function cmdNavigate(
 
   const page = await getPage(targetTabId);
   attachNetworkCapture(targetTabId, page);
+  attachConsoleCapture(targetTabId, page);
 
   // Set precise viewport dimensions if specified
   if (viewportWidth && viewportHeight) {

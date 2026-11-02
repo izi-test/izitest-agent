@@ -41,4 +41,9 @@ export const DEFAULT_STEP_DEFINITIONS = [
   { keyword: 'Then',  pattern: '{string} should have text {string}',     command: 'assert', params_template: { type: 'text_equals', selector: '{0}', expected: '{1}' } },
   { keyword: 'Then',  pattern: 'the {string} of {string} should be {string}', command: 'assert', params_template: { type: 'attribute_equals', attribute: '{0}', selector: '{1}', expected: '{2}' } },
   { keyword: 'Then',  pattern: '{string} should match {int} elements',   command: 'assert', params_template: { type: 'element_count', selector: '{0}', expected: '{1}' } },
+  // What the page does wrong on its own: the check a bug's test makes (lib/explore.js).
+  { keyword: 'Then',  pattern: 'the page should log no error containing {string}', command: 'assert', params_template: { type: 'no_console_errors', expected: '{0}' } },
+  { keyword: 'Then',  pattern: 'no request to {string} should fail',      command: 'assert', params_template: { type: 'no_failed_requests', expected: '{0}' } },
+  { keyword: 'Then',  pattern: 'the link {string} should work',           command: 'assert', params_template: { type: 'link_ok', selector: '{0}' } },
+  { keyword: 'Then',  pattern: 'the page should not break the accessibility rule {string}', command: 'assert', params_template: { type: 'no_a11y_violations', expected: '{0}' } },
 ];

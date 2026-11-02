@@ -76,6 +76,32 @@ export interface DragParams {
   sessionId?: string;
 }
 
+export interface ConsoleMessagesParams {
+  tabId?: number;
+  sessionId?: string;
+  /** Only what was logged from this time on (ms since epoch). */
+  since?: number;
+  /** 'error' (default), or 'warning' for warnings too. */
+  level?: 'error' | 'warning';
+}
+
+export interface CheckLinksParams {
+  tabId?: number;
+  sessionId?: string;
+  /** Only the links this selector matches (default: every a[href]). */
+  selector?: string;
+  limit?: number;
+}
+
+export interface RunAxeParams {
+  tabId?: number;
+  sessionId?: string;
+  /** Only these axe rule ids (default: WCAG 2.1 A/AA and best practices). */
+  rules?: string[];
+  /** Only this part of the page. */
+  selector?: string;
+}
+
 export interface KeyboardParams {
   key: string;
   modifiers?: KeyboardModifier[];

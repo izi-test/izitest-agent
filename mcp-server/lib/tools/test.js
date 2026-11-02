@@ -9,6 +9,7 @@ import {
   loadTest, saveTest, deleteTest as deleteTestDb, listTests as listTestsDb, executeTest,
   updateTestStep, evaluateAssertion
 } from '../tests.js';
+import { ORACLE_ASSERTIONS } from '../test-execute.js';
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
 import { uniqueVarName, listVariable, variabilizeInput } from '../variable-detection.js';
 import { linkAssertionToVariables } from '../test-variable.js';
@@ -539,17 +540,17 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: add_assertion ---
   server.tool(
     'add_assertion',
-    'Add an assertion step to a saved test. The assertion is first evaluated live against the current browser page to verify it passes. If it fails, the assertion is NOT added and the failure details are returned so you can fix the selector or expected value. Only passing assertions are saved to the test.',
+    'Add an assertion step to a saved test. The assertion is first evaluated live against the current browser page to verify it passes. If it fails, the assertion is NOT added and the failure details are returned so you can fix the selector or expected value. Only passing assertions are saved to the test — except the checks of what the page does wrong on its own (no_console_errors, no_failed_requests, link_ok, no_a11y_violations): failing, such a check makes the test reproduce the bug (it passes once the bug is fixed); passing, it guards against it.',
     {
       test_name: z.string().describe('Name of the test to add the assertion to'),
       assertion_type: z.enum([
         'element_exists', 'element_not_exists', 'element_visible', 'element_hidden',
         'text_equals', 'text_contains', 'text_not_contains', 'attribute_equals',
         'url_equals', 'url_contains', 'title_equals', 'title_contains',
-        'element_count'
+        'element_count', 'no_console_errors', 'no_failed_requests', 'link_ok', 'no_a11y_violations'
       ]).describe('Type of assertion'),
-      selector: z.string().optional().describe('CSS selector for element assertions'),
-      expected: z.string().optional().describe('Expected value for comparison assertions'),
+      selector: z.string().optional().describe('CSS selector for element assertions; for link_ok, the link (a[href="/pricing"]); for no_a11y_violations, the part of the page to check'),
+      expected: z.string().optional().describe('Expected value for comparison assertions; for no_console_errors, a fragment of the error message; for no_failed_requests, a fragment of the request URL; for no_a11y_violations, the axe rule id (e.g. "image-alt")'),
       attribute: z.string().optional().describe('Attribute name for attribute_equals assertion'),
       description: z.string().optional().describe('Human-readable description of what this assertion verifies'),
       step_order: z.number().optional().describe('Position to insert (1-indexed). If omitted, appends at the end.'),
@@ -562,7 +563,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       if (attribute) assertion.attribute = attribute;
 
       // Validate required fields
-      const needsSelector = ['element_exists', 'element_not_exists', 'element_visible', 'element_hidden', 'text_equals', 'text_contains', 'text_not_contains', 'attribute_equals', 'element_count'];
+      const needsSelector = ['element_exists', 'element_not_exists', 'element_visible', 'element_hidden', 'text_equals', 'text_contains', 'text_not_contains', 'attribute_equals', 'element_count', 'link_ok'];
       if (needsSelector.includes(assertion_type) && !selector) {
         return { content: [{ type: 'text', text: `Assertion type "${assertion_type}" requires a CSS selector.` }] };
       }
@@ -587,7 +588,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         return { content: [{ type: 'text', text: `Assertion evaluation error: ${err.message}\nThe assertion was NOT added. Fix the issue and try again.` }] };
       }
 
-      if (!result.passed) {
+      // A check of what the page does wrong is added failing too: the test then reproduces the bug.
+      const isOracle = ORACLE_ASSERTIONS.has(assertion_type);
+      if (!result.passed && !isOracle) {
         let msg = `Assertion FAILED — not added to test "${test_name}".\n`;
         msg += `  Type: ${assertion_type}\n`;
         if (selector) msg += `  Selector: ${selector}\n`;
@@ -619,7 +622,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       saveTest(test);
       const pos = step_order || test.steps.length;
-      let summary = `Assertion PASSED and added to test "${test_name}" at step ${pos}.\n`;
+      let summary = !result.passed
+        ? `Assertion FAILS now and was added to test "${test_name}" at step ${pos}: the test reproduces this bug, and will pass once it is fixed.\n`
+        : `Assertion PASSED and added to test "${test_name}" at step ${pos}.\n`;
       summary += `  Type: ${assertion_type}\n`;
       if (selector) summary += `  Selector: ${selector}\n`;
       summary += `  Expected: ${result.expected}\n`;

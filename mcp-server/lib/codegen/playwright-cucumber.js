@@ -7,6 +7,7 @@ import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
 import { chooseTarget, throughLabel, withFixme, selectorFor } from './locators.js';
 import { uploadPathsOf } from '../upload-files.js';
 import { dropTargetOf, dragToCode } from './drag.js';
+import { collectorLines, oracleCode, needsAxe, AXE_IMPORT } from './oracles.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
@@ -84,6 +85,7 @@ export function toScenarioOutline(feature, variables = {}) {
 
 const DEFAULT_STEPS_JS = `import { Given, When, Then } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 // ─── Navigation ─────────────────────────────────────────────────────
 Given('I am on {string}', async function (url) {
@@ -212,6 +214,27 @@ Then('the {string} of {string} should be {string}', async function (attribute, s
 Then('{string} should match {int} elements', async function (selector, count) {
   await expect(this.page.locator(selector)).toHaveCount(count);
 });
+
+// ─── What the page does wrong on its own (a bug's test) ─────────────
+// Errors and failed requests are collected by the World from the start of the scenario.
+Then('the page should log no error containing {string}', async function (text) {
+  expect(this.consoleErrors.filter((message) => message.includes(text))).toEqual([]);
+});
+
+Then('no request to {string} should fail', async function (url) {
+  expect(this.failedRequests.filter((line) => line.includes(url))).toEqual([]);
+});
+
+Then('the link {string} should work', async function (selector) {
+  const href = await this.page.locator(selector).first().getAttribute('href');
+  const response = await this.page.request.get(new URL(href, this.page.url()).href);
+  expect(response.status()).toBeLessThan(400);
+});
+
+Then('the page should not break the accessibility rule {string}', async function (rule) {
+  const { violations } = await new AxeBuilder({ page: this.page }).withRules([rule]).analyze();
+  expect(violations.map((violation) => violation.id)).toEqual([]);
+});
 `;
 
 const WORLD_JS = `import { Before, After, setWorldConstructor, World } from '@cucumber/cucumber';
@@ -229,6 +252,7 @@ Before(async function () {
   this.browser = await chromium.launch();
   this.context = await this.browser.newContext();
   this.page = await this.context.newPage();
+  ${collectorLines('this.page', 'this.consoleErrors', 'this.failedRequests').join('\n  ')}
 });
 
 After(async function () {
@@ -253,6 +277,7 @@ function renderCompositeSteps(composites) {
   const lines = [
     `import { Given, When, Then } from '@cucumber/cucumber';`,
     `import { expect } from '@playwright/test';`,
+    ...(composites.some((def) => needsAxe(def.steps_template)) ? [AXE_IMPORT] : []),
     ``,
   ];
 
@@ -350,6 +375,9 @@ function commandToPlaywright(tpl, argNames) {
 
 function assertionToPlaywright(params, argNames) {
   const resolve = (val) => resolveTemplateValue(val, argNames);
+  // Errors and failed requests are collected by the World from the start of the scenario.
+  const oracle = oracleCode(params, resolve, { page: 'this.page', errors: 'this.consoleErrors', failures: 'this.failedRequests' });
+  if (oracle) return oracle;
   switch (params.type) {
     case 'text_contains':
       if (params.selector) {
@@ -437,6 +465,7 @@ function renderPackageJson(slug) {
         '@cucumber/cucumber': '^11.0.0',
         '@playwright/test': '^1.47.0',
         playwright: '^1.47.0',
+        '@axe-core/playwright': '^4.10.0',
       },
     },
     null,

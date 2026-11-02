@@ -12,9 +12,11 @@ import { CreateTestModal } from './components/CreateTestModal';
 import { ProjectSwitcher, ProjectSelector } from './components/ProjectSelector';
 import { ChatPanel } from './components/ChatPanel';
 import { Dashboard } from './components/Dashboard';
+import { BugsPage } from './components/BugsPage';
 import { Button } from './components/Button';
 import { useGetTestsQuery } from './store/services/testsApi';
 import {
+  Bug,
   FlaskConical,
   Plus,
   MessageSquare,
@@ -107,6 +109,14 @@ function AppLayout({ children }: { children: React.ReactNode }) {
                 <span>Tests</span>
                 <span className="sidebar-nav__badge">{tests.length}</span>
               </button>
+
+              <button
+                className={`sidebar-nav__item ${location.pathname === '/bugs' ? 'active' : ''}`}
+                onClick={() => navigate('/bugs')}
+              >
+                <Bug size={18} />
+                <span>Bugs</span>
+              </button>
             </nav>
 
             <div className="sidebar-bottom">
@@ -146,6 +156,7 @@ export default function App() {
         <Route path="/tests" element={<TestListPage />} />
         <Route path="/projects/:projectId" element={<TestListPage />} />
         <Route path="/tests/:testName" element={<TestDetailPage />} />
+        <Route path="/bugs" element={<BugsRoute />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -185,6 +196,11 @@ function TestDetailPage() {
       onBack={() => navigate(backPath)}
     />
   );
+}
+
+function BugsRoute() {
+  const navigate = useNavigate();
+  return <BugsPage onOpenTest={(name) => navigate(`/tests/${encodeURIComponent(name)}`)} />;
 }
 
 function SettingsPage() {

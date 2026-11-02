@@ -5,10 +5,13 @@
 import { chooseTarget, throughLabel, withFixme } from './locators.js';
 import { recordedPathNote, uploadPathsOf } from '../upload-files.js';
 import { dropTargetOf, dragToCode } from './drag.js';
+import { needsCollectors, needsAxe, collectorLines, oracleCode, AXE_IMPORT } from './oracles.js';
 
 export function generatePlaywrightPlain(test) {
   const lines = [];
+  const steps = Array.isArray(test.steps) ? test.steps : [];
   lines.push(`import { test, expect } from '@playwright/test';`);
+  if (needsAxe(steps)) lines.push(AXE_IMPORT);
   lines.push('');
 
   const vars = test.variables || {};
@@ -39,7 +42,9 @@ export function generatePlaywrightPlain(test) {
     }
   }
 
-  const steps = Array.isArray(test.steps) ? test.steps : [];
+  // Console errors and failed requests are caught as they happen: listening from the start.
+  if (needsCollectors(steps)) for (const line of collectorLines()) lines.push(`  ${line}`);
+
   for (const step of steps) {
     const rendered = renderStep(step);
     if (!rendered) continue;
@@ -138,6 +143,8 @@ function locatorOf(target) {
 }
 
 function renderAssertion(a) {
+  const oracle = oracleCode(a, jsLiteral);
+  if (oracle) return oracle;
   switch (a.type) {
     case 'text_contains':
       if (a.selector) {

@@ -10,6 +10,7 @@ import {
   cmdGetTabs, cmdCloseTab, cmdCloseWindow, cmdWait, cmdExecuteJs, cmdGetCookies
 } from './commands/queries';
 import { cmdNetworkRequests, cmdNetworkResponse, cmdNetworkSearch } from './commands/network';
+import { cmdConsoleMessages, cmdCheckLinks, cmdRunAxe } from './commands/checks';
 
 import { restoreOwnedWindows } from './owned-windows';
 import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecordStart, cmdLiveRecordStop, cmdLiveRecordList, setLiveSink } from './live';
@@ -78,6 +79,9 @@ const COMMAND_HANDLERS: Record<string, CommandHandler> = {
   execute_js:   (params) => cmdExecuteJs(params as unknown as Parameters<typeof cmdExecuteJs>[0]),
   get_cookies:  (params) => cmdGetCookies(params as unknown as Parameters<typeof cmdGetCookies>[0]),
   network_requests:(params) => cmdNetworkRequests(params as unknown as Parameters<typeof cmdNetworkRequests>[0]),
+  console_messages:(params) => cmdConsoleMessages(params as unknown as Parameters<typeof cmdConsoleMessages>[0]),
+  check_links:  (params) => cmdCheckLinks(params as unknown as Parameters<typeof cmdCheckLinks>[0]),
+  run_axe:      (params) => cmdRunAxe(params as unknown as Parameters<typeof cmdRunAxe>[0]),
   network_response:(params) => cmdNetworkResponse(params as unknown as Parameters<typeof cmdNetworkResponse>[0]),
   network_search:(params) => cmdNetworkSearch(params as unknown as Parameters<typeof cmdNetworkSearch>[0]),
   replay_sequence:(params, onProgress)=> cmdReplaySequence(params as unknown as Parameters<typeof cmdReplaySequence>[0], onProgress),

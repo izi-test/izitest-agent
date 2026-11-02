@@ -66,6 +66,14 @@ function buildAssertionFailureMessage(assertion, result) {
       return `Assertion failed: expected the page title to contain "${assertion.expected}", but got ${formatAssertionActual(result.actual)}.`;
     case 'element_count':
       return `Assertion failed: expected ${result.expected} element(s) matching "${assertion.selector}", but found ${formatAssertionActual(result.actual)}.`;
+    case 'no_console_errors':
+      return `Assertion failed: the page logged ${assertion.expected ? `an error containing "${assertion.expected}"` : 'errors'}: ${result.actual}.`;
+    case 'no_failed_requests':
+      return `Assertion failed: ${assertion.expected ? `a request to "${assertion.expected}"` : 'a request'} failed: ${result.actual}.`;
+    case 'link_ok':
+      return `Assertion failed: the link ${assertion.selector} does not answer: ${result.actual}.`;
+    case 'no_a11y_violations':
+      return `Assertion failed: the page breaks ${assertion.expected ? `the accessibility rule "${assertion.expected}"` : 'accessibility rules'}: ${result.actual}.`;
     case 'visual_match':
       return `Assertion failed: Visual Regression Test failed. Expected difference ${result.expected}, but got ${result.actual}. Please check the latest state.`;
     default:
@@ -569,7 +577,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   // Why it failed, on the page it failed on, and what would repair it: kept with the run.
   let triage = null;
-  if (finalStatus === 'failed' && failedStepOrder && !isDebugMode && trigger !== 'repair') {
+  // Not a repair being checked, nor a bug's test confirming the bug: those failures are expected.
+  if (finalStatus === 'failed' && failedStepOrder && !isDebugMode && trigger !== 'repair' && trigger !== 'explore') {
     triage = await triageRun({
       name, test, executionId, failedStepOrder, globalError, stepResults, assertionStepResults,
       hydratedSteps, tabId: assertionTabId, sendCommand, values: mergedVariables, runOptions: { variables, substitutions },
@@ -610,6 +619,44 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   }
 
   return { ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables };
+}
+
+/** Assertions on what the page does wrong on its own, not on an element's text or state. */
+export const ORACLE_ASSERTIONS = new Set(['no_console_errors', 'no_failed_requests', 'link_ok', 'no_a11y_violations']);
+
+/**
+ * Evaluate an oracle assertion on the tab: the errors it logged, the requests it failed (each
+ * containing `expected` when given), a link's answer, the accessibility rule `expected`.
+ */
+async function evaluateOracle(sendCommand, assertion, tabId) {
+  const { type, expected, selector } = assertion;
+  const at = tabId ? { tabId } : {};
+  const matches = (text) => !expected || String(text).includes(expected);
+  const listed = (items) => items.length ? items.join(' | ') : 'none';
+  switch (type) {
+    case 'no_console_errors': {
+      const { messages = [] } = await sendCommand(undefined, 'console_messages', at);
+      const errors = messages.filter((m) => matches(m.text)).map((m) => m.text);
+      return { passed: errors.length === 0, expected: expected ? `no error containing "${expected}"` : 'no console error', actual: listed(errors), type };
+    }
+    case 'no_failed_requests': {
+      const { requests = [] } = await sendCommand(undefined, 'network_requests', { ...at, limit: 300 });
+      const failed = requests.filter((r) => (r.status >= 400 || r.status === 0) && !/favicon/i.test(r.url) && matches(r.url))
+        .map((r) => `${r.method} ${r.url} → ${r.status || 'no response'}`);
+      return { passed: failed.length === 0, expected: expected ? `no failed request to "${expected}"` : 'no failed request', actual: listed(failed), type };
+    }
+    case 'link_ok': {
+      const { links = [] } = await sendCommand(undefined, 'check_links', { ...at, selector });
+      if (!links.length) return { passed: false, expected: 'the link answers', actual: `no link to this site's pages matches ${selector}`, type };
+      const broken = links.filter((l) => l.status >= 400 || l.status === 0).map((l) => `${l.href} → ${l.status || l.error || 'no response'}`);
+      return { passed: broken.length === 0, expected: 'the link answers', actual: broken.length ? listed(broken) : `${links[0].href} → ${links[0].status}`, type };
+    }
+    case 'no_a11y_violations': {
+      const { violations = [] } = await sendCommand(undefined, 'run_axe', { ...at, ...(expected ? { rules: [expected] } : {}), ...(selector ? { selector } : {}) });
+      const found = violations.map((v) => `${v.id}: ${v.count} element(s), e.g. ${v.nodes?.[0]?.target ?? '?'}`);
+      return { passed: violations.length === 0, expected: expected ? `no "${expected}" violation` : 'no accessibility violation', actual: listed(found), type };
+    }
+  }
 }
 
 /**
@@ -713,6 +760,10 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
     
     return { ...result, isVrt: true, actualDataUrl };
   }
+
+  // What the page does wrong on its own (extension/src/commands/checks.ts): a bug's test
+  // checks it is gone.
+  if (ORACLE_ASSERTIONS.has(type)) return evaluateOracle(sendCommand, assertion, tabId);
 
   let js;
   switch (type) {
