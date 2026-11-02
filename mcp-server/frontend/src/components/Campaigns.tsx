@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Layers, Plus, ArrowLeft, Square, RotateCcw, Download, ExternalLink, Trash2, FlaskConical, Loader2, Play } from 'lucide-react';
+import { Layers, ArrowLeft, Square, RotateCcw, Download, ExternalLink, Trash2, FlaskConical, Loader2, Play, Search, ChevronRight, AlertTriangle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import {
   campaignsApi, useGetCampaignsQuery, useGetCampaignQuery, useStartCampaignMutation, useStopCampaignMutation, useDeleteCampaignMutation,
   type CampaignInput,
@@ -7,11 +8,17 @@ import {
 import { useGetRequirementsQuery } from '../store/services/requirementsApi';
 import { useGetTestsQuery } from '../store/services/testsApi';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
-import { useAppSelector } from '../store/hooks';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { showToast } from '../store/slices/uiSlice';
+import { useBack, useFollowProject, useGo, useUrlState } from '../navigation';
+import { withScope } from '../scope';
 import { Button } from './Button';
+import { ConfirmModal } from './ConfirmModal';
 import { CampaignWriteBack } from './CampaignWriteBack';
+import { Card, Dialog, EmptyState, KeyChip, Menu, PageHeader, Pill, ProjectChip, ResultBar, Segmented, StatusPill } from './ui';
+import { dateTime, formatDuration } from '../format';
 import { CAUSE_LABELS } from '../triage-labels';
-import type { Campaign, CampaignSummary, CampaignTestStatus } from '../types';
+import type { Campaign, CampaignTestStatus } from '../types';
 
 // Campaigns: tests replayed together for a version of the app (mcp-server/lib/campaigns.js) —
 // a project's, a requirement's, or a chosen list —, a few at a time, each in its own window.
@@ -20,11 +27,10 @@ import type { Campaign, CampaignSummary, CampaignTestStatus } from '../types';
 // and is sent to Xray and to the Jira stories it checks (CampaignWriteBack).
 
 const STATUS_ORDER: CampaignTestStatus[] = ['passed', 'failed', 'error', 'running', 'pending', 'skipped'];
-const STATUS_LABELS: Record<Campaign['status'], string> = { running: 'Running', done: 'Done', stopped: 'Stopped', interrupted: 'Interrupted' };
+const STATUS_TONES: Record<CampaignTestStatus, string> = { passed: 'green', failed: 'red', error: 'amber', running: 'blue', pending: 'slate', skipped: 'slate' };
 const CRITERION_LABELS = { passing: 'passing', failing: 'failing', not_run: 'not run', not_covered: 'no test' } as const;
 
 const errorOf = (err: unknown) => (err as { data?: { error?: string } })?.data?.error ?? 'The request failed';
-const duration = (ms: number | null) => (ms == null ? '' : ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m${String(Math.round((ms % 60_000) / 1000)).padStart(2, '0')}s`);
 
 /** What a campaign ran: a project, a requirement, or tests. */
 function scopeLabel(c: Pick<Campaign, 'scope' | 'project'>) {
@@ -33,62 +39,101 @@ function scopeLabel(c: Pick<Campaign, 'scope' | 'project'>) {
   return `${c.scope.tests?.length ?? 0} chosen test${c.scope.tests?.length === 1 ? '' : 's'}`;
 }
 
-/** The share of each result, as a bar. */
-function ResultBar({ campaign }: { campaign: Pick<Campaign, 'totals' | 'total'> }) {
-  return (
-    <div className="campaign-bar" title={STATUS_ORDER.filter((s) => campaign.totals[s]).map((s) => `${campaign.totals[s]} ${s}`).join(', ')}>
-      {STATUS_ORDER.filter((s) => campaign.totals[s]).map((s) => (
-        <span key={s} className={`campaign-bar__part run-status--${s}`} style={{ flexGrow: campaign.totals[s] }} />
-      ))}
-    </div>
-  );
-}
-
 // ─── The list ────────────────────────────────────────────────────────
 
-export function CampaignsPage({ onOpen }: { onOpen: (id: number) => void }) {
+type StatusFilter = 'all' | 'running' | 'done' | 'stopped';
+
+export function CampaignsPage() {
+  const go = useGo();
   const projectId = useAppSelector((state) => state.ui.selectedProjectId);
   // Polled while one of them runs.
   const anyRunning = useAppSelector((state) => campaignsApi.endpoints.getCampaigns.select(projectId)(state).data?.some((c) => c.running));
   const { data: campaigns = [], isLoading } = useGetCampaignsQuery(projectId, { pollingInterval: anyRunning ? 2000 : 0 });
+  const { data: projects = [] } = useGetProjectsQuery(undefined);
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useUrlState('q');
+  const [status, setStatus] = useUrlState('status', 'all') as [StatusFilter, (v: string) => void];
+  const project = projects.find((p) => p.id === projectId);
+  const open = (id: number) => go(`/campaigns/${id}`, { from: 'Campaigns' });
+
+  const q = search.trim().toLowerCase();
+  const stateOf = (c: (typeof campaigns)[number]) => (c.running ? 'running' : c.status === 'done' ? 'done' : 'stopped');
+  const shown = campaigns.filter((c) =>
+    (!q || c.name.toLowerCase().includes(q) || String(c.id) === q.replace('#', '') || (c.version ?? '').toLowerCase().includes(q))
+    && (status === 'all' || stateOf(c) === status));
 
   return (
-    <div className="dashboard requirements-page">
-      <div className="dash-panel">
-        <div className="dash-panel__title">
-          <Layers size={16} /> Campaigns
-          <Button size="sm" variant="action" icon={Plus} className="requirements-new" onClick={() => setCreating(!creating)}>New campaign</Button>
+    <>
+      <PageHeader
+        title="Campaigns"
+        subtitle="Tests replayed together for a version of the app, each in its own window. The report compares with the last campaign of the same tests. An agent runs one with run_campaign, a CI with node bin/campaign.js."
+        actions={<Button icon={Play} onClick={() => setCreating(true)}>New campaign</Button>}
+      />
+
+      <div className="toolbar">
+        <div className="search-field">
+          <Search size={16} />
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, number or version…" aria-label="Search campaigns" />
         </div>
-        <p className="explore-help">
-          Tests replayed together for a version of the app — a project's, a requirement's, or a few chosen —, each in its own window.
-          A failure is diagnosed as any run's; the report compares with the last campaign of the same tests. An agent runs one with
-          run_campaign, a CI with <code>node bin/campaign.js</code>.
-        </p>
-        {creating && <CampaignForm projectId={projectId} onStarted={(id) => { setCreating(false); onOpen(id); }} onCancel={() => setCreating(false)} />}
-        {isLoading && <p className="dash-panel__empty">Loading…</p>}
-        {!isLoading && campaigns.length === 0 && !creating && <p className="dash-panel__empty">No campaign yet.</p>}
-        <div className="bug-list">
-          {campaigns.map((c) => <CampaignRow key={c.id} campaign={c} onOpen={() => onOpen(c.id)} />)}
-        </div>
+        <Segmented<StatusFilter>
+          label="Status" value={status} onChange={setStatus}
+          options={[
+            { value: 'all', label: 'All', count: campaigns.length },
+            { value: 'running', label: 'Running', tone: 'blue', count: campaigns.filter((c) => c.running).length },
+            { value: 'done', label: 'Done', tone: 'green' },
+            { value: 'stopped', label: 'Stopped', tone: 'slate' },
+          ]}
+        />
       </div>
-    </div>
-  );
-}
 
-function CampaignRow({ campaign: c, onOpen }: { campaign: CampaignSummary; onOpen: () => void }) {
-  return (
-    <button className="requirement-row campaign-row" onClick={onOpen}>
-      <span className="requirement-key">#{c.id}</span>
-      <span className="requirement-title">
-        <span>{c.name}{c.version && <span className="campaign-version">v{c.version}</span>}</span>
-        <span className="campaign-row__meta">{scopeLabel(c)} · {new Date(c.created_at).toLocaleString()}</span>
-      </span>
-      {c.changes?.regressed.length ? <span className="campaign-regressed">{c.changes.regressed.length} regressed</span> : null}
-      <span className="dash-table__muted">{c.totals.passed}/{c.total} passed</span>
-      <ResultBar campaign={c} />
-      <span className={`campaign-status campaign-status--${c.running ? 'running' : c.status}`}>{c.running ? 'Running' : STATUS_LABELS[c.status]}</span>
-    </button>
+      <Card flush>
+        {isLoading ? <p className="empty-state">Loading…</p> : shown.length === 0 ? (
+          campaigns.length === 0
+            ? <EmptyState icon={Layers} title={project ? `No campaign in ${project.name} yet` : 'No campaign yet'} action={<Button icon={Play} onClick={() => setCreating(true)}>New campaign</Button>}>
+                Replay a project's tests, a requirement's, or a few chosen on the Tests page.
+              </EmptyState>
+            : <EmptyState icon={Search} title="No campaign matches" action={<Button variant="secondary" onClick={() => { setSearch(''); setStatus('all'); }}>Clear the filters</Button>} />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr><th>#</th><th>Campaign</th>{projectId === null && <th>Project</th>}<th>Started</th><th>Result</th><th>Changes</th><th>Status</th><th className="col-chevron" /></tr>
+              </thead>
+              <tbody>
+                {shown.map((c) => (
+                  <tr key={c.id} className="clickable" onClick={() => open(c.id)}>
+                    <td className="mono cell-muted">#{c.id}</td>
+                    <td>
+                      <div className="cell-title">{c.name}{c.version && <span className="campaign-version">v{c.version}</span>}</div>
+                      <div className="cell-sub">{scopeLabel(c)}</div>
+                    </td>
+                    {projectId === null && <td><ProjectChip project={projects.find((p) => p.id === c.project_id)} /></td>}
+                    <td className="cell-muted">{dateTime(c.created_at)}</td>
+                    <td><div className="result-cell"><ResultBar totals={c.totals} /><span>{c.totals.passed}/{c.total} passed</span></div></td>
+                    <td>
+                      <div className="cell-chips">
+                        {c.changes?.regressed.length ? <Pill tone="red">{c.changes.regressed.length} regressed</Pill> : null}
+                        {c.changes?.fixed.length ? <Pill tone="green">{c.changes.fixed.length} fixed</Pill> : null}
+                        {!c.changes?.regressed.length && !c.changes?.fixed.length && <span className="cell-muted">—</span>}
+                      </div>
+                    </td>
+                    <td><StatusPill status={c.running ? 'running' : c.status} icon={c.running ? Loader2 : undefined} /></td>
+                    <td className="col-chevron"><ChevronRight size={16} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {shown.length > 0 && <div className="table-footer"><span>Showing {shown.length} of {campaigns.length}</span></div>}
+      </Card>
+
+      {creating && (
+        <Dialog title="New campaign" onClose={() => setCreating(false)} width={620}>
+          <CampaignForm projectId={projectId} onStarted={(id) => { setCreating(false); open(id); }} onCancel={() => setCreating(false)} />
+        </Dialog>
+      )}
+    </>
   );
 }
 
@@ -97,7 +142,8 @@ type ScopeKind = 'project' | 'requirement' | 'tests';
 function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | null; onStarted: (id: number) => void; onCancel: () => void }) {
   const { data: projects = [] } = useGetProjectsQuery(undefined);
   const { data: requirements = [] } = useGetRequirementsQuery(projectId);
-  const { data: tests = [] } = useGetTestsQuery(projectId);
+  // All the tests when all projects are in scope (not only those of no project).
+  const { data: tests = [] } = useGetTestsQuery(projectId ?? undefined);
   const [kind, setKind] = useState<ScopeKind>('project');
   const [project, setProject] = useState<number | null>(projectId);
   const [requirement, setRequirement] = useState('');
@@ -125,52 +171,63 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
   };
 
   return (
-    <form className="requirement-form campaign-form" onSubmit={submit}>
-      <div className="campaign-form__scopes">
-        {(['project', 'requirement', 'tests'] as const).map((k) => (
-          <label key={k}>
-            <input type="radio" name="scope" checked={kind === k} onChange={() => setKind(k)} />
-            {{ project: 'A project\'s tests', requirement: 'A requirement\'s tests', tests: 'Chosen tests' }[k]}
-          </label>
-        ))}
-      </div>
+    <form className="form" onSubmit={submit}>
+      <Segmented<ScopeKind>
+        label="What to run" value={kind} onChange={setKind}
+        options={[{ value: 'project', label: 'A project\'s tests' }, { value: 'requirement', label: 'A requirement\'s tests' }, { value: 'tests', label: 'Chosen tests' }]}
+      />
       {kind === 'project' && (
-        <select value={project ?? ''} onChange={(e) => setProject(e.target.value ? Number(e.target.value) : null)}>
-          <option value="">Choose a project…</option>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <label className="field">
+          <span className="field__label">Project</span>
+          <select value={project ?? ''} onChange={(e) => setProject(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">Choose a project…</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.test_count ?? 0} tests</option>)}
+          </select>
+        </label>
       )}
       {kind === 'requirement' && (
-        <select value={requirement} onChange={(e) => setRequirement(e.target.value)}>
-          <option value="">Choose a requirement…</option>
-          {requirements.map((r) => <option key={r.key} value={r.key}>{r.key} — {r.title} ({r.coverage.tests} test{r.coverage.tests === 1 ? '' : 's'})</option>)}
-        </select>
+        <label className="field">
+          <span className="field__label">Requirement</span>
+          <select value={requirement} onChange={(e) => setRequirement(e.target.value)}>
+            <option value="">Choose a requirement…</option>
+            {requirements.map((r) => <option key={r.key} value={r.key}>{r.key} — {r.title} ({r.coverage.tests} test{r.coverage.tests === 1 ? '' : 's'})</option>)}
+          </select>
+        </label>
       )}
       {kind === 'tests' && (
-        <div className="campaign-form__tests">
-          {tests.map((t) => (
-            <label key={t.name}>
-              <input type="checkbox" checked={chosen.includes(t.name)}
-                onChange={() => setChosen(chosen.includes(t.name) ? chosen.filter((n) => n !== t.name) : [...chosen, t.name])} />
-              {t.name}
-            </label>
-          ))}
+        <div className="field">
+          <span className="field__label">Tests <span className="field__optional">{chosen.length} chosen</span></span>
+          <div className="campaign-form__tests">
+            {tests.map((t) => (
+              <label key={t.name}>
+                <input type="checkbox" checked={chosen.includes(t.name)}
+                  onChange={() => setChosen(chosen.includes(t.name) ? chosen.filter((n) => n !== t.name) : [...chosen, t.name])} />
+                <span className="mono">{t.name}</span>
+              </label>
+            ))}
+          </div>
         </div>
       )}
-      <div className="requirement-form__row">
-        <input placeholder="Version of the app (e.g. 1.4.0, a commit)" value={version} onChange={(e) => setVersion(e.target.value)} />
-        <input placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
-        <label className="requirement-priority">
-          At a time
+      <div className="form__row">
+        <label className="field form__grow">
+          <span className="field__label">Version of the app <span className="field__optional">optional</span></span>
+          <input placeholder="e.g. 1.4.0, a commit" value={version} onChange={(e) => setVersion(e.target.value)} />
+        </label>
+        <label className="field form__grow">
+          <span className="field__label">Name <span className="field__optional">optional</span></span>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="field" style={{ width: 110 }}>
+          <span className="field__label">At a time</span>
           <select value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))}>
             {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </label>
       </div>
-      {error && <div className="repair-error">{error}</div>}
-      <div className="repair-actions">
-        <Button type="submit" size="sm" variant="save" icon={Play} disabled={!scope || isLoading}>Start</Button>
-        <Button type="button" size="sm" variant="cancel" onClick={onCancel}>Cancel</Button>
+      {error && <div className="alert alert--error">{error}</div>}
+      <div className="form__actions">
+        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" icon={Play} disabled={!scope || isLoading}>Start</Button>
       </div>
     </form>
   );
@@ -178,128 +235,170 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
 
 // ─── One campaign ────────────────────────────────────────────────────
 
-export function CampaignPage({ id, onBack, onOpen, onOpenTest, onOpenRequirement }: {
-  id: number; onBack: () => void; onOpen: (id: number) => void; onOpenTest: (name: string) => void; onOpenRequirement: (key: string) => void;
-}) {
+export function CampaignPage({ id }: { id: number }) {
+  const dispatch = useAppDispatch();
+  const go = useGo();
+  const navigate = useNavigate();
+  const back = useBack('/campaigns', 'Campaigns');
   // Polled while it runs.
   const live = useAppSelector((state) => campaignsApi.endpoints.getCampaign.select(id)(state).data?.running);
   const { data: campaign, isLoading } = useGetCampaignQuery(id, { pollingInterval: live === false ? 0 : 2000 });
+  const { data: projects = [] } = useGetProjectsQuery(undefined);
   const [stop, { isLoading: stopping }] = useStopCampaignMutation();
   const [start, { isLoading: restarting }] = useStartCampaignMutation();
   const [remove] = useDeleteCampaignMutation();
   const [error, setError] = useState<string | null>(null);
-  if (isLoading) return <p className="empty-state">Loading…</p>;
-  if (!campaign) return <p className="empty-state">No campaign #{id}.</p>;
+  const [deleting, setDeleting] = useState(false);
+
+  // A campaign of another project: that project comes into scope.
+  useFollowProject(campaign ? campaign.project_id : undefined, (owner) => {
+    dispatch(showToast({ message: `Now in ${projects.find((p) => p.id === owner)?.name ?? 'all projects'}: the project of campaign #${id}` }));
+  });
+
+  if (isLoading) return <Card><p className="empty-state">Loading…</p></Card>;
+  if (!campaign) return <Card><EmptyState icon={Layers} title={`No campaign #${id}`}>It may have been deleted.</EmptyState></Card>;
   const c = campaign;
+  const project = projects.find((p) => p.id === c.project_id) ?? null;
+  const label = `campaign #${c.id}`;
+  const openTest = (name: string) => go(`/tests/${encodeURIComponent(name)}`, { from: label });
+  const openRequirement = (key: string) => go(`/requirements/${encodeURIComponent(key)}`, { from: label });
 
   const again = async () => {
     setError(null);
     try {
       const scope = c.scope.requirement ? { requirement: c.scope.requirement } : c.scope.project_id ? { project_id: c.scope.project_id } : { tests: c.scope.tests };
       const { campaign: next } = await start({ ...scope, version: c.version ?? undefined, concurrency: c.concurrency }).unwrap();
-      onOpen(next.id);
+      navigate(withScope(`/campaigns/${next.id}`, c.project_id), { replace: true, state: back.state });
     } catch (err) {
       setError(errorOf(err));
     }
   };
   const destroy = async () => {
-    if (!window.confirm(`Delete campaign #${c.id}? Its runs stay in each test's history.`)) return;
     await remove(c.id).unwrap();
-    onBack();
+    dispatch(showToast({ message: `Campaign #${c.id} deleted` }));
+    back.go();
   };
   const done = c.total - c.totals.pending - c.totals.running;
 
   return (
-    <div className="dashboard requirements-page">
-      <div className="dash-panel">
-        <div className="dash-panel__title">
-          <button className="btn-back" onClick={onBack}><ArrowLeft size={14} /></button>
-          <span className="requirement-key">#{c.id}</span>
-          <span>{c.name}</span>
-          {c.version && <span className="campaign-version">v{c.version}</span>}
-          <span className={`campaign-status campaign-status--${c.running ? 'running' : c.status}`}>
-            {c.running ? <><Loader2 size={11} className="spin" /> {done}/{c.total}</> : STATUS_LABELS[c.status]}
-          </span>
+    <>
+      <Card className="detail-head">
+        <div><Button variant="back" size="sm" icon={ArrowLeft} onClick={back.go}>{back.label}</Button></div>
+        <div className="detail-head__top">
+          <div className="detail-head__titles">
+            <h1 className="page-title">
+              <span className="mono cell-muted">#{c.id}</span> {c.name}{c.version && <span className="campaign-version">v{c.version}</span>}
+              {' '}<StatusPill status={c.running ? 'running' : c.status} icon={c.running ? Loader2 : undefined} label={c.running ? `Running · ${done}/${c.total}` : undefined} />
+            </h1>
+            <div className="detail-meta-row">
+              <span className="meta-item">{scopeLabel(c)}</span>
+              <span className="meta-sep" />
+              <ProjectChip project={project} onClick={project ? () => navigate(withScope('/campaigns', project.id)) : undefined} />
+              <span className="meta-sep" />
+              <span className="meta-item">{dateTime(c.created_at)}</span>
+              <span className="meta-item">· {c.concurrency} at a time</span>
+              {c.duration_ms != null && <span className="meta-item">· {formatDuration(c.duration_ms)}</span>}
+            </div>
+          </div>
+          <div className="detail-head__actions">
+            {c.running
+              ? <Button variant="danger" icon={Square} disabled={stopping} onClick={() => stop(c.id)}>Stop</Button>
+              : <Button variant="secondary" icon={RotateCcw} disabled={restarting} onClick={again}>Run again</Button>}
+            <a className="btn btn--secondary" href={`/api/campaigns/${c.id}/junit.xml`} download><Download size={16} /> JUnit</a>
+            <a className="btn btn--secondary" href={`/api/campaigns/${c.id}/report.html`} target="_blank" rel="noreferrer"><ExternalLink size={16} /> HTML report</a>
+            {!c.running && <Menu items={[{ label: 'Delete campaign…', icon: Trash2, danger: true, onClick: () => setDeleting(true) }]} />}
+          </div>
         </div>
-        <p className="explore-help">
-          {scopeLabel(c)} · {new Date(c.created_at).toLocaleString()} · {c.concurrency} at a time{c.duration_ms != null && ` · ${duration(c.duration_ms)}`}
-        </p>
-        <div className="campaign-totals">
-          {STATUS_ORDER.filter((s) => c.totals[s]).map((s) => (
-            <div key={s} className={`run-status--${s}`}><strong>{c.totals[s]}</strong> {s}</div>
+        <div className="totals">
+          {STATUS_ORDER.filter((s) => c.totals[s] || s === 'passed' || s === 'failed').map((s) => (
+            <div key={s} className={`total-tile total-tile--${c.totals[s] ? STATUS_TONES[s] : 'slate'}`}>
+              <div className="total-tile__value">{c.totals[s]}</div>
+              <div className="total-tile__label">{s}</div>
+            </div>
           ))}
         </div>
-        <ResultBar campaign={c} />
-        {error && <div className="repair-error">{error}</div>}
-        <div className="repair-actions requirement-save">
-          {c.running
-            ? <Button size="sm" variant="danger" icon={Square} disabled={stopping} onClick={() => stop(c.id)}>Stop</Button>
-            : <Button size="sm" variant="action" icon={RotateCcw} disabled={restarting} onClick={again}>Run again</Button>}
-          <a className="campaign-link" href={`/api/campaigns/${c.id}/junit.xml`} download><Download size={12} /> JUnit</a>
-          <a className="campaign-link" href={`/api/campaigns/${c.id}/report.html`} target="_blank" rel="noreferrer"><ExternalLink size={12} /> HTML report</a>
-          {!c.running && <Button size="sm" variant="danger" icon={Trash2} onClick={destroy}>Delete</Button>}
-        </div>
-      </div>
-
-      <CampaignWriteBack campaign={c} />
+        <div className="result-bar result-bar--lg"><ResultBarParts totals={c.totals} /></div>
+        {error && <div className="alert alert--error">{error}</div>}
+      </Card>
 
       {c.non_conformities.length > 0 && (
-        <div className="dash-panel">
-          <div className="dash-panel__title campaign-bad">Non-conformities</div>
-          <p className="explore-help">The app does not do what the requirement says — report it, do not change the test:</p>
-          {c.non_conformities.map((name) => <button key={name} className="bug-test" onClick={() => onOpenTest(name)}><FlaskConical size={12} /> {name}</button>)}
-        </div>
+        <Card title="Non-conformities" icon={AlertTriangle} subtitle="The app does not do what the requirement says — report it, do not change the test.">
+          <div className="cell-chips">
+            {c.non_conformities.map((name) => <button key={name} className="test-link" onClick={() => openTest(name)}><FlaskConical size={12} /> {name}</button>)}
+          </div>
+        </Card>
       )}
 
       {c.changes && (
-        <div className="dash-panel">
-          <div className="dash-panel__title">
-            Since campaign #{c.changes.since.id}{c.changes.since.version && ` (v${c.changes.since.version})`}{c.running && ', so far'}
-          </div>
-          {!c.changes.regressed.length && !c.changes.fixed.length && <p className="explore-help">Nothing regressed, nothing fixed.</p>}
-          {c.changes.regressed.length > 0 && <p className="campaign-change"><strong className="campaign-bad">Regressed</strong> {c.changes.regressed.join(', ')}</p>}
-          {c.changes.fixed.length > 0 && <p className="campaign-change"><strong className="campaign-good">Fixed</strong> {c.changes.fixed.join(', ')}</p>}
-        </div>
+        <Card title={<>Since campaign #{c.changes.since.id}{c.changes.since.version && ` (v${c.changes.since.version})`}{c.running && ', so far'}</>}
+          actions={<button className="link-btn" onClick={() => go(`/campaigns/${c.changes!.since.id}`, { from: label })}>Open #{c.changes.since.id}</button>}>
+          {!c.changes.regressed.length && !c.changes.fixed.length && <p className="muted">Nothing regressed, nothing fixed.</p>}
+          {c.changes.regressed.length > 0 && (
+            <div className="change-line"><Pill tone="red">Regressed</Pill>{c.changes.regressed.map((name) => <button key={name} className="test-link" onClick={() => openTest(name)}><FlaskConical size={12} /> {name}</button>)}</div>
+          )}
+          {c.changes.fixed.length > 0 && (
+            <div className="change-line"><Pill tone="green">Fixed</Pill>{c.changes.fixed.map((name) => <button key={name} className="test-link" onClick={() => openTest(name)}><FlaskConical size={12} /> {name}</button>)}</div>
+          )}
+        </Card>
       )}
 
+      <Card title="Tests" icon={FlaskConical} flush>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Test</th><th>Status</th><th className="col-num">Duration</th><th>Why</th></tr></thead>
+            <tbody>
+              {c.runs.map((t) => (
+                <tr key={t.name}>
+                  <td><button className="test-link" onClick={() => openTest(t.name)}><FlaskConical size={12} /> {t.name}</button></td>
+                  <td><StatusPill status={t.status} icon={t.status === 'running' ? Loader2 : undefined} /></td>
+                  <td className="col-num cell-muted">{t.duration_ms != null ? formatDuration(t.duration_ms) : '—'}</td>
+                  <td className="why">
+                    {t.error && <div className="why__error">{t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}{t.error.split('\n')[0]}</div>}
+                    {t.triage && <div><strong>{CAUSE_LABELS[t.triage.cause] ?? t.triage.cause}</strong> — {t.triage.summary}</div>}
+                    {!t.error && !t.triage && <span className="cell-muted">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
       {c.requirements.length > 0 && (
-        <div className="dash-panel">
-          <div className="dash-panel__title">Requirements</div>
+        <Card title="Requirements" subtitle="Where each requirement the tests check stands after this campaign, criterion by criterion.">
           {c.requirements.map((r) => (
             <div key={r.key} className="campaign-requirement">
               <div className="case-row">
-                <button className="requirement-key link-btn" onClick={() => onOpenRequirement(r.key)}>{r.key}</button>
+                <KeyChip onClick={() => openRequirement(r.key)}>{r.key}</KeyChip>
                 <span className="case-title">{r.title}</span>
-                <span className={`coverage-badge coverage-${r.status}`}>{r.status.replace('_', ' ')}</span>
+                <StatusPill status={r.status} />
               </div>
-              <ol className="campaign-criteria">
+              <ol className="criteria-status">
                 {r.criteria.map((x) => (
-                  <li key={x.number}>{x.text} <span className={`criterion-status criterion-status--${x.status}`}>{CRITERION_LABELS[x.status]}</span></li>
+                  <li key={x.number}>{x.text}<StatusPill status={x.status} label={CRITERION_LABELS[x.status]} /></li>
                 ))}
               </ol>
             </div>
           ))}
-        </div>
+        </Card>
       )}
 
-      <div className="dash-panel">
-        <div className="dash-panel__title">Tests</div>
-        <table className="campaign-table">
-          <tbody>
-            {c.runs.map((t) => (
-              <tr key={t.name}>
-                <td><button className="bug-test" onClick={() => onOpenTest(t.name)}><FlaskConical size={12} /> {t.name}</button></td>
-                <td><span className={`run-status run-status--${t.status}`}>{t.status === 'running' && <Loader2 size={10} className="spin" />} {t.status}</span></td>
-                <td className="dash-table__muted">{duration(t.duration_ms)}</td>
-                <td>
-                  {t.error && <div className="campaign-error">{t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}{t.error.split('\n')[0]}</div>}
-                  {t.triage && <div className="campaign-why"><strong>{CAUSE_LABELS[t.triage.cause] ?? t.triage.cause}</strong> — {t.triage.summary}</div>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+      <CampaignWriteBack campaign={c} />
+
+      <ConfirmModal
+        isOpen={deleting} title={`Delete campaign #${c.id}?`} confirmLabel="Delete campaign"
+        message={<p>Its runs stay in each test's history; only the campaign and its report go.</p>}
+        onConfirm={destroy} onCancel={() => setDeleting(false)}
+      />
+    </>
+  );
+}
+
+/** The parts of a large result bar, inside its own container. */
+function ResultBarParts({ totals }: { totals: Campaign['totals'] }) {
+  return (
+    <>
+      {STATUS_ORDER.filter((s) => totals[s]).map((s) => <span key={s} className={`result-bar__part bar--${STATUS_TONES[s]}`} style={{ flexGrow: totals[s] }} />)}
+    </>
   );
 }

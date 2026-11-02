@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, X, Play, Save } from 'lucide-react';
 import { useGetJiraConfigQuery, useUpdateJiraConfigMutation, useTestJiraMutation, type JiraConfig } from '../store/services/settingsApi';
 import { Button } from './Button';
+import { Card } from './ui';
 
 // The Jira site requirements are read from, and coverage is commented on (mcp-server/lib/jira.js):
 // its address, the email of the account to act as, and an API token of that account — kept on
@@ -39,14 +40,13 @@ function JiraForm({ saved }: { saved: JiraConfig | null }) {
   };
 
   return (
-    <div className="settings-section">
-      <h2 className="settings-title">Jira</h2>
-      <p className="settings-desc">
+    <Card title="Jira" className="settings-integration" id="jira">
+      <p className="help">
         The Jira site requirements are read from: its stories, by a JQL query or their keys (Requirements → Import → Jira, or
         import_from_jira). Written to only when asked, after a preview: a campaign's results as a comment on each story it checks.
         {saved?.from === 'env' && ' Set now by JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN; saved here, these come first.'}
       </p>
-      <div className="settings-card">
+      <div className="settings-integration__body">
         <div className="jira-fields">
           <div className="field-group">
             <label>Site</label>
@@ -72,8 +72,8 @@ function JiraForm({ saved }: { saved: JiraConfig | null }) {
           Stored on this machine; the dashboard never shows it back.
         </p>
         <div className="repair-actions">
-          <Button size="sm" variant="action" icon={Play} disabled={!complete || testing} onClick={check}>{testing ? 'Testing…' : 'Test the connection'}</Button>
-          <Button size="sm" variant="save" icon={Save} disabled={saving} onClick={save}>Save</Button>
+          <Button size="sm" variant="secondary" icon={Play} disabled={!complete || testing} onClick={check}>{testing ? 'Testing…' : 'Test the connection'}</Button>
+          <Button size="sm" icon={Save} disabled={saving} onClick={save}>Save</Button>
         </div>
         {result && (
           <div className={`settings-test-result ${result.success ? 'success' : 'error'}`} style={{ marginTop: 12 }}>
@@ -84,6 +84,6 @@ function JiraForm({ saved }: { saved: JiraConfig | null }) {
           </div>
         )}
       </div>
-    </div>
+    </Card>
   );
 }

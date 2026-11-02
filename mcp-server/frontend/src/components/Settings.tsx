@@ -3,10 +3,12 @@ import { useAppDispatch } from '../store/hooks';
 import { showToast } from '../store/slices/uiSlice';
 import { useGetAgentConfigQuery, useUpdateAgentConfigMutation, useTestAgentMutation, useTestApiKeyMutation, useGetModelsQuery } from '../store/services/settingsApi';
 import type { AgentConfig } from '../store/services/settingsApi';
+import { useGetJiraConfigQuery, useGetXrayConfigQuery } from '../store/services/settingsApi';
 import { Button } from './Button';
 import { JiraSettings } from './JiraSettings';
 import { XraySettings } from './XraySettings';
-import { ArrowLeft, Save, Play, Check, X, Terminal, Cloud, Search } from 'lucide-react';
+import { Card, PageHeader } from './ui';
+import { Save, Play, Check, X, Terminal, Cloud, Search, Bot } from 'lucide-react';
 
 const CLI_PROVIDERS = [
   { id: 'claude', label: 'Claude Code', command: 'claude', description: 'Anthropic Claude Code CLI' },
@@ -14,10 +16,6 @@ const CLI_PROVIDERS = [
   { id: 'gemini', label: 'Gemini CLI', command: 'gemini', description: 'Google Gemini CLI' },
   { id: 'opencode', label: 'Open Code', command: 'opencode', description: 'Open Code CLI' },
 ];
-
-interface SettingsProps {
-  onBack: () => void;
-}
 
 const DEFAULT_CONFIG: AgentConfig = {
   mode: 'cli',
@@ -32,8 +30,11 @@ function formatPrice(price: string): string {
   return `$${(n * 1_000_000).toFixed(2)}/M`;
 }
 
-export function Settings({ onBack }: SettingsProps) {
+export function Settings() {
   const dispatch = useAppDispatch();
+  const { data: jira } = useGetJiraConfigQuery();
+  const { data: xray } = useGetXrayConfigQuery();
+  const [section, setSection] = useState('agent');
 
   const { data: serverConfig, isLoading } = useGetAgentConfigQuery();
   const [updateConfig] = useUpdateAgentConfigMutation();
@@ -115,25 +116,32 @@ export function Settings({ onBack }: SettingsProps) {
     }
   };
 
-  if (isLoading) return <section className="view active"><p className="empty-state">Loading...</p></section>;
+  if (isLoading) return <Card><p className="empty-state">Loading…</p></Card>;
+
+  const nav = [
+    { id: 'agent', label: 'AI agent', on: true },
+    { id: 'jira', label: 'Jira', on: !!jira },
+    { id: 'xray', label: 'Xray', on: !!xray },
+  ];
 
   return (
-    <section className="view active">
-      <div className="detail-header">
-        <Button variant="back" icon={ArrowLeft} onClick={onBack} title="Back">
-          Back
-        </Button>
-        <Button variant="save" icon={Save} onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save'}
-        </Button>
-      </div>
-
+    <>
+      <PageHeader title="Settings" subtitle="How IziTest drives the browser, and the Jira site and Xray key it reads from and writes to. Stored on this machine." />
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {nav.map((item) => (
+            <a key={item.id} href={`#${item.id}`} className={section === item.id ? 'active' : ''}
+              onClick={(e) => { e.preventDefault(); setSection(item.id); document.getElementById(item.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+              {item.label}
+              <span className={`settings-nav__dot ${item.on ? 'settings-nav__dot--on' : ''}`} title={item.on ? 'Set' : 'Not set'} />
+            </a>
+          ))}
+        </nav>
+        <div className="settings-sections">
+      <Card title="AI agent" icon={Bot} className="settings-agent" id="agent"
+        subtitle="The agent that controls the browser and helps create tests: a command-line agent on this machine, or a model through OpenRouter."
+        actions={<Button icon={Save} onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>}>
       <div className="settings-section">
-        <h2 className="settings-title">AI Agent Configuration</h2>
-        <p className="settings-desc">
-          Configure the AI agent that will control the browser and help create tests.
-        </p>
-
         <div className="settings-card">
           <div className="settings-card-header">
             <h3>Agent Type</h3>
@@ -197,11 +205,11 @@ export function Settings({ onBack }: SettingsProps) {
                 />
               </div>
               <Button
-                variant="action"
+                variant="secondary"
                 icon={Play}
                 onClick={handleTest}
                 disabled={testing || !config.cli.command.trim()}
-                style={{ alignSelf: 'flex-end', background: 'var(--accent)', color: '#fff', border: 'none' }}
+                style={{ alignSelf: 'flex-end' }}
               >
                 {testing ? 'Testing...' : 'Test'}
               </Button>
@@ -259,11 +267,11 @@ export function Settings({ onBack }: SettingsProps) {
                   </div>
                 </div>
                 <Button
-                  variant="action"
+                  variant="secondary"
                   icon={Play}
                   onClick={handleTest}
                   disabled={testing || !config.api?.apiKey?.trim()}
-                  style={{ alignSelf: 'flex-end', background: 'var(--accent)', color: '#fff', border: 'none' }}
+                  style={{ alignSelf: 'flex-end' }}
                 >
                   {testing ? 'Testing...' : 'Test'}
                 </Button>
@@ -343,9 +351,12 @@ export function Settings({ onBack }: SettingsProps) {
           </>
         )}
       </div>
+      </Card>
 
       <JiraSettings />
       <XraySettings />
-    </section>
+        </div>
+      </div>
+    </>
   );
 }

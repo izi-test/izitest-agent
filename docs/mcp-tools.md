@@ -530,9 +530,10 @@ dans une cellule, un champ de critères Jira, une description ou du Markdown.
 C'est d'abord un **essai** (`dry_run`, par défaut) : chaque exigence est dite nouvelle, modifiée ou
 inchangée, rien n'est enregistré. Importée à nouveau, une exigence est mise à jour sous sa clé (ou son
 titre) et ses critères inchangés gardent leurs tests ; une exigence modifiée qui a des tests liés est
-signalée. Dans le tableau de bord, le bouton **Import** de la page Requirements prend un fichier ou un
-texte collé, montre l'aperçu et la colonne de chaque champ (modifiable), puis importe dans le projet
-choisi.
+signalée. Dans le tableau de bord, le bouton **Import** de la page Requirements prend un fichier (choisi
+ou déposé) ou un texte collé, montre l'aperçu et la colonne de chaque champ (modifiable), puis importe
+dans le projet choisi en tête du panneau : celui du tableau de bord par défaut ; avec « All projects », à
+choisir (« No project » compris, mais exprès).
 
 #### Lire les stories d'un site Jira : `import_from_jira`
 
@@ -632,10 +633,14 @@ Le rapport dit :
 - les **non-conformités** : à signaler, pas à « réparer » dans les tests.
 
 `run_campaign` attend la fin (10 minutes au plus ; au-delà, `get_campaign(id)` la suit) et répond par le
-rapport. Dans le tableau de bord, la page **Campaigns** lance une campagne (un projet, une exigence ou
-des tests choisis, une version, combien à la fois), la suit en direct, l'arrête (les tests en cours
-finissent, les autres ne démarrent pas), la relance, et en donne le **JUnit** et le **rapport HTML**.
-Une exigence a son bouton « Run its tests ».
+rapport. Une liste de tests qui sont tous d'un même projet fait une campagne de ce projet : elle est
+listée avec les siennes, et son JUnit classe ses tests sous le nom du projet. Dans le tableau de bord, la
+page **Campaigns** lance une campagne (un projet, une exigence ou des tests choisis, une version,
+combien à la fois), la suit en direct, l'arrête (les tests en cours finissent, les autres ne démarrent
+pas), la relance, et en donne le **JUnit** et le **rapport HTML**. Une exigence a son bouton « Run its
+tests » ; sur la page **Tests**, des tests cochés partent ensemble avec « Run as campaign ». L'onglet
+**Campaigns** d'un test liste les campagnes où il a tourné et ce qu'il y a donné
+(`GET /api/tests/:name/campaigns`).
 
 Pour une CI ou un terminal, sur une machine où tourne le serveur (et le Chrome de l'extension) :
 
@@ -711,9 +716,11 @@ Les quatre contrôles sont aussi des types d'assertion (`add_assertion`) : ajout
 échoue dessus, un tel contrôle n'est pas refusé — le test reproduit alors le bug ; s'il passe, il en
 protège. Un test de bug qui échoue est diagnostiqué `app_regression` : la page a toujours le bug.
 
-Le tableau de bord a une page **Bugs** : lancer une exploration (URL, nombre de pages, clics), suivre
-la dernière, et la liste des bugs du plus grave au moins grave, avec leur test et les actions
-*Fixed*, *Dismiss*, *Reopen*. API : `GET /api/bugs`, `PUT /api/bugs/:id`, `GET|POST /api/explorations`.
+Le tableau de bord a une page **Bugs** : lancer une exploration (URL, nombre de pages, clics ; l'URL de
+base du projet pour commencer, et l'exploration est rattachée à ce projet), suivre la dernière, et la
+liste des bugs du projet du tableau de bord, du plus grave au moins grave, filtrée par statut, type et
+gravité, avec leur test et les actions *Fixed*, *Dismiss*, *Reopen*. API : `GET /api/bugs?status=&project_id=`,
+`PUT /api/bugs/:id`, `GET|POST /api/explorations`.
 
 ### Triage et réparation d'un test qui échoue
 

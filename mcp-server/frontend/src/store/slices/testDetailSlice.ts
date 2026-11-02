@@ -1,7 +1,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type { Step } from '../../types';
 
-type TabType = 'steps' | 'history' | 'data' | 'gherkin' | 'code';
+type TabType = 'steps' | 'history' | 'data' | 'gherkin' | 'code' | 'campaigns';
 
 interface TestDetailState {
   editName: string;

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   ClipboardList, Plus, Trash2, Save, ArrowLeft, FlaskConical, Link2, X, ExternalLink, Sparkles, AlertTriangle, FileCode, Bot, Loader2, Play, Upload,
+  Search, ChevronRight, Layers,
 } from 'lucide-react';
 import {
   useGetRequirementsQuery, useGetRequirementQuery, useCreateRequirementMutation, useUpdateRequirementMutation,
@@ -8,12 +9,20 @@ import {
   useDesignRequirementMutation, usePlanDesignMutation, useDismissDesignMutation,
 } from '../store/services/requirementsApi';
 import { useGetTestsQuery } from '../store/services/testsApi';
-import { useStartCampaignMutation } from '../store/services/campaignsApi';
+import { useGetCampaignsQuery, useStartCampaignMutation } from '../store/services/campaignsApi';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
 import { RequirementImportPanel } from './RequirementImport';
-import { useAppSelector } from '../store/hooks';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { showToast } from '../store/slices/uiSlice';
+import { useBack, useFollowProject, useGo, useUrlState } from '../navigation';
+import { withScope } from '../scope';
+import { useNavigate } from 'react-router-dom';
 import { Button } from './Button';
+import { ConfirmModal } from './ConfirmModal';
+import { ProjectField } from './ProjectSelector';
 import { CreateTestModal, type CreateMode, type CreateTestPreset } from './CreateTestModal';
+import { Card, Dialog, EmptyState, KeyChip, Menu, PageHeader, ProjectChip, ResultBar, Segmented, StatusPill } from './ui';
+import { dateTime, relativeTime } from '../format';
 import type { Requirement, RequirementCase, RequirementDesign, DesignedScenario, ScenarioResolution, Technique } from '../types';
 
 // Requirements: what tests are for (mcp-server/lib/requirements.js). A tester writes one here
@@ -46,77 +55,163 @@ const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().t
 
 /** A test's name for a requirement's case: "shop_7_wrong_password_refused". */
 const testNameFor = (key: string, title: string) => `${key} ${title}`
-  .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
   .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
 
 const errorOf = (err: unknown) => (err as { data?: { error?: string } })?.data?.error ?? 'The request failed';
 
 function CoverageBadge({ coverage }: { coverage: Requirement['coverage'] }) {
   return (
-    <span className={`coverage-badge coverage-${coverage.status}`}>
-      {COVERAGE_LABELS[coverage.status]}
-      {coverage.criteria > 0 && ` · ${coverage.covered}/${coverage.criteria} criteria`}
-    </span>
+    <StatusPill
+      status={coverage.status}
+      label={<>{COVERAGE_LABELS[coverage.status]}{coverage.criteria > 0 && ` · ${coverage.covered}/${coverage.criteria} criteria`}</>}
+    />
   );
 }
 
 // ─── The list ────────────────────────────────────────────────────────
 
-export function RequirementsPage({ onOpen }: { onOpen: (key: string) => void }) {
+type CoverageFilter = 'all' | Requirement['coverage']['status'];
+
+export function RequirementsPage() {
+  const go = useGo();
   const projectId = useAppSelector((state) => state.ui.selectedProjectId);
   const { data: requirements = [], isLoading } = useGetRequirementsQuery(projectId);
   const { data: projects = [] } = useGetProjectsQuery(undefined);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [search, setSearch] = useUrlState('q');
+  const [coverage, setCoverage] = useUrlState('coverage', 'all') as [CoverageFilter, (v: string) => void];
+  const [source, setSource] = useUrlState('source');
+  const project = projects.find((p) => p.id === projectId);
+  const open = (key: string) => go(`/requirements/${encodeURIComponent(key)}`, { from: 'Requirements' });
+
+  const count = (status: Requirement['coverage']['status']) => requirements.filter((r) => r.coverage.status === status).length;
+  const q = search.trim().toLowerCase();
+  const shown = requirements.filter((r) =>
+    (!q || r.key.toLowerCase().includes(q) || r.title.toLowerCase().includes(q))
+    && (coverage === 'all' || r.coverage.status === coverage)
+    && (!source || r.source === source));
+
+  const tiles: Array<{ status: Requirement['coverage']['status']; tone: string }> = [
+    { status: 'passing', tone: 'green' }, { status: 'failing', tone: 'red' }, { status: 'not_run', tone: 'amber' }, { status: 'not_covered', tone: 'slate' },
+  ];
 
   return (
-    <div className="dashboard requirements-page">
-      <div className="dash-panel">
-        <div className="dash-panel__title">
-          <ClipboardList size={16} /> Requirements
-          <Button size="sm" variant="action" icon={Upload} className="requirements-new" onClick={() => { setImporting(!importing); setCreating(false); }}>Import</Button>
-          <Button size="sm" variant="action" icon={Plus} onClick={() => { setCreating(!creating); setImporting(false); }}>New requirement</Button>
-        </div>
-        <p className="explore-help">
-          What the tests are for: each requirement, its acceptance criteria, and the tests that check them. A request made in
-          “Create Test with AI” is kept here too; an agent saves them with save_requirement, or imports a file with import_requirements.
-        </p>
-        {importing && (
-          <RequirementImportPanel
-            projectId={projectId} projectName={projects.find((p) => p.id === projectId)?.name ?? null}
-            onDone={() => setImporting(false)} onCancel={() => setImporting(false)}
-          />
+    <>
+      <PageHeader
+        title="Requirements"
+        subtitle="What the tests are for: each requirement, its acceptance criteria and the tests that check them. A request made in “New test” is kept here too."
+        actions={(
+          <>
+            <Button variant="secondary" icon={Upload} onClick={() => setImporting(true)}>Import</Button>
+            <Button icon={Plus} onClick={() => setCreating(true)}>New requirement</Button>
+          </>
         )}
-        {creating && <RequirementForm projectId={projectId} onSaved={(key) => { setCreating(false); onOpen(key); }} onCancel={() => setCreating(false)} />}
-        {isLoading && <p className="dash-panel__empty">Loading…</p>}
-        {!isLoading && requirements.length === 0 && !creating && !importing && <p className="dash-panel__empty">No requirement yet.</p>}
-        <div className="bug-list">
-          {requirements.map((r) => (
-            <button key={r.id} className="requirement-row" onClick={() => onOpen(r.key)}>
-              <span className="requirement-key">{r.key}</span>
-              <span className="requirement-title">{r.title}</span>
-              <span className="exec-trigger">{SOURCE_LABELS[r.source]}</span>
-              <span className="dash-table__muted">{r.coverage.tests} test{r.coverage.tests === 1 ? '' : 's'}</span>
-              <CoverageBadge coverage={r.coverage} />
-            </button>
-          ))}
-        </div>
+      />
+
+      <div className="kpis">
+        {tiles.map(({ status, tone }) => (
+          <button key={status} type="button" className={`kpi kpi--small ${coverage === status ? 'active' : ''}`} onClick={() => setCoverage(coverage === status ? 'all' : status)}>
+            <span className="kpi__label" style={{ color: `var(--${tone === 'slate' ? 'slate' : tone})` }}>{COVERAGE_LABELS[status]}</span>
+            <span className="kpi__value">{count(status)}</span>
+          </button>
+        ))}
       </div>
-    </div>
+
+      <div className="toolbar">
+        <div className="search-field">
+          <Search size={16} />
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by key or title…" aria-label="Search requirements" />
+        </div>
+        <Segmented<CoverageFilter>
+          label="Coverage" value={coverage} onChange={setCoverage}
+          options={[
+            { value: 'all', label: 'All', count: requirements.length },
+            { value: 'passing', label: 'Passing', tone: 'green' },
+            { value: 'failing', label: 'Failing', tone: 'red' },
+            { value: 'not_run', label: 'Not run', tone: 'amber' },
+            { value: 'not_covered', label: 'Not covered', tone: 'slate' },
+          ]}
+        />
+        <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source">
+          <option value="">Source: any</option>
+          {Object.entries(SOURCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </div>
+
+      <Card flush>
+        {isLoading ? <p className="empty-state">Loading…</p> : shown.length === 0 ? (
+          requirements.length === 0
+            ? <EmptyState icon={ClipboardList} title={project ? `No requirement in ${project.name} yet` : 'No requirement yet'}
+                action={<div className="repair-actions"><Button variant="secondary" icon={Upload} onClick={() => setImporting(true)}>Import</Button><Button icon={Plus} onClick={() => setCreating(true)}>New requirement</Button></div>}>
+                Write one, import a test plan or Jira stories — or let an agent save them with save_requirement.
+              </EmptyState>
+            : <EmptyState icon={Search} title="No requirement matches" action={<Button variant="secondary" onClick={() => { setSearch(''); setCoverage('all'); setSource(''); }}>Clear the filters</Button>} />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Key</th><th>Title</th>{projectId === null && <th>Project</th>}<th>Source</th><th>Criteria covered</th><th className="col-num">Tests</th><th>Coverage</th><th className="col-chevron" />
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((r) => (
+                  <tr key={r.id} className="clickable" onClick={() => open(r.key)}>
+                    <td><KeyChip>{r.key}</KeyChip></td>
+                    <td className="req-title">{r.title}</td>
+                    {projectId === null && <td><ProjectChip project={projects.find((p) => p.id === r.project_id)} /></td>}
+                    <td><span className="tag">{SOURCE_LABELS[r.source]}</span></td>
+                    <td>
+                      <div className="coverage-cell">
+                        <div className="result-bar">
+                          <span className="result-bar__part bar--blue" style={{ flexGrow: r.coverage.covered }} />
+                          <span className="result-bar__part" style={{ flexGrow: Math.max(0, r.coverage.criteria - r.coverage.covered) }} />
+                        </div>
+                        <span>{r.coverage.covered}/{r.coverage.criteria}</span>
+                      </div>
+                    </td>
+                    <td className="col-num">{r.coverage.tests}{r.coverage.planned > 0 && <span className="cell-muted"> +{r.coverage.planned} planned</span>}</td>
+                    <td><StatusPill status={r.coverage.status} label={COVERAGE_LABELS[r.coverage.status]} /></td>
+                    <td className="col-chevron"><ChevronRight size={16} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {shown.length > 0 && <div className="table-footer"><span>Showing {shown.length} of {requirements.length}</span></div>}
+      </Card>
+
+      {importing && (
+        <Dialog title="Import requirements" onClose={() => setImporting(false)} width={780}>
+          <RequirementImportPanel defaultProjectId={projectId} onDone={() => setImporting(false)} onCancel={() => setImporting(false)} />
+        </Dialog>
+      )}
+      {creating && (
+        <Dialog title="New requirement" onClose={() => setCreating(false)} width={620}>
+          <RequirementForm defaultProjectId={projectId} onSaved={(key) => { setCreating(false); open(key); }} onCancel={() => setCreating(false)} />
+        </Dialog>
+      )}
+    </>
   );
 }
 
-function RequirementForm({ projectId, onSaved, onCancel }: { projectId: number | null; onSaved: (key: string) => void; onCancel: () => void }) {
+function RequirementForm({ defaultProjectId, onSaved, onCancel }: { defaultProjectId: number | null; onSaved: (key: string) => void; onCancel: () => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [criteria, setCriteria] = useState('');
   const [key, setKey] = useState('');
   const [url, setUrl] = useState('');
+  // The project in scope; with all of them in scope, chosen.
+  const [projectId, setProjectId] = useState<number | null | undefined>(defaultProjectId ?? undefined);
   const [error, setError] = useState<string | null>(null);
   const [create, { isLoading }] = useCreateRequirementMutation();
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (projectId === undefined) return setError('Choose the project it belongs to');
     try {
       const { requirement } = await create({
         title, description, key: key.trim() || undefined, url: url.trim() || null, project_id: projectId,
@@ -129,18 +224,34 @@ function RequirementForm({ projectId, onSaved, onCancel }: { projectId: number |
   };
 
   return (
-    <form className="requirement-form" onSubmit={submit}>
-      <input required placeholder="Title — e.g. A wrong password is refused" value={title} onChange={(e) => setTitle(e.target.value)} />
-      <textarea rows={2} placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
-      <textarea rows={4} placeholder={'Acceptance criteria, one per line:\nA wrong password shows "Invalid credentials"\nThe user stays on the login page'} value={criteria} onChange={(e) => setCriteria(e.target.value)} />
-      <div className="requirement-form__row">
-        <input placeholder="Key (optional, e.g. SHOP-123)" value={key} onChange={(e) => setKey(e.target.value)} />
-        <input placeholder="Link (optional)" value={url} onChange={(e) => setUrl(e.target.value)} />
+    <form className="form" onSubmit={submit}>
+      <ProjectField value={projectId} onChange={setProjectId} />
+      <label className="field">
+        <span className="field__label">Title</span>
+        <input required autoFocus placeholder="e.g. A wrong password is refused" value={title} onChange={(e) => setTitle(e.target.value)} />
+      </label>
+      <label className="field">
+        <span className="field__label">Description <span className="field__optional">optional</span></span>
+        <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+      </label>
+      <label className="field">
+        <span className="field__label">Acceptance criteria</span>
+        <textarea rows={4} placeholder={'One per line:\nA wrong password shows "Invalid credentials"\nThe user stays on the login page'} value={criteria} onChange={(e) => setCriteria(e.target.value)} />
+      </label>
+      <div className="form__row">
+        <label className="field form__grow">
+          <span className="field__label">Key <span className="field__optional">optional</span></span>
+          <input placeholder="e.g. SHOP-123" value={key} onChange={(e) => setKey(e.target.value)} />
+        </label>
+        <label className="field form__grow">
+          <span className="field__label">Link <span className="field__optional">optional</span></span>
+          <input placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} />
+        </label>
       </div>
-      {error && <div className="repair-error">{error}</div>}
-      <div className="repair-actions">
-        <Button type="submit" size="sm" variant="save" icon={Save} disabled={isLoading || !title.trim()}>Save</Button>
-        <Button type="button" size="sm" variant="cancel" onClick={onCancel}>Cancel</Button>
+      {error && <div className="alert alert--error">{error}</div>}
+      <div className="form__actions">
+        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" icon={Save} disabled={isLoading || !title.trim()}>Save requirement</Button>
       </div>
     </form>
   );
@@ -148,23 +259,28 @@ function RequirementForm({ projectId, onSaved, onCancel }: { projectId: number |
 
 // ─── One requirement ─────────────────────────────────────────────────
 
-type RequirementPageProps = { onBack: () => void; onOpenTest: (name: string) => void; onOpenCampaign: (id: number) => void };
-
-export function RequirementPage({ requirementKey, ...props }: { requirementKey: string } & RequirementPageProps) {
+export function RequirementPage({ requirementKey }: { requirementKey: string }) {
   const { data: requirement, isLoading } = useGetRequirementQuery(requirementKey);
-  if (isLoading) return <p className="empty-state">Loading…</p>;
-  if (!requirement) return <p className="empty-state">No requirement {requirementKey}.</p>;
+  if (isLoading) return <Card><p className="empty-state">Loading…</p></Card>;
+  if (!requirement) return <Card><EmptyState icon={ClipboardList} title={`No requirement ${requirementKey}`}>It may have been deleted.</EmptyState></Card>;
   // Keyed by its last update: a save elsewhere (an agent) shows here as it is now.
-  return <RequirementEditor key={requirement.updated_at} requirement={requirement} {...props} />;
+  return <RequirementEditor key={requirement.updated_at} requirement={requirement} />;
 }
 
-function RequirementEditor({ requirement, onBack, onOpenTest, onOpenCampaign }: { requirement: Requirement } & RequirementPageProps) {
+function RequirementEditor({ requirement }: { requirement: Requirement }) {
+  const dispatch = useAppDispatch();
+  const go = useGo();
+  const navigate = useNavigate();
+  const back = useBack('/requirements', 'Requirements');
+  const { data: projects = [] } = useGetProjectsQuery(undefined);
+  const { data: campaigns = [] } = useGetCampaignsQuery(requirement.project_id);
   const [title, setTitle] = useState(requirement.title);
   const [description, setDescription] = useState(requirement.description);
   const [priority, setPriority] = useState(requirement.priority);
   const [criteria, setCriteria] = useState(requirement.criteria.map((c) => ({ id: c.id as number | undefined, text: c.text })));
   const [error, setError] = useState<string | null>(null);
   const [preset, setPreset] = useState<CreateTestPreset | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [update, { isLoading: saving }] = useUpdateRequirementMutation();
   const [remove] = useDeleteRequirementMutation();
   const [startCampaign, { isLoading: launching }] = useStartCampaignMutation();
@@ -172,26 +288,44 @@ function RequirementEditor({ requirement, onBack, onOpenTest, onOpenCampaign }: 
   const missing = (design?.missing ?? []).filter((m) => !criteria.some((c) => sameText(c.text, m)));
   const dirty = title !== requirement.title || description !== requirement.description || priority !== requirement.priority
     || JSON.stringify(criteria) !== JSON.stringify(requirement.criteria.map((c) => ({ id: c.id, text: c.text })));
+  const project = projects.find((p) => p.id === requirement.project_id) ?? null;
+  const ranIn = campaigns.filter((c) => c.scope.requirement === requirement.key);
+  const tests = requirement.cases.filter((c) => c.test);
+
+  // A requirement of another project: that project comes into scope.
+  useFollowProject(requirement.project_id, (owner) => {
+    dispatch(showToast({ message: `Now in ${projects.find((p) => p.id === owner)?.name ?? 'all projects'}: the project of ${requirement.key}` }));
+  });
 
   const save = async () => {
     setError(null);
     try {
       await update({ ref: requirement.key, title, description, priority, criteria: criteria.filter((c) => c.text.trim()) }).unwrap();
+      dispatch(showToast({ message: `${requirement.key} saved` }));
+    } catch (err) {
+      setError(errorOf(err));
+    }
+  };
+  const moveTo = async (projectId: number | null) => {
+    if (projectId == null) return;
+    try {
+      await update({ ref: requirement.key, project_id: projectId }).unwrap();
+      dispatch(showToast({ message: `${requirement.key} moved to ${projects.find((p) => p.id === projectId)?.name}` }));
     } catch (err) {
       setError(errorOf(err));
     }
   };
   const destroy = async () => {
-    if (!window.confirm(`Delete ${requirement.key}? Its tests stay; only the requirement and its links go.`)) return;
     await remove(requirement.key).unwrap();
-    onBack();
+    dispatch(showToast({ message: `${requirement.key} deleted` }));
+    back.go();
   };
   // Its tests replayed together, as a campaign: where it stands now, criterion by criterion.
   const runTests = async () => {
     setError(null);
     try {
       const { campaign } = await startCampaign({ requirement: requirement.key }).unwrap();
-      onOpenCampaign(campaign.id);
+      go(`/campaigns/${campaign.id}`, { from: requirement.key });
     } catch (err) {
       setError(errorOf(err));
     }
@@ -205,31 +339,42 @@ function RequirementEditor({ requirement, onBack, onOpenTest, onOpenCampaign }: 
       projectId: requirement.project_id, gherkin: c.gherkin, requirement: requirement.key, caseId: c.id,
     });
   };
+  const onOpenTest = (name: string) => go(`/tests/${encodeURIComponent(name)}`, { from: requirement.key });
 
   return (
-    <div className="dashboard requirements-page">
-      <div className="dash-panel">
-        <div className="dash-panel__title">
-          <button className="btn-back" onClick={onBack}><ArrowLeft size={14} /></button>
-          <span className="requirement-key">{requirement.key}</span>
-          <span className="exec-trigger">{SOURCE_LABELS[requirement.source]}</span>
-          <CoverageBadge coverage={requirement.coverage} />
-          {requirement.external_url && (
-            <a className="requirement-link" href={requirement.external_url} target="_blank" rel="noreferrer"><ExternalLink size={12} /> source</a>
-          )}
-          <Button
-            size="sm" variant="action" icon={launching ? Loader2 : Play} className="requirements-new"
-            disabled={launching || requirement.coverage.tests === 0} title={requirement.coverage.tests ? 'Replay its tests together, as a campaign' : 'No test linked yet'}
-            onClick={runTests}
-          >
-            Run its tests
-          </Button>
+    <>
+      <Card className="req-head">
+        <div><Button variant="back" size="sm" icon={ArrowLeft} onClick={back.go}>{back.label}</Button></div>
+        <div className="req-head__top">
+          <div className="detail-head__titles">
+            <div className="detail-meta-row">
+              <KeyChip>{requirement.key}</KeyChip>
+              <CoverageBadge coverage={requirement.coverage} />
+              <span className="tag">{SOURCE_LABELS[requirement.source]}</span>
+              {requirement.external_url && (
+                <a className="meta-item" href={requirement.external_url} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Source</a>
+              )}
+            </div>
+            <input className="inline-edit inline-edit--title" style={{ fontFamily: 'var(--font)' }} value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Title" />
+          </div>
+          <div className="detail-head__actions">
+            <Button
+              icon={launching ? Loader2 : Play}
+              disabled={launching || requirement.coverage.tests === 0} title={requirement.coverage.tests ? 'Replay its tests together, as a campaign' : 'No test linked yet'}
+              onClick={runTests}
+            >
+              Run its tests
+            </Button>
+            <Menu items={[{ label: 'Delete requirement…', icon: Trash2, danger: true, onClick: () => setDeleting(true) }]} />
+          </div>
         </div>
-        <div className="requirement-form">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} />
-          <textarea rows={2} placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
-          <label className="requirement-priority">
-            Priority
+        <div className="req-head__fields">
+          <label className="field">
+            <span className="field__label">Description</span>
+            <textarea rows={2} placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field__label">Priority</span>
             <select value={priority} onChange={(e) => setPriority(e.target.value as Requirement['priority'])}>
               <option value="high">High</option>
               <option value="medium">Medium</option>
@@ -237,55 +382,121 @@ function RequirementEditor({ requirement, onBack, onOpenTest, onOpenCampaign }: 
             </select>
           </label>
         </div>
-      </div>
-
-      <div className="dash-panel">
-        <div className="dash-panel__title">Acceptance criteria</div>
-        {criteria.map((criterion, i) => {
-          const saved = requirement.criteria.find((c) => c.id === criterion.id);
-          // What the review said of it, until it is reworded.
-          const note = saved && criterion.text === saved.text ? design?.review.find((r) => sameText(r.criterion_text, saved.text)) : undefined;
-          return (
-            <div key={criterion.id ?? `new-${i}`} className="criterion">
-              <div className="criterion__head">
-                <span className="criterion__number">{i + 1}.</span>
-                <input value={criterion.text} onChange={(e) => setCriteria(criteria.map((c, j) => (j === i ? { ...c, text: e.target.value } : c)))} />
-                <button className="icon-btn" title="Remove this criterion" onClick={() => setCriteria(criteria.filter((_, j) => j !== i))}><X size={14} /></button>
-              </div>
-              {note && (
-                <ReviewNote note={note} onUse={() => setCriteria(criteria.map((c, j) => (j === i ? { ...c, text: note.suggestion ?? c.text } : c)))} />
-              )}
-              {saved && (
-                <CasesOf requirement={requirement} criterion={saved.position} cases={requirement.cases.filter((c) => c.criterion_id === saved.id)} onOpenTest={onOpenTest} onCreate={createFor} />
-              )}
-            </div>
-          );
-        })}
-        {missing.length > 0 && (
-          <div className="missing">
-            <div className="missing__title">The requirement does not say</div>
-            {missing.map((m) => (
-              <div key={m} className="missing__item">
-                <span>{m}</span>
-                <button className="link-btn" onClick={() => setCriteria([...criteria, { id: undefined, text: m }])}>Add as a criterion</button>
-              </div>
-            ))}
+        {dirty && (
+          <div className="unsaved">
+            Unsaved changes to the requirement
+            <span className="spacer" />
+            <Button size="sm" icon={Save} disabled={saving} onClick={save}>Save</Button>
           </div>
         )}
-        <Button size="sm" variant="action" icon={Plus} onClick={() => setCriteria([...criteria, { id: undefined, text: '' }])}>Add a criterion</Button>
-        {error && <div className="repair-error">{error}</div>}
-        <div className="repair-actions requirement-save">
-          <Button size="sm" variant="save" icon={Save} disabled={!dirty || saving} onClick={save}>Save</Button>
-          <Button size="sm" variant="danger" icon={Trash2} onClick={destroy}>Delete</Button>
+        {error && <div className="alert alert--error">{error}</div>}
+      </Card>
+
+      <div className="detail-layout">
+        <div className="stack">
+          <Card title="Acceptance criteria" subtitle="Each criterion with the cases that check it, their tests and how they last ran.">
+            {criteria.length === 0 && <p className="muted">No criterion yet: add one, or let “Propose scenarios” point at what is missing.</p>}
+            {criteria.map((criterion, i) => {
+              const saved = requirement.criteria.find((c) => c.id === criterion.id);
+              // What the review said of it, until it is reworded.
+              const note = saved && criterion.text === saved.text ? design?.review.find((r) => sameText(r.criterion_text, saved.text)) : undefined;
+              return (
+                <div key={criterion.id ?? `new-${i}`} className="criterion">
+                  <div className="criterion__head">
+                    <span className="criterion__number">{i + 1}.</span>
+                    <input value={criterion.text} onChange={(e) => setCriteria(criteria.map((c, j) => (j === i ? { ...c, text: e.target.value } : c)))} />
+                    <button className="icon-button" title="Remove this criterion" onClick={() => setCriteria(criteria.filter((_, j) => j !== i))}><X size={14} /></button>
+                  </div>
+                  {note && (
+                    <ReviewNote note={note} onUse={() => setCriteria(criteria.map((c, j) => (j === i ? { ...c, text: note.suggestion ?? c.text } : c)))} />
+                  )}
+                  {saved && (
+                    <CasesOf requirement={requirement} criterion={saved.position} cases={requirement.cases.filter((c) => c.criterion_id === saved.id)} onOpenTest={onOpenTest} onCreate={createFor} />
+                  )}
+                </div>
+              );
+            })}
+            {missing.length > 0 && (
+              <div className="missing">
+                <div className="missing__title">The requirement does not say</div>
+                {missing.map((m) => (
+                  <div key={m} className="missing__item">
+                    <span>{m}</span>
+                    <button className="link-btn" onClick={() => setCriteria([...criteria, { id: undefined, text: m }])}>Add as a criterion</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="repair-actions" style={{ marginTop: 12 }}>
+              <Button size="sm" variant="secondary" icon={Plus} onClick={() => setCriteria([...criteria, { id: undefined, text: '' }])}>Add a criterion</Button>
+              {dirty && <Button size="sm" icon={Save} disabled={saving} onClick={save}>Save</Button>}
+            </div>
+          </Card>
+
+          <DesignPanel key={design?.designed_at ?? 'none'} requirement={requirement} unsaved={dirty} />
+
+          <Card title="The whole requirement" subtitle="Cases that check it as a whole, not one criterion.">
+            <CasesOf requirement={requirement} criterion={null} cases={requirement.cases.filter((c) => c.criterion_id == null)} onOpenTest={onOpenTest} onCreate={createFor} />
+          </Card>
+        </div>
+
+        <div className="stack">
+          <Card title="Details">
+            <dl className="details-list">
+              <dt>Project</dt>
+              <dd>
+                <ProjectChip project={project} onClick={project ? () => navigate(withScope('/requirements', project.id)) : undefined} />
+              </dd>
+              <dt>Move to</dt>
+              <dd>
+                <select value="" onChange={(e) => e.target.value && moveTo(Number(e.target.value))} aria-label="Move to another project" style={{ width: '100%' }}>
+                  <option value="">Another project…</option>
+                  {projects.filter((p) => p.id !== requirement.project_id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </dd>
+              <dt>Source</dt><dd>{SOURCE_LABELS[requirement.source]}</dd>
+              <dt>Created</dt><dd>{dateTime(requirement.created_at)}</dd>
+              <dt>Updated</dt><dd>{dateTime(requirement.updated_at)}</dd>
+            </dl>
+          </Card>
+          <Card title="Tests" icon={FlaskConical}>
+            {tests.length === 0 ? <p className="muted">No test linked yet.</p> : (
+              <div className="side-list">
+                {tests.map((c) => (
+                  <div key={c.id} className="side-list__row side-list__row--link" onClick={() => onOpenTest(c.test!)}>
+                    <div className="side-list__main">
+                      <span className="side-list__title mono">{c.test}</span>
+                      <span className="side-list__sub">{c.last_run ? relativeTime(c.last_run.started_at) : 'never run'}</span>
+                    </div>
+                    <StatusPill status={c.last_run?.status ?? 'never'} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card title="Campaigns" icon={Layers}>
+            {ranIn.length === 0 ? <p className="muted">Its tests have not run together yet: “Run its tests”.</p> : (
+              <div className="side-list">
+                {ranIn.slice(0, 4).map((c) => (
+                  <div key={c.id} className="side-list__row side-list__row--link" onClick={() => go(`/campaigns/${c.id}`, { from: requirement.key })}>
+                    <div className="side-list__main">
+                      <span className="side-list__title">#{c.id}{c.version && <span className="campaign-version">v{c.version}</span>}</span>
+                      <span className="side-list__sub">{relativeTime(c.created_at)} · {c.totals.passed}/{c.total} passed</span>
+                    </div>
+                    <ResultBar totals={c.totals} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
       </div>
 
-      <DesignPanel key={design?.designed_at ?? 'none'} requirement={requirement} unsaved={dirty} />
-
-      <div className="dash-panel">
-        <div className="dash-panel__title">The whole requirement</div>
-        <CasesOf requirement={requirement} criterion={null} cases={requirement.cases.filter((c) => c.criterion_id == null)} onOpenTest={onOpenTest} onCreate={createFor} />
-      </div>
+      <ConfirmModal
+        isOpen={deleting} title={`Delete ${requirement.key}?`} confirmLabel="Delete requirement"
+        message={<p>Its tests stay; only the requirement, its criteria and their links to the tests go.</p>}
+        onConfirm={destroy} onCancel={() => setDeleting(false)}
+      />
 
       <CreateTestModal
         isOpen={!!preset}
@@ -293,7 +504,7 @@ function RequirementEditor({ requirement, onBack, onOpenTest, onOpenCampaign }: 
         onClose={() => setPreset(null)}
         onTestCreated={(name) => { setPreset(null); onOpenTest(name); }}
       />
-    </div>
+    </>
   );
 }
 
@@ -366,16 +577,17 @@ function DesignPanel({ requirement, unsaved }: { requirement: Requirement; unsav
   const issues = design?.review.length ?? 0;
 
   return (
-    <div className="dash-panel design-panel">
-      <div className="dash-panel__title">
-        <Sparkles size={15} /> Test design
+    <Card
+      className="design-panel" title="Test design" icon={Sparkles}
+      actions={(
         <Button
-          size="sm" variant="action" icon={designing ? Loader2 : Sparkles} className="requirements-new"
+          size="sm" variant="secondary" icon={designing ? Loader2 : Sparkles}
           disabled={designing || unsaved} title={unsaved ? 'Save the requirement first' : undefined} onClick={propose}
         >
           {designing ? 'Designing…' : design ? 'Propose again' : 'Propose scenarios'}
         </Button>
-      </div>
+      )}
+    >
       {!design && !designing && (
         <p className="explore-help">
           The agent set in Settings reviews each criterion — can a test tell pass from fail? — lists what the requirement leaves
@@ -394,7 +606,7 @@ function DesignPanel({ requirement, unsaved }: { requirement: Requirement; unsav
           {requirement.design_stale && (
             <div className="design-stale">The requirement changed since: these scenarios were designed for an earlier version. Propose again, or plan them as they are.</div>
           )}
-          {scenarios.length === 0 && <p className="dash-panel__empty">No scenario left to plan.</p>}
+          {scenarios.length === 0 && <p className="muted">No scenario left to plan.</p>}
           {scenarios.map((s, i) => (
             <div key={s.id}>
               {(i === 0 || scenarios[i - 1].criterion !== s.criterion) && (
@@ -413,7 +625,7 @@ function DesignPanel({ requirement, unsaved }: { requirement: Requirement; unsav
           </div>
         </>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -511,8 +723,8 @@ function CasesOf({ requirement, criterion, cases, onOpenTest, onCreate }: {
             {c.priority && <span className={`case-priority case-priority--${c.priority}`}>{c.priority}</span>}
             {c.test ? (
               <>
-                <button className="bug-test" onClick={() => onOpenTest(c.test!)}><FlaskConical size={12} /> {c.test}</button>
-                <span className={`case-run case-run--${c.last_run?.status ?? 'never'}`}>{c.last_run ? c.last_run.status : 'never run'}</span>
+                <button className="test-link" onClick={() => onOpenTest(c.test!)}><FlaskConical size={12} /> {c.test}</button>
+                <StatusPill status={c.last_run?.status ?? 'never'} />
               </>
             ) : (
               <>
@@ -541,12 +753,12 @@ function CasesOf({ requirement, criterion, cases, onOpenTest, onCreate }: {
           {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
         </select>
         <input placeholder="Plan a case…" value={title} onChange={(e) => setTitle(e.target.value)} />
-        <Button size="sm" variant="action" icon={Plus} disabled={!title.trim() || isLoading} onClick={() => add({ title })}>Plan</Button>
+        <Button size="sm" variant="secondary" icon={Plus} disabled={!title.trim() || isLoading} onClick={() => add({ title })}>Plan</Button>
         <select value={testName} onChange={(e) => setTestName(e.target.value)}>
           <option value="">…or link a test</option>
           {tests.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
         </select>
-        <Button size="sm" variant="action" icon={Link2} disabled={!testName || isLoading} onClick={() => add({ test_name: testName })}>Link</Button>
+        <Button size="sm" variant="secondary" icon={Link2} disabled={!testName || isLoading} onClick={() => add({ test_name: testName })}>Link</Button>
       </div>
       {error && <div className="repair-error">{error}</div>}
     </div>

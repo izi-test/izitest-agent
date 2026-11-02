@@ -1,11 +1,25 @@
 import type { ButtonHTMLAttributes, ElementType } from 'react';
+import { Loader2 } from 'lucide-react';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'action' | 'save' | 'danger' | 'cancel' | 'back';
+  // primary and save: the page's main action, solid blue; action and secondary: bordered white;
+  // cancel and ghost: text only; danger: destructive, red; back: a link back.
+  variant?: 'primary' | 'secondary' | 'action' | 'save' | 'danger' | 'cancel' | 'ghost' | 'back';
   size?: 'md' | 'sm';
   icon?: ElementType;
   iconPosition?: 'left' | 'right';
 }
+
+const VARIANT_CLASSES: Record<NonNullable<ButtonProps['variant']>, string> = {
+  primary: 'btn btn--primary',
+  save: 'btn btn--primary',
+  secondary: 'btn btn--secondary',
+  action: 'btn btn--secondary',
+  cancel: 'btn btn--ghost',
+  ghost: 'btn btn--ghost',
+  danger: 'btn btn--danger',
+  back: 'btn btn--ghost btn--back',
+};
 
 export function Button({
   variant = 'primary',
@@ -14,25 +28,15 @@ export function Button({
   iconPosition = 'left',
   children,
   className = '',
+  type = 'button',
   ...props
 }: ButtonProps) {
-  let baseClass = '';
-  switch (variant) {
-    case 'primary': baseClass = 'btn-primary'; break;
-    case 'action': baseClass = 'btn-action'; break;
-    case 'save': baseClass = 'btn-action btn-save'; break;
-    case 'danger': baseClass = 'btn-action btn-danger'; break;
-    case 'cancel': baseClass = 'btn-action btn-cancel'; break;
-    case 'back': baseClass = 'btn-back'; break;
-  }
-
-  if (size === 'sm') {
-    baseClass += ' btn-sm';
-  }
-
+  const classes = `${VARIANT_CLASSES[variant]}${size === 'sm' ? ' btn--sm' : ''} ${className}`.trim();
+  // A spinner given as the icon turns.
+  const spin = Icon === Loader2;
   return (
-    <button className={`${baseClass} ${className}`.trim()} {...props}>
-      {Icon && iconPosition === 'left' && <Icon size={size === 'sm' ? 14 : 16} />}
+    <button type={type} className={classes} {...props}>
+      {Icon && iconPosition === 'left' && <Icon size={size === 'sm' ? 14 : 16} className={spin ? 'spin' : undefined} />}
       {children}
       {Icon && iconPosition === 'right' && <Icon size={size === 'sm' ? 14 : 16} />}
     </button>

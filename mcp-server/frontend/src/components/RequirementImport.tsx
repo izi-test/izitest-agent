@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { Upload, Loader2, RefreshCw, Search } from 'lucide-react';
+import { Upload, Loader2, RefreshCw, Search, FileUp, X } from 'lucide-react';
 import { useImportRequirementsMutation, useImportFromJiraMutation, useGetJiraProjectsQuery } from '../store/services/requirementsApi';
 import { useGetJiraConfigQuery } from '../store/services/settingsApi';
+import { useGetProjectsQuery } from '../store/services/projectsApi';
 import { Button } from './Button';
+import { ProjectField } from './ProjectSelector';
+import { Pill } from './ui';
 import type { RequirementImport } from '../types';
 
 // Requirements from a file (mcp-server/lib/requirement-import.js) — a test plan in a spreadsheet
@@ -31,10 +34,15 @@ type Source =
   | { kind: 'file'; filename: string; content_base64?: string; content?: string }
   | { kind: 'jira'; jql?: string; sync?: boolean };
 
-export function RequirementImportPanel({ projectId, projectName, onDone, onCancel }: {
-  projectId: number | null; projectName: string | null; onDone: () => void; onCancel: () => void;
+export function RequirementImportPanel({ defaultProjectId, onDone, onCancel }: {
+  defaultProjectId: number | null; onDone: () => void; onCancel: () => void;
 }) {
+  // Into the project in scope; with all of them in scope, chosen — "No project" too, on purpose.
+  const [projectId, setProjectId] = useState<number | null | undefined>(defaultProjectId ?? undefined);
+  const { data: projects = [] } = useGetProjectsQuery();
+  const projectName = projectId == null ? null : projects.find((p) => p.id === projectId)?.name ?? null;
   const [tab, setTab] = useState<'file' | 'jira'>('file');
+  const [dragging, setDragging] = useState(false);
   const [source, setSource] = useState<Source | null>(null);
   const [pasted, setPasted] = useState('');
   const [columns, setColumns] = useState<Record<string, string | null>>({});
@@ -80,49 +88,68 @@ export function RequirementImportPanel({ projectId, projectName, onDone, onCance
 
   if (done) {
     return (
-      <div className="requirement-form import-panel">
-        <p className="import-done">
-          Imported {done.items.length} requirement{done.items.length === 1 ? '' : 's'}: {done.new} new, {done.changed} changed, {done.unchanged} unchanged.
-        </p>
-        <div className="repair-actions"><Button size="sm" variant="action" onClick={onDone}>Close</Button></div>
+      <div className="import-panel">
+        <div className="alert alert--success">
+          Imported {done.items.length} requirement{done.items.length === 1 ? '' : 's'} into {projectName ?? 'no project'}: {done.new} new, {done.changed} changed, {done.unchanged} unchanged.
+        </div>
+        <div className="form__actions"><Button onClick={onDone}>Close</Button></div>
       </div>
     );
   }
 
   return (
-    <div className="requirement-form import-panel">
-      <div className="import-tabs">
-        <button type="button" className={tab === 'file' ? 'active' : ''} onClick={() => switchTo('file')}>From a file</button>
-        <button type="button" className={tab === 'jira' ? 'active' : ''} onClick={() => switchTo('jira')}>From Jira</button>
-      </div>
-      {tab === 'file' ? (
+    <div className="import-panel">
+      <nav className="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === 'file'} className={`tab ${tab === 'file' ? 'active' : ''}`} onClick={() => switchTo('file')}><FileUp size={15} /> From a file</button>
+        <button type="button" role="tab" aria-selected={tab === 'jira'} className={`tab ${tab === 'jira' ? 'active' : ''}`} onClick={() => switchTo('jira')}><RefreshCw size={15} /> From Jira</button>
+      </nav>
+      <ProjectField
+        label="Import into project" value={projectId}
+        onChange={(id) => { setProjectId(id); setPreview(null); setSource(null); }}
+        hint="Imported again, a requirement is updated under its key (or title): its unchanged criteria keep their tests."
+      />
+      {projectId !== undefined && (tab === 'file' ? (
         <>
-          <p className="explore-help">
+          <p className="help">
             A test plan in a spreadsheet (CSV, Excel), a Jira CSV export, JSON, or a Markdown spec. Columns are found by their names —
             Key, Title, Description, Acceptance criteria, Priority, Link, in English or French —; one criterion per line in a cell, or
-            per row under it. Imported again, a requirement is updated under its key (or title): its unchanged criteria keep their tests.
-            Into: <strong>{projectName ?? 'no project'}</strong>.
+            per row under it.
           </p>
-          <label className="import-file">
-            <Upload size={14} /> Choose a file
+          <label
+            className={`dropzone ${dragging ? 'dropzone--over' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); choose(e.dataTransfer.files?.[0]); }}
+          >
+            <Upload size={22} />
+            <span><strong>Drop a file here</strong> or choose one</span>
+            <span className="field__hint">CSV, Excel, a Jira CSV export, JSON, Markdown</span>
             <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.json,.md,.markdown" onChange={(e) => choose(e.target.files?.[0])} />
-            {source?.kind === 'file' && source.filename && <span className="dash-table__muted">{source.filename}</span>}
           </label>
-          <textarea rows={4} placeholder="…or paste CSV, JSON or Markdown here" value={pasted} onChange={(e) => setPasted(e.target.value)} />
-          {pasted.trim() && <div><Button size="sm" variant="action" disabled={isLoading} onClick={() => start({ kind: 'file', filename: '', content: pasted })}>Preview the pasted text</Button></div>}
+          {source?.kind === 'file' && source.filename && (
+            <div className="chip chip--plain" style={{ alignSelf: 'flex-start' }}>
+              <FileUp size={14} /> {source.filename}
+              <button type="button" className="icon-button" style={{ width: 22, height: 22 }} aria-label="Remove the file" onClick={() => { setSource(null); setPreview(null); }}><X size={12} /></button>
+            </div>
+          )}
+          <details className="import-paste">
+            <summary>…or paste CSV, JSON or Markdown</summary>
+            <textarea rows={5} value={pasted} onChange={(e) => setPasted(e.target.value)} />
+            {pasted.trim() && <div><Button size="sm" variant="secondary" disabled={isLoading} onClick={() => start({ kind: 'file', filename: '', content: pasted })}>Preview the pasted text</Button></div>}
+          </details>
         </>
       ) : (
         <JiraSource projectName={projectName} busy={isLoading} onRead={start} />
-      )}
-      {isLoading && <p className="explore-help"><Loader2 size={12} className="spin" /> Reading…</p>}
-      {error && <div className="repair-error">{error}</div>}
+      ))}
+      {isLoading && <p className="help"><Loader2 size={12} className="spin" /> Reading…</p>}
+      {error && <div className="alert alert--error">{error}</div>}
       {preview && <ImportPreview preview={preview} columns={columns} onRemap={remap} sheet={sheet}
         onSheet={(name) => { setSheet(name); if (source) ask(source, { sheet: name, dryRun: true }); }} />}
-      <div className="repair-actions">
-        <Button size="sm" variant="save" icon={Upload} disabled={!preview?.items.length || isLoading || !source} onClick={() => source && ask(source, { dryRun: false })}>
-          Import {preview?.items.length ?? 0} requirement{preview?.items.length === 1 ? '' : 's'}
+      <div className="form__actions">
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button icon={Upload} disabled={!preview?.items.length || isLoading || !source || projectId === undefined} onClick={() => source && ask(source, { dryRun: false })}>
+          Import {preview?.items.length ?? 0} requirement{preview?.items.length === 1 ? '' : 's'}{projectId !== undefined && ` into ${projectName ?? 'no project'}`}
         </Button>
-        <Button size="sm" variant="cancel" onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   );
@@ -134,25 +161,29 @@ function JiraSource({ projectName, busy, onRead }: { projectName: string | null;
   const { data: projects = [], error } = useGetJiraProjectsQuery(undefined, { skip: !config });
   const [jql, setJql] = useState('');
   if (isLoading) return null;
-  if (!config) return <p className="explore-help">No Jira site set: Settings → Jira (its address, your email, an API token).</p>;
+  if (!config) return <div className="alert alert--info">No Jira site set yet: Settings → Jira (its address, your email, an API token).</div>;
   return (
     <>
-      <p className="explore-help">
+      <div className="alert alert--info">
         Stories of <strong>{config.baseUrl}</strong>, read as requirements: summary, description, priority, link, and their acceptance
         criteria — from an "Acceptance Criteria" field, or the list under "Acceptance criteria" in the description. Nothing is written
         to Jira. Into: <strong>{projectName ?? 'no project'}</strong>.
-      </p>
-      {error && <div className="repair-error">{errorOf(error)}</div>}
-      <div className="requirement-form__row">
+      </div>
+      {error && <div className="alert alert--error">{errorOf(error)}</div>}
+      <label className="field">
+        <span className="field__label">A project's stories</span>
         <select value="" onChange={(e) => e.target.value && setJql(e.target.value)}>
-          <option value="">A project's stories…</option>
+          <option value="">Choose a Jira project…</option>
           {projects.map((p) => <option key={p.key} value={p.jql}>{p.key} — {p.name}</option>)}
         </select>
-      </div>
-      <textarea rows={2} placeholder='JQL, e.g. project = SHOP AND issuetype = Story ORDER BY key' value={jql} onChange={(e) => setJql(e.target.value)} spellCheck={false} />
+      </label>
+      <label className="field">
+        <span className="field__label">JQL query</span>
+        <textarea className="mono" rows={2} placeholder='e.g. project = SHOP AND issuetype = Story ORDER BY key' value={jql} onChange={(e) => setJql(e.target.value)} spellCheck={false} />
+      </label>
       <div className="repair-actions">
-        <Button size="sm" variant="action" icon={Search} disabled={!jql.trim() || busy} onClick={() => onRead({ kind: 'jira', jql })}>Preview</Button>
-        <Button size="sm" variant="action" icon={RefreshCw} disabled={busy} title="Read again the requirements imported from Jira: which changed?" onClick={() => onRead({ kind: 'jira', sync: true })}>
+        <Button size="sm" variant="secondary" icon={Search} disabled={!jql.trim() || busy} onClick={() => onRead({ kind: 'jira', jql })}>Preview</Button>
+        <Button size="sm" variant="ghost" icon={RefreshCw} disabled={busy} title="Read again the requirements imported from Jira: which changed?" onClick={() => onRead({ kind: 'jira', sync: true })}>
           Check the imported ones for changes
         </Button>
       </div>
@@ -167,8 +198,12 @@ function ImportPreview({ preview, columns, onRemap, sheet, onSheet }: {
 }) {
   return (
     <div className="import-preview">
-      <div className="explore-help">
-        {preview.format.toUpperCase()} — {preview.items.length} requirement{preview.items.length === 1 ? '' : 's'}: {preview.new} new, {preview.changed} changed, {preview.unchanged} unchanged.
+      <div className="import-summary">
+        <span className="tag">{preview.format.toUpperCase()}</span>
+        {preview.items.length} requirement{preview.items.length === 1 ? '' : 's'}:
+        <Pill tone="blue" dot={false}>{preview.new} new</Pill>
+        <Pill tone="amber" dot={false}>{preview.changed} changed</Pill>
+        <Pill tone="slate" dot={false}>{preview.unchanged} unchanged</Pill>
       </div>
       {preview.format === 'xlsx' && (
         <input className="import-sheet" placeholder="Sheet (default: the first)" defaultValue={sheet} onBlur={(e) => e.target.value !== sheet && onSheet(e.target.value)} />
@@ -189,17 +224,17 @@ function ImportPreview({ preview, columns, onRemap, sheet, onSheet }: {
       {preview.warnings.length > 0 && (
         <ul className="import-warnings">{preview.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
       )}
-      <div className="bug-list">
+      <div className="import-items">
         {preview.items.map((item, i) => (
           <details key={`${item.key ?? ''}-${item.title}-${i}`} className="import-item">
             <summary>
-              <span className={`import-status import-status--${item.status}`}>{STATUS_LABELS[item.status]}</span>
-              <span className="requirement-key">{item.key ?? 'new key'}</span>
-              <span className="requirement-title">{item.title}</span>
-              <span className="dash-table__muted">{item.criteria.length} criteri{item.criteria.length === 1 ? 'on' : 'a'} · {item.priority}</span>
+              <Pill tone={item.status === 'new' ? 'blue' : item.status === 'changed' ? 'amber' : 'slate'} dot={false}>{STATUS_LABELS[item.status]}</Pill>
+              <span className="key-chip">{item.key ?? 'new key'}</span>
+              <span className="import-item__title">{item.title}</span>
               {item.status === 'changed' && item.linked_tests > 0 && (
-                <span className="import-linked">{item.linked_tests} test{item.linked_tests === 1 ? '' : 's'} linked: check them</span>
+                <span className="tag tag--amber">{item.linked_tests} test{item.linked_tests === 1 ? '' : 's'} linked: check {item.linked_tests === 1 ? 'it' : 'them'}</span>
               )}
+              <span className="cell-muted">{item.criteria.length} criteri{item.criteria.length === 1 ? 'on' : 'a'} · {item.priority}</span>
             </summary>
             {item.description && <p className="import-description">{item.description}</p>}
             <ol>{item.criteria.map((c, j) => <li key={j}>{c}</li>)}</ol>

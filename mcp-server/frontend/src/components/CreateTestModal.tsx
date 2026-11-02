@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from './Button';
-import { X, Wand2, Loader2, Folder, Square, FileCode, Bot } from 'lucide-react';
+import { X, Wand2, Loader2, Square, FileCode, Bot } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { useGetProjectsQuery, } from '../store/services/projectsApi';
+import { ProjectField } from './ProjectSelector';
 import { useAddCaseMutation, useCreateRequirementMutation } from '../store/services/requirementsApi';
 import {
   testsApi,
@@ -78,7 +78,6 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   const dispatch = useAppDispatch();
   const selectedProjectId = useAppSelector(state => state.ui.selectedProjectId);
 
-  const { data: projects = [] } = useGetProjectsQuery(undefined, { skip: !isOpen });
   const [assignToProject] = useAssignToProjectMutation();
   const [createRequirement] = useCreateRequirementMutation();
   const [addCase] = useAddCaseMutation();
@@ -90,8 +89,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   const [description, setDescription] = useState('');
   const [useVrt, setUseVrt] = useState(false);
   const [viewport, setViewport] = useState<{ width: number; height: number } | null>(null);
-  const [projectId, setProjectId] = useState<number | null>(selectedProjectId);
-  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  // The project in scope to start with; with all of them in scope, chosen (undefined until then).
+  const [projectId, setProjectId] = useState<number | null | undefined>(selectedProjectId ?? undefined);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('idle');
   const [agentOutput, setAgentOutput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +130,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
 
   useEffect(() => {
     if (isOpen) {
-      setProjectId(preset?.projectId ?? selectedProjectId);
+      setProjectId(preset ? preset.projectId : selectedProjectId ?? undefined);
     }
   }, [isOpen, selectedProjectId, preset]);
 
@@ -161,6 +160,10 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       setError('Please describe what the test should do');
       return;
     }
+    if (projectId === undefined) {
+      setError('Choose the project the test belongs to');
+      return;
+    }
 
     setError(null);
     setAgentStatus('running');
@@ -176,7 +179,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
         const firstLine = description.trim().split('\n')[0];
         const saved = await createRequirement({
           title: firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine,
-          description: description.trim(), source: 'prompt', project_id: projectId,
+          description: description.trim(), source: 'prompt', project_id: projectId ?? null,
         }).unwrap();
         requirement = saved.requirement.key;
       } catch {
@@ -238,7 +241,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
                     }
                   }
                   setAgentStatus('done');
-                  onTestCreated(name.trim(), projectId);
+                  onTestCreated(name.trim(), projectId ?? null);
                 } catch {
                   setAgentStatus('error');
                   setError('Agent finished but the test was not saved. Please try again.');
@@ -321,7 +324,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
         onClick={e => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h3>{mode === 'gherkin' ? 'Create Test from Gherkin' : 'Create Test with AI'}</h3>
+          <h3>{mode === 'gherkin' ? 'Create test from Gherkin' : 'Create test with AI'}</h3>
           <button className="btn-close" onClick={handleClose}>
             <X size={18} />
           </button>
@@ -365,8 +368,15 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
             </button>
           </div>
 
+          <ProjectField
+            value={projectId}
+            onChange={setProjectId}
+            allowNone={mode !== 'gherkin'}
+            hint={mode === 'gherkin' ? 'Its phrases come from the project: a Gherkin test needs one.' : 'The request is kept as a requirement of this project, the test too.'}
+          />
+
           <div className="field-group">
-            <label>Test Name</label>
+            <label>Test name</label>
             <input
               type="text"
               value={name}
@@ -378,7 +388,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
           </div>
 
           <div className="field-group">
-            <label>Description</label>
+            <label>{mode === 'gherkin' ? 'Description' : 'What should the test check?'}</label>
             <textarea
               className="create-wf-textarea"
               value={description}
@@ -391,125 +401,22 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
 
           {mode === 'ai' && (
             <>
-              <div style={{ marginBottom: '16px' }}>
-                <label htmlFor="useVrtCheck" style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)' }}>
-                  <input
-                    type="checkbox"
-                    id="useVrtCheck"
-                    checked={useVrt}
-                    onChange={e => setUseVrt(e.target.checked)}
-                    disabled={isRunning}
-                    style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
-                  />
-                  Enable Visual Regression Testing (VRT)
+              <div className="create-options">
+                <label className="switch">
+                  <input type="checkbox" checked={useVrt} onChange={e => setUseVrt(e.target.checked)} disabled={isRunning} />
+                  <span className="switch__text">Visual regression (VRT)<span className="switch__hint">Keep a screenshot to compare the next runs against.</span></span>
                 </label>
-              </div>
-
-              <div className="field-group">
-                <label>Window Resolution</label>
-                <select
-                  value={viewportToString(viewport)}
-                  onChange={(e) => setViewport(parseViewportString(e.target.value))}
-                  disabled={isRunning}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    background: 'var(--bg-tertiary)',
-                    color: 'var(--text)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)',
-                    fontSize: '13px',
-                    fontFamily: 'var(--font)',
-                    cursor: isRunning ? 'not-allowed' : 'pointer',
-                    opacity: isRunning ? 0.5 : 1
-                  }}
-                >
-                  {VIEWPORT_PRESETS.map(preset => (
-                    <option key={preset.value} value={preset.value}>{preset.label}</option>
-                  ))}
-                </select>
+                <label className="field">
+                  <span className="field__label">Window size</span>
+                  <select value={viewportToString(viewport)} onChange={(e) => setViewport(parseViewportString(e.target.value))} disabled={isRunning}>
+                    {VIEWPORT_PRESETS.map(preset => (
+                      <option key={preset.value} value={preset.value}>{preset.label}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </>
           )}
-
-          <div className="field-group">
-            <label>{mode === 'gherkin' ? 'Project (required)' : 'Project (optional)'}</label>
-            <div style={{ position: 'relative' }}>
-              <button
-                type="button"
-                onClick={() => !isBusy && setShowProjectDropdown(!showProjectDropdown)}
-                disabled={isBusy}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  background: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)',
-                  color: 'var(--text)',
-                  fontSize: '13px',
-                  textAlign: 'left',
-                  cursor: isRunning ? 'not-allowed' : 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  opacity: isRunning ? 0.5 : 1
-                }}
-              >
-                <Folder size={14} />
-                {projectId
-                  ? projects.find(p => p.id === projectId)?.name
-                    || (projects.length === 0 ? 'Loading...' : 'Project #' + projectId)
-                  : 'No project'}
-              </button>
-
-              {showProjectDropdown && (
-                <div style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: 0,
-                  right: 0,
-                  marginTop: '4px',
-                  background: 'var(--bg-primary)',
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                  zIndex: 100,
-                  maxHeight: '200px',
-                  overflowY: 'auto'
-                }}>
-                  <div
-                    className="project-assign-option"
-                    onClick={() => { setProjectId(null); setShowProjectDropdown(false); }}
-                    style={{
-                      padding: '8px 12px',
-                      fontSize: '13px',
-                      cursor: 'pointer',
-                      background: projectId === null ? 'rgba(124, 58, 237, 0.15)' : 'transparent',
-                      color: projectId === null ? 'var(--accent)' : 'var(--text)'
-                    }}
-                  >
-                    No project
-                  </div>
-                  {projects.map(project => (
-                    <div
-                      key={project.id}
-                      className="project-assign-option"
-                      onClick={() => { setProjectId(project.id); setShowProjectDropdown(false); }}
-                      style={{
-                        padding: '8px 12px',
-                        fontSize: '13px',
-                        cursor: 'pointer',
-                        background: projectId === project.id ? 'rgba(124, 58, 237, 0.15)' : 'transparent',
-                        color: projectId === project.id ? 'var(--accent)' : 'var(--text)'
-                      }}
-                    >
-                      {project.name}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
 
           {mode === 'gherkin' && (
             <div className="field-group">
@@ -568,9 +475,9 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               variant="primary"
               icon={isRunning ? Loader2 : Wand2}
               onClick={handleGenerate}
-              disabled={isRunning || !name.trim() || !description.trim()}
+              disabled={isRunning || !name.trim() || !description.trim() || projectId === undefined}
             >
-              {isRunning ? 'Generating...' : 'Generate Test'}
+              {isRunning ? 'Generating…' : 'Generate test'}
             </Button>
           )}
           {mode === 'gherkin' && (

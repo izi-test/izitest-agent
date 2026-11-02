@@ -7,8 +7,8 @@ export const bugsApi = createApi({
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
   tagTypes: ['Bugs', 'Explorations'],
   endpoints: (builder) => ({
-    getBugs: builder.query<Bug[], { status: string }>({
-      query: ({ status }) => `api/bugs?status=${status}`,
+    getBugs: builder.query<Bug[], { status: string; projectId?: number | null }>({
+      query: ({ status, projectId }) => `api/bugs?status=${status}${projectId ? `&project_id=${projectId}` : ''}`,
       transformResponse: (response: { bugs: Bug[] }) => response.bugs ?? [],
       providesTags: ['Bugs'],
     }),
@@ -21,7 +21,7 @@ export const bugsApi = createApi({
       transformResponse: (response: { explorations: Exploration[] }) => response.explorations ?? [],
       providesTags: ['Explorations'],
     }),
-    startExploration: builder.mutation<{ id: number }, { url: string; max_pages: number; interact: boolean }>({
+    startExploration: builder.mutation<{ id: number }, { url: string; max_pages: number; interact: boolean; project_id?: number | null }>({
       query: (body) => ({ url: 'api/explorations', method: 'POST', body }),
       invalidatesTags: ['Explorations'],
     }),

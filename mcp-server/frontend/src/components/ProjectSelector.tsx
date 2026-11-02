@@ -1,347 +1,309 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Folder, Plus, Edit2, Trash2, ChevronDown, FlaskConical } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { Check, ChevronsUpDown, LayoutGrid, Pencil, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { showToast, setSelectedProjectId } from '../store/slices/uiSlice';
+import { showToast } from '../store/slices/uiSlice';
 import { useGetProjectsQuery, useCreateProjectMutation, useUpdateProjectMutation, useDeleteProjectMutation } from '../store/services/projectsApi';
-import { useAssignToProjectMutation } from '../store/services/testsApi';
+import { useAssignToProjectMutation, useGetTestsQuery } from '../store/services/testsApi';
+import { useGo, useSwitchProject } from '../navigation';
+import { Button } from './Button';
+import { ConfirmModal } from './ConfirmModal';
+import { Dialog, Drawer, ProjectAvatar } from './ui';
+import type { Project } from '../types';
+
+// Projects: the switcher at the top of the sidebar — which one is in scope, all of them, a new
+// one —, the drawer a project is created and edited in, the dialog that deletes one (saying what
+// is left without a project), and the one that moves tests to another project.
+
+const errorOf = (err: unknown) => (err as { data?: { error?: string } })?.data?.error ?? (err as Error)?.message ?? 'The request failed';
+
+const SECTION_NAMES: Record<string, string> = {
+  '/': 'the dashboard', '/tests': 'Tests', '/requirements': 'Requirements', '/campaigns': 'Campaigns', '/bugs': 'Bugs',
+  '/projects': 'Projects', '/settings': 'Settings', '/chat': 'the chat',
+};
 
 export function ProjectSwitcher() {
-  const dispatch = useAppDispatch();
-  const navigate = useNavigate();
-  const selectedProjectId = useAppSelector(state => state.ui.selectedProjectId);
-
+  const scope = useAppSelector((state) => state.ui.selectedProjectId);
   const { data: projects = [] } = useGetProjectsQuery();
-  const [createProject] = useCreateProjectMutation();
+  const { data: allTests = [] } = useGetTestsQuery(undefined);
+  const switchProject = useSwitchProject();
+  const go = useGo();
+  const location = useLocation();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const [editing, setEditing] = useState<Project | 'new' | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
 
-  const [isOpen, setIsOpen] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const current = projects.find((p) => p.id === scope) ?? null;
+  const matching = projects.filter((p) => p.name.toLowerCase().includes(query.trim().toLowerCase()));
+  // The choices, in the order the arrow keys go through them: all projects, then each one.
+  const choices: Array<number | null> = [...(query.trim() ? [] : [null]), ...matching.map((p) => p.id)];
+  const section = location.pathname.match(/^\/[a-z]*/)?.[0] ?? '/';
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    if (!open) return;
+    const close = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
 
-  const selectedProject = projects.find(project => project.id === selectedProjectId);
-  const displayName = selectedProject ? selectedProject.name : 'All Projects';
-
-  const handleSelect = (projectId: number | null) => {
-    dispatch(setSelectedProjectId(projectId));
-    navigate('/');
-    setIsOpen(false);
+  const choose = (projectId: number | null) => {
+    setOpen(false);
+    setQuery('');
+    if (projectId !== scope) switchProject(projectId);
   };
-
-  const handleCreateProject = async (data: { name: string; description: string; context: string; project_type: string; base_url: string }) => {
-    try {
-      const result = await createProject(data).unwrap();
-      dispatch(showToast({ message: 'Project created' }));
-      dispatch(setSelectedProjectId(result.id));
-      navigate('/');
-      setShowCreateModal(false);
-    } catch (err: any) {
-      dispatch(showToast({ message: err.message || 'Create failed', type: 'error' }));
-    }
+  const onKey = (event: React.KeyboardEvent) => {
+    if (event.key === 'Escape') setOpen(false);
+    else if (event.key === 'ArrowDown') { event.preventDefault(); setActive((i) => Math.min(i + 1, choices.length - 1)); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
+    else if (event.key === 'Enter' && choices.length) { event.preventDefault(); choose(choices[Math.min(active, choices.length - 1)]); }
   };
 
   return (
-    <>
-      <div className="project-switcher" ref={dropdownRef}>
-        <button
-          className="project-switcher__trigger"
-          onClick={() => setIsOpen(!isOpen)}
-        >
-          <div className="project-switcher__label">
-            <FlaskConical size={16} className="project-switcher__icon" />
-            <span className="project-switcher__name">{displayName}</span>
-          </div>
-          <ChevronDown size={14} className={`project-switcher__chevron ${isOpen ? 'open' : ''}`} />
-        </button>
-
-        {isOpen && (
-          <div className="project-switcher__dropdown">
-            <div
-              className={`project-switcher__option ${selectedProjectId === null ? 'active' : ''}`}
-              onClick={() => handleSelect(null)}
-            >
-              <FlaskConical size={14} />
-              <span>All Projects</span>
-            </div>
-
-            <div className="project-switcher__divider" />
-
-            {projects.map(project => (
-              <div
-                key={project.id}
-                className={`project-switcher__option ${selectedProjectId === project.id ? 'active' : ''}`}
-                onClick={() => handleSelect(project.id)}
-              >
-                <Folder size={14} />
-                <span>{project.name}</span>
-                <span className="project-switcher__count">{project.test_count ?? 0}</span>
-              </div>
-            ))}
-
-            <div className="project-switcher__divider" />
-
-            <div
-              className="project-switcher__option project-switcher__option--action"
-              onClick={() => { setIsOpen(false); setShowCreateModal(true); }}
-            >
-              <Plus size={14} />
-              <span>New Project</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {showCreateModal && (
-        <ProjectModal
-          title="New Project"
-          onClose={() => setShowCreateModal(false)}
-          onSave={handleCreateProject}
-        />
-      )}
-    </>
-  );
-}
-
-/* Project context actions — edit/delete buttons shown in sidebar bottom when a project is selected */
-export function ProjectSelector() {
-  const dispatch = useAppDispatch();
-  const navigate = useNavigate();
-  const selectedProjectId = useAppSelector(state => state.ui.selectedProjectId);
-
-  const { data: projects = [] } = useGetProjectsQuery();
-  const [updateProject] = useUpdateProjectMutation();
-  const [deleteProjectMut] = useDeleteProjectMutation();
-
-  const [editingProject, setEditingProject] = useState<{ id: number; name: string; description: string | null; context?: string; project_type?: string | null; base_url?: string | null } | null>(null);
-
-  const handleUpdateProject = async (id: number, data: { name: string; description: string; context: string; project_type: string; base_url: string }) => {
-    try {
-      await updateProject({ id, ...data }).unwrap();
-      dispatch(showToast({ message: 'Project updated' }));
-      setEditingProject(null);
-    } catch (err: any) {
-      dispatch(showToast({ message: err.message || 'Update failed', type: 'error' }));
-    }
-  };
-
-  const handleDeleteProject = async (id: number) => {
-    if (!confirm('Delete this project? Tests will be moved to "All Projects".')) return;
-    try {
-      await deleteProjectMut(id).unwrap();
-      dispatch(showToast({ message: 'Project deleted' }));
-      if (selectedProjectId === id) {
-        dispatch(setSelectedProjectId(null));
-        navigate('/tests');
-      }
-    } catch (err: any) {
-      dispatch(showToast({ message: err.message || 'Delete failed', type: 'error' }));
-    }
-  };
-
-  const selectedProject = projects.find(project => project.id === selectedProjectId);
-
-  return (
-    <div className="project-selector">
-      {selectedProject && (
-        <div className="project-context-actions">
-          <button
-            className="project-context-btn"
-            onClick={() => setEditingProject(selectedProject)}
-            title="Edit project"
-          >
-            <Edit2 size={14} />
-          </button>
-          <button
-            className="project-context-btn project-context-btn--danger"
-            onClick={() => handleDeleteProject(selectedProject.id)}
-            title="Delete project"
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-      )}
-
-      {editingProject && (
-        <ProjectModal
-          title="Edit Project"
-          initialName={editingProject.name}
-          initialDescription={editingProject.description || ''}
-          initialContext={editingProject.context || ''}
-          initialProjectType={editingProject.project_type || ''}
-          initialBaseUrl={editingProject.base_url || ''}
-          onClose={() => setEditingProject(null)}
-          onSave={(data) => handleUpdateProject(editingProject.id, data)}
-        />
-      )}
-    </div>
-  );
-}
-
-interface ProjectModalProps {
-  title: string;
-  initialName?: string;
-  initialDescription?: string;
-  initialContext?: string;
-  initialProjectType?: string;
-  initialBaseUrl?: string;
-  onClose: () => void;
-  onSave: (data: { name: string; description: string; context: string; project_type: string; base_url: string }) => void;
-}
-
-function ProjectModal({ title, initialName = '', initialDescription = '', initialContext = '', initialProjectType = '', initialBaseUrl = '', onClose, onSave }: ProjectModalProps) {
-  const [name, setName] = useState(initialName);
-  const [description, setDescription] = useState(initialDescription);
-  const [context, setContext] = useState(initialContext);
-  const [projectType, setProjectType] = useState(initialProjectType);
-  const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
-  const [error, setError] = useState('');
-
-  const handleSave = () => {
-    if (!name.trim()) {
-      setError('Project name is required');
-      return;
-    }
-    onSave({
-      name: name.trim(),
-      description: description.trim(),
-      context: context.trim(),
-      project_type: projectType,
-      base_url: baseUrl.trim(),
-    });
-  };
-
-  return (
-    <div className="modal" onClick={onClose}>
-      <div className="modal-overlay" />
-      <div className="modal-content modal-wide" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{title}</h3>
-          <button className="btn-close" onClick={onClose}>×</button>
-        </div>
-        <div className="modal-body">
-          <div className="field-group">
-            <label>Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => { setName(e.target.value); setError(''); }}
-              placeholder="Project name"
-              autoFocus
-            />
-          </div>
-          <div className="field-group">
-            <label>Description (optional)</label>
-            <input
-              type="text"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="Brief description"
-            />
-          </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <div className="field-group" style={{ flex: 1 }}>
-              <label>Base URL</label>
-              <input
-                type="text"
-                value={baseUrl}
-                onChange={e => setBaseUrl(e.target.value)}
-                placeholder="https://my-app.com"
-              />
-            </div>
-            <div className="field-group" style={{ width: '160px' }}>
-              <label>Type</label>
-              <select value={projectType} onChange={e => setProjectType(e.target.value)}>
-                <option value="">--</option>
-                <option value="frontend">Frontend</option>
-                <option value="backend">Backend</option>
-                <option value="fullstack">Fullstack</option>
-              </select>
-            </div>
-          </div>
-          <div className="field-group">
-            <label>Project context</label>
-            <textarea
-              value={context}
-              onChange={e => setContext(e.target.value)}
-              placeholder="Describe your project here: specs, features, user flows, API endpoints, anything the AI should know to help you write tests..."
-              rows={6}
-              style={{ resize: 'vertical', minHeight: '100px' }}
-            />
-            <span className="field-hint">This text is sent to the AI agent as context when creating tests.</span>
-          </div>
-          {error && <div className="create-wf-error">{error}</div>}
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSave}>Save</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Project assignment dropdown for TestDetail
-interface ProjectAssignProps {
-  testName: string;
-  currentProjectId: number | null;
-  onAssign: (projectId: number | null) => void;
-}
-
-export function ProjectAssign({ testName, currentProjectId, onAssign }: ProjectAssignProps) {
-  const dispatch = useAppDispatch();
-  const { data: projects = [] } = useGetProjectsQuery();
-  const [assignToProject] = useAssignToProjectMutation();
-  const [isOpen, setIsOpen] = useState(false);
-
-  const handleAssign = async (projectId: number | null) => {
-    try {
-      await assignToProject({ testName, projectId }).unwrap();
-      onAssign(projectId);
-      dispatch(showToast({ message: projectId ? 'Test moved to project' : 'Test removed from project' }));
-    } catch (err: any) {
-      dispatch(showToast({ message: err.message || 'Assign failed', type: 'error' }));
-    }
-    setIsOpen(false);
-  };
-
-  const currentProject = projects.find(p => p.id === currentProjectId);
-
-  return (
-    <div className="project-assign">
-      <button className="project-assign-btn" onClick={() => setIsOpen(!isOpen)}>
-        <Folder size={14} />
-        {currentProject ? currentProject.name : 'No Project'}
-        <ChevronDown size={14} />
+    <div className="switcher" ref={ref} onKeyDown={onKey}>
+      <button type="button" className={`switcher__trigger ${open ? 'open' : ''}`} onClick={() => { setOpen(!open); setActive(0); }} aria-haspopup="listbox" aria-expanded={open}>
+        {current ? <ProjectAvatar project={current} size={30} /> : <span className="switcher__all-icon"><LayoutGrid size={16} /></span>}
+        <span className="switcher__label">
+          <span className="switcher__name">{current ? current.name : 'All projects'}</span>
+          <span className="switcher__meta">{current ? `${current.test_count ?? 0} tests` : `${allTests.length} tests`}</span>
+        </span>
+        <ChevronsUpDown size={16} className="switcher__chevron" />
       </button>
 
-      {isOpen && (
-        <div className="project-assign-dropdown">
-          <div
-            className={`project-assign-option ${currentProjectId === null ? 'active' : ''}`}
-            onClick={() => handleAssign(null)}
-          >
-            No Project
+      {open && (
+        <div className="switcher__popover" role="listbox">
+          <div className="switcher__search">
+            <Search size={14} />
+            <input autoFocus placeholder="Find a project…" value={query} onChange={(e) => { setQuery(e.target.value); setActive(0); }} />
+            <kbd>Esc</kbd>
           </div>
-          {projects.map(project => (
-            <div
-              key={project.id}
-              className={`project-assign-option ${currentProjectId === project.id ? 'active' : ''}`}
-              onClick={() => handleAssign(project.id)}
-            >
-              {project.name}
-            </div>
-          ))}
+          <div className="switcher__options">
+            {!query.trim() && (
+              <button type="button" role="option" aria-selected={scope === null}
+                className={`switcher__option ${scope === null ? 'selected' : ''} ${choices[active] === null ? 'active' : ''}`} onClick={() => choose(null)}>
+                <span className="switcher__all-icon switcher__all-icon--sm"><LayoutGrid size={14} /></span>
+                <span className="switcher__option-name">All projects</span>
+                <span className="switcher__count">{allTests.length}</span>
+                {scope === null && <Check size={14} className="switcher__check" />}
+              </button>
+            )}
+            <div className="switcher__group">Projects</div>
+            {matching.map((p) => (
+              <button key={p.id} type="button" role="option" aria-selected={scope === p.id}
+                className={`switcher__option ${scope === p.id ? 'selected' : ''} ${choices[active] === p.id ? 'active' : ''}`} onClick={() => choose(p.id)}>
+                <ProjectAvatar project={p} size={22} />
+                <span className="switcher__option-name">{p.name}</span>
+                <span className="switcher__count">{p.test_count ?? 0}</span>
+                {scope === p.id && <Check size={14} className="switcher__check" />}
+              </button>
+            ))}
+            {matching.length === 0 && <div className="switcher__none">No project named so.</div>}
+          </div>
+          <div className="switcher__actions">
+            <button type="button" className="switcher__action switcher__action--primary" onClick={() => { setOpen(false); setEditing('new'); }}><Plus size={14} /> New project…</button>
+            {current && <button type="button" className="switcher__action" onClick={() => { setOpen(false); setEditing(current); }}><Pencil size={14} /> Edit {current.name}…</button>}
+            <button type="button" className="switcher__action" onClick={() => { setOpen(false); go('/projects'); }}><Settings2 size={14} /> Manage projects</button>
+          </div>
+          <div className="switcher__hint">Switching keeps you on {SECTION_NAMES[section] ?? 'this page'}.</div>
         </div>
       )}
+
+      {editing && (
+        <ProjectDrawer
+          project={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={(id, created) => { setEditing(null); if (created) switchProject(id); }}
+        />
+      )}
     </div>
+  );
+}
+
+type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string };
+
+/** A project, created or edited: its name, description, base URL, type, and the context given to the AI. */
+export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
+  project: Project | null; onClose: () => void; onSaved?: (id: number, created: boolean) => void; onDelete?: (project: Project) => void;
+}) {
+  const dispatch = useAppDispatch();
+  const [createProject, { isLoading: creating }] = useCreateProjectMutation();
+  const [updateProject, { isLoading: updating }] = useUpdateProjectMutation();
+  const [fields, setFields] = useState<ProjectFields>({
+    name: project?.name ?? '', description: project?.description ?? '', context: project?.context ?? '',
+    project_type: project?.project_type ?? '', base_url: project?.base_url ?? '',
+  });
+  const [error, setError] = useState<string | null>(null);
+  const set = (field: keyof ProjectFields, value: string) => { setFields({ ...fields, [field]: value }); setError(null); };
+
+  const save = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (!fields.name.trim()) return setError('A project needs a name');
+    const body = { ...fields, name: fields.name.trim(), description: fields.description.trim(), context: fields.context.trim(), base_url: fields.base_url.trim() };
+    try {
+      if (project) {
+        await updateProject({ id: project.id, ...body }).unwrap();
+        dispatch(showToast({ message: 'Project saved' }));
+        onSaved?.(project.id, false);
+      } else {
+        const created = await createProject(body).unwrap();
+        dispatch(showToast({ message: `Project ${created.name} created` }));
+        onSaved?.(created.id, true);
+      }
+    } catch (err) {
+      setError(errorOf(err));
+    }
+  };
+
+  return (
+    <Drawer
+      title={project ? `Edit project — ${project.name}` : 'New project'} onClose={onClose}
+      footer={(
+        <>
+          {project && onDelete && <Button variant="ghost" className="btn--danger-text" icon={Trash2} onClick={() => onDelete(project)}>Delete project…</Button>}
+          <span className="spacer" />
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={() => save()} disabled={creating || updating}>{project ? 'Save' : 'Create project'}</Button>
+        </>
+      )}
+    >
+      <form className="form" onSubmit={save}>
+        <label className="field">
+          <span className="field__label">Name</span>
+          <input autoFocus value={fields.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Shop" />
+        </label>
+        <label className="field">
+          <span className="field__label">Description <span className="field__optional">optional</span></span>
+          <input value={fields.description} onChange={(e) => set('description', e.target.value)} placeholder="What this app is" />
+        </label>
+        <div className="form__row">
+          <label className="field form__grow">
+            <span className="field__label">Base URL</span>
+            <input value={fields.base_url} onChange={(e) => set('base_url', e.target.value)} placeholder="https://staging.example.com" spellCheck={false} />
+          </label>
+          <label className="field" style={{ width: 150 }}>
+            <span className="field__label">Type</span>
+            <select value={fields.project_type} onChange={(e) => set('project_type', e.target.value)}>
+              <option value="">—</option>
+              <option value="frontend">Frontend</option>
+              <option value="backend">Backend</option>
+              <option value="fullstack">Fullstack</option>
+            </select>
+          </label>
+        </div>
+        <label className="field">
+          <span className="field__label">Context for the AI</span>
+          <textarea rows={9} value={fields.context} onChange={(e) => set('context', e.target.value)}
+            placeholder="The app's pages, features, user flows, API endpoints: anything the AI should know to write tests." />
+          <span className="field__hint">Sent to the AI agent as context when it creates tests for this project.</span>
+        </label>
+        {error && <div className="alert alert--error">{error}</div>}
+        <button type="submit" hidden />
+      </form>
+    </Drawer>
+  );
+}
+
+/** Deleting a project: what stays, without a project, and what goes with it. */
+export function DeleteProjectDialog({ project, onClose, onDeleted }: { project: Project; onClose: () => void; onDeleted?: () => void }) {
+  const dispatch = useAppDispatch();
+  const scope = useAppSelector((state) => state.ui.selectedProjectId);
+  const switchProject = useSwitchProject();
+  const [deleteProject, { isLoading }] = useDeleteProjectMutation();
+  const [typed, setTyped] = useState('');
+
+  const confirm = async () => {
+    try {
+      await deleteProject(project.id).unwrap();
+      dispatch(showToast({ message: `Project ${project.name} deleted` }));
+      if (scope === project.id) switchProject(null);
+      onDeleted?.();
+      onClose();
+    } catch (err) {
+      dispatch(showToast({ message: errorOf(err), type: 'error' }));
+    }
+  };
+  const counts: Array<[number | undefined, string]> = [
+    [project.test_count, 'test'], [project.requirement_count, 'requirement'], [project.campaign_count, 'campaign'], [project.open_bug_count, 'open bug'],
+  ];
+
+  return (
+    <ConfirmModal
+      isOpen title={`Delete the project “${project.name}”?`} confirmLabel="Delete project"
+      confirmDisabled={isLoading || typed.trim() !== project.name}
+      message={<p>Nothing else is deleted. These stay, without a project:</p>}
+      onConfirm={confirm} onCancel={onClose}
+    >
+      <ul className="impact-list">
+        {counts.map(([n, what]) => <li key={what}><strong>{n ?? 0}</strong> {what}{n === 1 ? '' : 's'}</li>)}
+      </ul>
+      <p className="muted">Its step definitions, its AI context and its chat conversations are deleted with it.</p>
+      <label className="field">
+        <span className="field__label">Type <strong>{project.name}</strong> to confirm</span>
+        <input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
+      </label>
+    </ConfirmModal>
+  );
+}
+
+/** Moving tests to a project, or out of any. */
+export function MoveToProjectDialog({ tests, currentProjectId, onClose, onMoved }: {
+  tests: string[]; currentProjectId?: number | null; onClose: () => void; onMoved?: (projectId: number | null) => void;
+}) {
+  const dispatch = useAppDispatch();
+  const { data: projects = [] } = useGetProjectsQuery();
+  const [assign, { isLoading }] = useAssignToProjectMutation();
+  const [target, setTarget] = useState<string>(currentProjectId != null ? String(currentProjectId) : '');
+  const label = useMemo(() => (tests.length === 1 ? tests[0] : `${tests.length} tests`), [tests]);
+
+  const move = async () => {
+    const projectId = target === 'none' ? null : Number(target);
+    try {
+      for (const testName of tests) await assign({ testName, projectId }).unwrap();
+      const name = projectId == null ? 'no project' : projects.find((p) => p.id === projectId)?.name;
+      dispatch(showToast({ message: `${label} moved to ${name}` }));
+      onMoved?.(projectId);
+      onClose();
+    } catch (err) {
+      dispatch(showToast({ message: errorOf(err), type: 'error' }));
+    }
+  };
+
+  return (
+    <Dialog
+      title={`Move ${label}`} onClose={onClose} width={440}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button onClick={move} disabled={!target || isLoading}>Move</Button></>}
+    >
+      <label className="field">
+        <span className="field__label">To the project</span>
+        <select value={target} onChange={(e) => setTarget(e.target.value)} autoFocus>
+          <option value="" disabled>Choose a project…</option>
+          {projects.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.test_count ?? 0} tests</option>)}
+          <option value="none">No project</option>
+        </select>
+      </label>
+    </Dialog>
+  );
+}
+
+/**
+ * Which project something goes into: the one in scope to start with; with all projects in scope,
+ * chosen — "No project" too, but on purpose.
+ */
+export function ProjectField({ value, onChange, label = 'Project', required = true, hint, allowNone = true }: {
+  value: number | null | undefined; onChange: (projectId: number | null) => void; label?: string; required?: boolean; hint?: string; allowNone?: boolean;
+}) {
+  const { data: projects = [] } = useGetProjectsQuery();
+  const selected = value === undefined ? '' : value === null ? 'none' : String(value);
+  return (
+    <label className="field">
+      <span className="field__label">{label}{required && <span className="field__required">*</span>}</span>
+      <select value={selected} onChange={(e) => onChange(e.target.value === 'none' ? null : Number(e.target.value))} className={selected === '' ? 'select--placeholder' : ''}>
+        <option value="" disabled>Choose a project…</option>
+        {projects.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.test_count ?? 0} tests</option>)}
+        {allowNone && <option value="none">No project</option>}
+      </select>
+      {hint && <span className="field__hint">{hint}</span>}
+    </label>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, X, Play, Save } from 'lucide-react';
 import { useGetXrayConfigQuery, useUpdateXrayConfigMutation, useTestXrayMutation, type XrayConfig } from '../store/services/settingsApi';
 import { Button } from './Button';
+import { Card } from './ui';
 
 // The Xray API key a campaign's results are sent with (mcp-server/lib/xray.js): its client id
 // and secret — kept on this machine, the secret never shown back. Tested before it is relied on.
@@ -38,14 +39,13 @@ function XrayForm({ saved }: { saved: XrayConfig | null }) {
   };
 
   return (
-    <div className="settings-section">
-      <h2 className="settings-title">Xray</h2>
-      <p className="settings-desc">
+    <Card title="Xray" className="settings-integration" id="xray">
+      <p className="help">
         The API key a campaign's results are sent to Xray with (Campaigns → a campaign → Send to Xray, or export_to_xray): a Test
         Execution, each test a Generic test linked to the stories it covers. Nothing is sent without a preview first.
         {saved?.from === 'env' && ' Set now by XRAY_CLIENT_ID and XRAY_CLIENT_SECRET; saved here, these come first.'}
       </p>
-      <div className="settings-card">
+      <div className="settings-integration__body">
         <div className="jira-fields">
           <div className="field-group">
             <label>Client ID</label>
@@ -66,8 +66,8 @@ function XrayForm({ saved }: { saved: XrayConfig | null }) {
           An API key is made in Jira → Apps → Xray → API Keys (a Jira administrator's). Stored on this machine; the dashboard never shows the secret back.
         </p>
         <div className="repair-actions">
-          <Button size="sm" variant="action" icon={Play} disabled={!complete || testing} onClick={check}>{testing ? 'Testing…' : 'Test the API key'}</Button>
-          <Button size="sm" variant="save" icon={Save} disabled={saving} onClick={save}>Save</Button>
+          <Button size="sm" variant="secondary" icon={Play} disabled={!complete || testing} onClick={check}>{testing ? 'Testing…' : 'Test the API key'}</Button>
+          <Button size="sm" icon={Save} disabled={saving} onClick={save}>Save</Button>
         </div>
         {result && (
           <div className={`settings-test-result ${result.success ? 'success' : 'error'}`} style={{ marginTop: 12 }}>
@@ -78,6 +78,6 @@ function XrayForm({ saved }: { saved: XrayConfig | null }) {
           </div>
         )}
       </div>
-    </div>
+    </Card>
   );
 }

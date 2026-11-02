@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Send, Plus, Trash2, MessageSquare, Loader2 } from 'lucide-react';
+import { Send, Plus, Trash2, MessageSquare, Loader2, FolderKanban } from 'lucide-react';
 import { useAppSelector } from '../store/hooks';
+import { useGetProjectsQuery } from '../store/services/projectsApi';
+import { useGo } from '../navigation';
+import { Button } from './Button';
+import { EmptyState, PageHeader } from './ui';
 import {
   useGetConversationsQuery,
   useGetConversationQuery,
@@ -8,12 +12,13 @@ import {
   useDeleteConversationMutation,
 } from '../store/services/chatApi';
 
-interface ChatPanelProps {
-  onBack: () => void;
-}
+// A conversation with the AI agent, about the project in scope: its tests, what to add.
 
-export function ChatPanel({ onBack }: ChatPanelProps) {
+export function ChatPanel() {
+  const go = useGo();
   const projectId = useAppSelector(state => state.ui.selectedProjectId);
+  const { data: projects = [] } = useGetProjectsQuery();
+  const project = projects.find((p) => p.id === projectId);
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   const [input, setInput] = useState('');
   const [pendingMessages, setPendingMessages] = useState<{ role: string; content: string }[]>([]);
@@ -38,13 +43,14 @@ export function ChatPanel({ onBack }: ChatPanelProps) {
 
   if (!projectId) {
     return (
-      <div className="chat-panel">
-        <div className="chat-empty">
-          <MessageSquare size={48} strokeWidth={1} />
-          <p>Select a project to start chatting</p>
-          <button className="btn btn-secondary" onClick={onBack}>Back to tests</button>
+      <>
+        <PageHeader title="Chat with AI" subtitle="Ask the agent about a project's tests, or describe one to create." />
+        <div className="card">
+          <EmptyState icon={MessageSquare} title="Choose a project to chat about" action={<Button variant="secondary" icon={FolderKanban} onClick={() => go('/projects')}>See the projects</Button>}>
+            A conversation is about one project: its context and its tests. Pick one in the switcher, at the top of the sidebar.
+          </EmptyState>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -96,16 +102,11 @@ export function ChatPanel({ onBack }: ChatPanelProps) {
   };
 
   return (
-    <div className="chat-panel">
+    <div className="chat-panel chat-layout">
       <div className="chat-sidebar">
         <div className="chat-sidebar-header">
-          <button className="btn btn-ghost btn-sm" onClick={onBack}>
-            <ArrowLeft size={16} />
-          </button>
           <span className="chat-sidebar-title">Conversations</span>
-          <button className="btn btn-ghost btn-sm" onClick={handleNewConversation} title="New conversation">
-            <Plus size={16} />
-          </button>
+          <Button size="sm" variant="secondary" icon={Plus} onClick={handleNewConversation} title="New conversation">New</Button>
         </div>
         <div className="chat-conv-list">
           {conversations.map(conv => (
@@ -131,11 +132,15 @@ export function ChatPanel({ onBack }: ChatPanelProps) {
       </div>
 
       <div className="chat-main">
+        <div className="chat-main__header">
+          <span className="chat-main__title">{conversations.find((c) => c.id === activeConvId)?.title || 'New conversation'}</span>
+          <span className="muted">· {project?.name}</span>
+        </div>
         <div className="chat-messages">
           {allMessages.length === 0 && (
             <div className="chat-welcome">
               <MessageSquare size={40} strokeWidth={1} />
-              <h3>How can I help you?</h3>
+              <h3>How can I help with {project?.name ?? 'this project'}?</h3>
               <p>Describe a test scenario and I'll propose the Gherkin for you.</p>
               <div className="chat-suggestions">
                 <button className="chat-suggestion" onClick={() => setInput('List the existing tests and suggest what\'s missing')}>

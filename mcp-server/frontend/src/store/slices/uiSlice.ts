@@ -1,4 +1,5 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { initialScope } from '../../scope';
 
 interface ToastState {
   message: string | null;
@@ -9,12 +10,16 @@ interface UiState {
   toast: ToastState;
   selectedProjectId: number | null;
   searchQuery: string;
+  /** The "New test" window, opened from the top bar or from a page. */
+  createTestOpen: boolean;
 }
 
 const initialState: UiState = {
   toast: { message: null, type: 'success' },
-  selectedProjectId: null,
+  // The URL's project, or the last one chosen: a reload keeps it.
+  selectedProjectId: initialScope(),
   searchQuery: '',
+  createTestOpen: false,
 };
 
 const uiSlice = createSlice({
@@ -34,6 +39,9 @@ const uiSlice = createSlice({
     setSearchQuery(state, action: PayloadAction<string>) {
       state.searchQuery = action.payload;
     },
+    setCreateTestOpen(state, action: PayloadAction<boolean>) {
+      state.createTestOpen = action.payload;
+    },
   },
 });
 
@@ -42,6 +50,7 @@ export const {
   clearToast,
   setSelectedProjectId,
   setSearchQuery,
+  setCreateTestOpen,
 } = uiSlice.actions;
 
 export default uiSlice.reducer;

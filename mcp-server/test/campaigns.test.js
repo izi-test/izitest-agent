@@ -119,7 +119,19 @@ test('stopped: the test running finishes, the others are not started', async () 
   const stopped = getCampaign(campaign.id);
   assert.equal(stopped.status, 'stopped');
   assert.deepEqual(stopped.runs.map((t) => t.status), ['passed', 'skipped', 'skipped']);
-  assert.match(junitReport(stopped), /<testcase name="search" classname="izitest" time="0\.000">\n {6}<skipped message="not run: the campaign was stopped"\/>/);
+  assert.match(junitReport(stopped), /<testcase name="search" classname="Shop" time="0\.000">\n {6}<skipped message="not run: the campaign was stopped"\/>/);
+});
+
+test('chosen tests: of the project they all belong to, of none when they belong to several', async () => {
+  const one = startCampaign({ tests: ['login', 'search'] }, extension());
+  await one.finished;
+  assert.equal(getCampaign(one.campaign.id).project_id, project);
+  assert.equal(getCampaign(one.campaign.id).project, 'Shop');
+  saveTest({ name: 'loose', variables: {}, steps: [{ command: 'navigate', params: { url: 'https://shop.test' }, intent: 'Open the shop' }] });
+  const mixed = startCampaign({ tests: ['login', 'loose'] }, extension());
+  await mixed.finished;
+  assert.equal(getCampaign(mixed.campaign.id).project_id, null);
+  deleteTest('loose');
 });
 
 test('a test gone before its turn: told as an error, the others run', async () => {
@@ -141,7 +153,8 @@ test('JUnit for a CI: a failure with its step and cause, requirements as propert
   assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<testsuites name="IziTest" tests="2" failures="1" errors="0" skipped="0" time="[\d.]+">/);
   assert.match(xml, /<testsuite name="Nightly &amp; co \(2\.0 &lt;beta&gt;\)"/);
   assert.match(xml, /<property name="version" value="2\.0 &lt;beta&gt;"\/>/);
-  assert.match(xml, /<testcase name="checkout" classname="izitest" time="[\d.]+">\n {6}<properties>\n {8}<property name="requirement" value="SHOP-1"\/>\n {6}<\/properties>\n {4}<\/testcase>/);
+  // Both tests are Shop's: so is the campaign, and its tests are classed under it.
+  assert.match(xml, /<testcase name="checkout" classname="Shop" time="[\d.]+">\n {6}<properties>\n {8}<property name="requirement" value="SHOP-1"\/>\n {6}<\/properties>\n {4}<\/testcase>/);
   assert.match(xml, /<testcase name="search"[^>]*>\n {6}<failure message="Step 2\/2: [^"]*" type="[a-z_]+">/);
 });
 

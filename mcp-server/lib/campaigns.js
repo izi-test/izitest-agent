@@ -32,6 +32,12 @@ export function testsOfScope({ tests, requirement, projectId }) {
   throw new Error('A campaign needs its tests: a project, a requirement, or a list of tests');
 }
 
+/** The project the tests all belong to, or null if they belong to several or to none. */
+function projectOfTests(names) {
+  const projects = new Set(names.map((name) => db.prepare('SELECT project_id FROM tests WHERE name = ?').get(name)?.project_id ?? null));
+  return projects.size === 1 ? [...projects][0] : null;
+}
+
 /** What makes two campaigns comparable: the same project, the same requirement, or the same tests. */
 function scopeKeyOf(scope, names) {
   if (scope.requirement) return `requirement:${scope.requirement}`;
@@ -60,7 +66,8 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
   const names = testsOfScope({ tests, requirement, projectId });
   if (!names.length) throw new Error('No test to run: none in that scope');
   const lanes = Math.min(Math.max(1, Math.floor(Number(concurrency)) || 3), MAX_CONCURRENCY);
-  const project = projectId ?? (scope.requirement ? getRequirement(scope.requirement).project_id : null);
+  // Chosen tests all of one project belong to it: the campaign is listed with the project's.
+  const project = projectId ?? (scope.requirement ? getRequirement(scope.requirement).project_id : projectOfTests(names));
   const { id } = db.prepare(
     `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency)
      VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`

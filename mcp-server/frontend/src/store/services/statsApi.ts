@@ -38,8 +38,11 @@ interface FlakyTest {
 }
 
 export interface DashboardStats {
+  /** The period runs are counted over. */
+  days: number;
   tests: {
     total: number;
+    never_run: number;
     recent: RecentTest[];
   };
   executions: {
@@ -62,11 +65,8 @@ export const statsApi = createApi({
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
   tagTypes: ['Stats'],
   endpoints: (builder) => ({
-    getStats: builder.query<DashboardStats, number | null>({
-      query: (projectId) => {
-        const params = projectId ? `?project_id=${projectId}` : '';
-        return `api/stats${params}`;
-      },
+    getStats: builder.query<DashboardStats, { projectId: number | null; days: number }>({
+      query: ({ projectId, days }) => `api/stats?days=${days}${projectId ? `&project_id=${projectId}` : ''}`,
       providesTags: ['Stats'],
     }),
   }),

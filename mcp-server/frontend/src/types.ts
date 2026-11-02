@@ -8,6 +8,11 @@ export interface Project {
   created_at: string;
   updated_at: string;
   test_count?: number;
+  // What belongs to it (what a deletion leaves without a project), and its last campaign.
+  requirement_count?: number;
+  campaign_count?: number;
+  open_bug_count?: number;
+  last_campaign?: Pick<Campaign, 'id' | 'name' | 'version' | 'status' | 'running' | 'totals' | 'total' | 'created_at'> | null;
   tests?: Test[];
 }
 
@@ -82,6 +87,11 @@ export interface Test {
   step_count?: number;
   variables?: Record<string, any>;
   steps?: Step[];
+  // In the list: how it last ran, and the requirements it checks.
+  last_status?: Execution['status'] | null;
+  last_run_at?: string | null;
+  last_duration_ms?: number | null;
+  requirement_keys?: string[];
 }
 
 export interface ExecutionStep {
@@ -146,6 +156,8 @@ export interface Execution {
   triage_cause?: Triage['cause'] | null;
   triage?: Triage | null;
   repairs?: Repair[];
+  /** The campaign it ran in, if it did. */
+  campaign_id?: number | null;
 }
 
 /** A bug the explorer found (mcp-server/lib/bugs.js), with the test that reproduces it. */
@@ -328,6 +340,9 @@ export interface JiraComments {
 
 /** A campaign as listed: without its runs and requirements, with what failed. */
 export type CampaignSummary = Omit<Campaign, 'requirements' | 'runs'> & { failing_requirements: string[]; failed: string[] };
+
+/** A campaign a test ran in, and how it did there. */
+export type TestCampaign = Omit<Campaign, 'requirements' | 'runs' | 'changes'> & { run: CampaignRun | null };
 
 /** What a file of requirements holds, previewed or imported (mcp-server/lib/requirement-import.js). */
 export interface RequirementImport {

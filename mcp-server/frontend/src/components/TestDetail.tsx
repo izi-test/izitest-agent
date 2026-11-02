@@ -1,5 +1,4 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { showToast } from '../store/slices/uiSlice';
 import {
@@ -18,40 +17,33 @@ import {
   closeAssertionModal,
 } from '../store/slices/testDetailSlice';
 import { executeTest, executeAgent, closeLiveModal, stopExecution, sendDebugAction, toggleBreakpoint } from '../store/slices/executionSlice';
-import { useGetTestQuery, useUpdateTestMutation, useDeleteTestMutation, useDeleteStepMutation, useReorderStepsMutation } from '../store/services/testsApi';
+import {
+  useGetTestQuery, useUpdateTestMutation, useDeleteTestMutation, useDeleteStepMutation, useReorderStepsMutation, useGetTestCampaignsQuery,
+} from '../store/services/testsApi';
+import { useGetExecutionsQuery } from '../store/services/executionsApi';
+import { useGetProjectsQuery } from '../store/services/projectsApi';
+import { useGetTestRequirementsQuery } from '../store/services/requirementsApi';
+import { useBack, useFollowProject, useGo, useLeaveGuard } from '../navigation';
+import { withScope } from '../scope';
 import { StepModal } from './StepModal';
 import { AssertionModal } from './AssertionModal';
 import { ConfirmModal } from './ConfirmModal';
-import { ProjectAssign } from './ProjectSelector';
+import { MoveToProjectDialog } from './ProjectSelector';
 import { Button } from './Button';
 import { ExecutionHistory } from './ExecutionHistory';
 import { LiveExecutionModal } from './LiveExecutionModal';
 import { GherkinEditor } from './GherkinEditor';
 import { CodePanel } from './CodePanel';
+import { Card, EmptyState, KeyChip, Menu, ProjectChip, ResultBar, StatusPill } from './ui';
+import { dateTime, formatDuration, relativeTime } from '../format';
 import {
-  ArrowLeft,
-  Play,
-  Save,
-  Trash2,
-  List,
-  History,
-  ChevronUp,
-  ChevronDown,
-  Pencil,
-  Plus,
-  Database,
-  ShieldCheck,
-  Monitor,
-  FileCode,
-  Code,
-  ClipboardList,
+  ArrowLeft, Play, Save, Trash2, List, History, ChevronUp, ChevronDown, Pencil, Plus, Database, ShieldCheck, Monitor, FileCode, Code,
+  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight,
 } from 'lucide-react';
-import { useState } from 'react';
-import { useGetTestRequirementsQuery } from '../store/services/requirementsApi';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 interface TestDetailProps {
   testName: string;
-  onBack: () => void;
 }
 
 const VIEWPORT_PRESETS = [
@@ -77,9 +69,13 @@ function parseViewportString(value: string): { width: number; height: number } |
   return { width: w, height: h };
 }
 
-export function TestDetail({ testName, onBack }: TestDetailProps) {
+export function TestDetail({ testName }: TestDetailProps) {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
+  const go = useGo();
+  const back = useBack('/tests', 'Tests');
+  const scope = useAppSelector(state => state.ui.selectedProjectId);
 
   // Redux state
   const {
@@ -116,14 +112,26 @@ export function TestDetail({ testName, onBack }: TestDetailProps) {
 
   // RTK Query
   const { data: test, isLoading, refetch } = useGetTestQuery(testName);
+  const { data: projects = [] } = useGetProjectsQuery();
+  const { data: runs = [] } = useGetExecutionsQuery({ testName, limit: 20 }, { refetchOnMountOrArgChange: refreshTrigger });
+  const { data: campaigns = [] } = useGetTestCampaignsQuery(testName);
   const [updateTestMut] = useUpdateTestMutation();
   const [deleteTestMut] = useDeleteTestMutation();
   const [deleteStepMut] = useDeleteStepMutation();
   const [reorderStepsMut] = useReorderStepsMutation();
 
   // Local-only confirm modal state (callback is non-serializable)
-  const [confirmData, setConfirmData] = useState<{ isOpen: boolean; message: string; onConfirm: () => void } | null>(null);
+  const [confirmData, setConfirmData] = useState<{ isOpen: boolean; title?: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
   const [viewport, setViewport] = useState<{ width: number; height: number } | null>(null);
+  const [runOptionsOpen, setRunOptionsOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [syncedWith, setSyncedWith] = useState<string | null>(null);
+  const runOptionsRef = useRef<HTMLDivElement>(null);
+
+  // A test of another project: that project comes into scope, its breadcrumb and list with it.
+  useFollowProject(test ? test.project_id ?? null : undefined, (owner) => {
+    dispatch(showToast({ message: `Now in ${projects.find((p) => p.id === owner)?.name ?? 'all projects'}: the project of ${testName}` }));
+  });
 
   // Sync RTK Query data into form slice
   useEffect(() => {
@@ -141,8 +149,21 @@ export function TestDetail({ testName, onBack }: TestDetailProps) {
         variables,
       }));
       setViewport(test.viewport || null);
+      setSyncedWith(test.updated_at);
     }
   }, [test, dispatch]);
+
+  useEffect(() => {
+    if (!runOptionsOpen) return;
+    const close = (event: MouseEvent) => { if (!runOptionsRef.current?.contains(event.target as Node)) setRunOptionsOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [runOptionsOpen]);
+
+  // The name and description typed, not saved yet: leaving asks first. Compared once the form
+  // holds this test's (the store may still hold the one opened before).
+  const dirty = !!test && syncedWith === test.updated_at && (editName !== test.name || editDescription !== (test.description || ''));
+  const { blocker, allow } = useLeaveGuard(dirty);
 
   const handleSaveMeta = async () => {
     if (!editName.trim()) return dispatch(showToast({ message: 'Name is required', type: 'error' }));
@@ -150,17 +171,26 @@ export function TestDetail({ testName, onBack }: TestDetailProps) {
       await updateTestMut({ originalName: testName, name: editName.trim(), description: editDescription.trim(), viewport }).unwrap();
       dispatch(showToast({ message: 'Test saved' }));
       if (editName.trim() !== testName) {
-        navigate(`/tests/${encodeURIComponent(editName.trim())}`, { replace: true });
+        allow();
+        navigate(withScope(`/tests/${encodeURIComponent(editName.trim())}`, scope), { replace: true, state: location.state });
       }
     } catch (err: any) {
       dispatch(showToast({ message: err.message || 'Save failed', type: 'error' }));
     }
   };
 
+  const discard = () => {
+    if (!test) return;
+    dispatch(setEditName(test.name));
+    dispatch(setEditDescription(test.description || ''));
+  };
+
   const handleStepDelete = (order: number) => {
     setConfirmData({
       isOpen: true,
-      message: `Delete step #${order}?`,
+      title: `Delete step #${order}?`,
+      message: 'The steps after it move up by one.',
+      confirmLabel: 'Delete step',
       onConfirm: async () => {
         try {
           await deleteStepMut({ testName: test!.name, stepOrder: order }).unwrap();
@@ -196,13 +226,16 @@ export function TestDetail({ testName, onBack }: TestDetailProps) {
     if (!test) return;
     setConfirmData({
       isOpen: true,
-      message: `Delete test "${test.name}" and all its steps?`,
+      title: `Delete the test “${test.name}”?`,
+      message: 'Its steps and its run history are deleted with it. The requirements it checks stay, without this test.',
+      confirmLabel: 'Delete test',
       onConfirm: async () => {
         try {
           await deleteTestMut(test.name).unwrap();
           dispatch(showToast({ message: 'Test deleted' }));
           setConfirmData(null);
-          onBack();
+          allow();
+          back.go();
         } catch (err: any) {
           dispatch(showToast({ message: err.message || 'Delete failed', type: 'error' }));
         }
@@ -212,6 +245,7 @@ export function TestDetail({ testName, onBack }: TestDetailProps) {
 
   const handleExecute = async () => {
     if (!test) return;
+    setRunOptionsOpen(false);
 
     if (useAgent) {
       return handleAgentExecute();
@@ -294,310 +328,373 @@ CRITICAL RULES:
   };
 
   if (isLoading || !test) {
-    return <section className="view active"><p className="empty-state">Loading...</p></section>;
+    return <Card><p className="empty-state">Loading…</p></Card>;
   }
 
   const steps = test.steps || [];
   const assertionCount = steps.filter(s => s.command === 'assert').length;
+  const variableCount = test.variables ? Object.keys(test.variables).length : 0;
+  const project = projects.find((p) => p.id === projectId) ?? null;
+  const lastRun = runs[0];
+  const optionsChanged = !executeNewWindow || useAgent || useDebug || !!viewport;
+  const withSide = activeTab === 'steps' || activeTab === 'data';
+
+  const tabs: Array<{ id: typeof activeTab; label: string; icon: typeof List; count?: number }> = [
+    { id: 'steps', label: 'Steps', icon: List, count: steps.length },
+    { id: 'gherkin', label: 'Gherkin', icon: FileCode },
+    { id: 'code', label: 'Code', icon: Code },
+    { id: 'data', label: 'Data', icon: Database, count: variableCount || undefined },
+    { id: 'history', label: 'Runs', icon: History, count: runs.length || undefined },
+    { id: 'campaigns', label: 'Campaigns', icon: Layers, count: campaigns.length || undefined },
+  ];
 
   return (
-    <section id="viewDetail" className="view active">
-      <div className="detail-header">
-        <Button variant="back" icon={ArrowLeft} onClick={onBack} title="Back">
-          Back
-        </Button>
-        <div className="detail-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={executeNewWindow} onChange={e => dispatch(setExecuteNewWindow(e.target.checked))} />
-            New Window
-          </label>
-          <label style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={useAgent} onChange={e => dispatch(setUseAgent(e.target.checked))} />
-            Use Agent
-          </label>
-          <label style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={useDebug} onChange={e => dispatch(setUseDebug(e.target.checked))} />
-            Debug
-          </label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', color: 'var(--text-muted)' }}>
-            <Monitor size={14} />
-            <select
-              value={viewportToString(viewport)}
-              onChange={async (e) => {
-                const newViewport = parseViewportString(e.target.value);
-                setViewport(newViewport);
-                try {
-                  await updateTestMut({ originalName: testName, name: test.name, viewport: newViewport }).unwrap();
-                } catch {}
-              }}
-              style={{
-                background: 'var(--bg-tertiary)',
-                color: 'var(--text)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                padding: '4px 8px',
-                fontSize: '12px',
-                fontFamily: 'var(--font)',
-                cursor: 'pointer',
-              }}
-            >
-              {VIEWPORT_PRESETS.map(preset => (
-                <option key={preset.value} value={preset.value}>{preset.label}</option>
-              ))}
-            </select>
+    <>
+      <Card className="detail-head">
+        <div>
+          <Button variant="back" size="sm" icon={ArrowLeft} onClick={back.go}>{back.label}</Button>
+        </div>
+        <div className="detail-head__top">
+          <div className="detail-head__titles">
+            <input className="inline-edit inline-edit--title" value={editName} onChange={e => dispatch(setEditName(e.target.value))} aria-label="Test name" spellCheck={false} />
+            <input className="inline-edit inline-edit--sub" value={editDescription} onChange={e => dispatch(setEditDescription(e.target.value))} placeholder="Add a description…" aria-label="Description" />
           </div>
-          <Button
-            variant="action"
-            icon={Play}
-            onClick={handleExecute}
-            disabled={isExecuting}
-            style={{ background: '#10b981', color: '#fff', border: 'none' }}
-          >
-            {isExecuting ? 'Running...' : 'Run Test'}
-          </Button>
-          <Button variant="save" icon={Save} onClick={handleSaveMeta}>
-            Save
-          </Button>
-          <Button variant="danger" icon={Trash2} onClick={handleDeleteTest}>
-            Delete
-          </Button>
+          <div className="detail-head__actions">
+            <div className="split-button" ref={runOptionsRef}>
+              <Button icon={isExecuting ? Loader2 : Play} onClick={handleExecute} disabled={isExecuting}>
+                {isExecuting ? 'Running…' : useAgent ? 'Run with agent' : useDebug ? 'Debug' : 'Run'}
+              </Button>
+              <Button aria-label="Run options" title="Run options" onClick={() => setRunOptionsOpen(!runOptionsOpen)}>
+                <ChevronDown size={16} />
+              </Button>
+              {runOptionsOpen && (
+                <div className="popover run-options">
+                  <div className="popover__title">Run options</div>
+                  <label className="switch">
+                    <input type="checkbox" checked={executeNewWindow} onChange={e => dispatch(setExecuteNewWindow(e.target.checked))} />
+                    <span className="switch__text">Open in a new window<span className="switch__hint">The run does not touch the tab you are in.</span></span>
+                  </label>
+                  <label className="switch">
+                    <input type="checkbox" checked={useAgent} onChange={e => dispatch(setUseAgent(e.target.checked))} />
+                    <span className="switch__text">Let the agent fix failures<span className="switch__hint">Use Agent: a failed step is redone and repaired.</span></span>
+                  </label>
+                  <label className="switch">
+                    <input type="checkbox" checked={useDebug} onChange={e => dispatch(setUseDebug(e.target.checked))} />
+                    <span className="switch__text">Debug step by step<span className="switch__hint">Pauses at each step, with breakpoints.</span></span>
+                  </label>
+                  <label className="field">
+                    <span className="field__label"><Monitor size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Viewport</span>
+                    <select
+                      value={viewportToString(viewport)}
+                      onChange={async (e) => {
+                        const newViewport = parseViewportString(e.target.value);
+                        setViewport(newViewport);
+                        try {
+                          await updateTestMut({ originalName: testName, name: test.name, viewport: newViewport }).unwrap();
+                        } catch {}
+                      }}
+                    >
+                      {VIEWPORT_PRESETS.map(preset => (
+                        <option key={preset.value} value={preset.value}>{preset.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+            </div>
+            <Menu items={[
+              { label: 'Move to project…', icon: FolderInput, onClick: () => setMoving(true) },
+              'divider',
+              { label: 'Delete test…', icon: Trash2, danger: true, onClick: handleDeleteTest },
+            ]} />
+          </div>
         </div>
-      </div>
 
-      <div className="detail-meta">
-        <div className="field-group">
-          <label>Name</label>
-          <input type="text" value={editName} onChange={e => dispatch(setEditName(e.target.value))} />
-        </div>
-        <div className="field-group">
-          <label>Description</label>
-          <input type="text" value={editDescription} onChange={e => dispatch(setEditDescription(e.target.value))} />
-        </div>
-        <div className="detail-info">
-          <span className="info-badge">Created: {new Date(test.created_at).toLocaleString()}</span>
-          <span className="info-badge">Updated: {new Date(test.updated_at).toLocaleString()}</span>
-          {assertionCount > 0 && (
-            <span className="info-badge" style={{ color: 'var(--accent, #0284c7)' }}>
-              <ShieldCheck size={14} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />
-              {assertionCount} assertion{assertionCount > 1 ? 's' : ''}
+        {dirty && (
+          <div className="unsaved">
+            <Pencil size={14} /> Unsaved changes to the name or description
+            <span className="spacer" />
+            <Button size="sm" variant="ghost" icon={Undo2} onClick={discard}>Discard</Button>
+            <Button size="sm" icon={Save} onClick={handleSaveMeta}>Save</Button>
+          </div>
+        )}
+
+        <div className="detail-meta-row">
+          <ProjectChip project={project} onClick={project ? () => navigate(withScope('/tests', project.id)) : undefined} title={project ? `The tests of ${project.name}` : undefined} />
+          <TestRequirements testName={test.name} />
+          <span className="meta-sep" />
+          <span className="meta-item"><List size={14} />{steps.length} step{steps.length === 1 ? '' : 's'}</span>
+          {assertionCount > 0 && <span className="meta-item"><ShieldCheck size={14} />{assertionCount} assertion{assertionCount > 1 ? 's' : ''}</span>}
+          <span className="meta-item">
+            Last run: {lastRun ? <><StatusPill status={lastRun.status} /> {relativeTime(lastRun.started_at)}</> : <StatusPill status="never" />}
+          </span>
+          <span className="meta-item"><Clock size={14} />Updated {dateTime(test.updated_at)}</span>
+          {optionsChanged && (
+            <span className="meta-item" title="Run options">
+              {!executeNewWindow && <span className="tag">same window</span>}
+              {useAgent && <span className="tag tag--blue">agent</span>}
+              {useDebug && <span className="tag tag--amber">debug</span>}
+              {viewport && <span className="tag">{viewportToString(viewport)}</span>}
             </span>
           )}
-          <TestRequirements testName={test.name} />
-          <ProjectAssign
-            testName={test.name}
-            currentProjectId={projectId}
-            onAssign={(newProjectId) => dispatch(setProjectId(newProjectId))}
-          />
         </div>
-      </div>
+      </Card>
 
-      <div className="detail-tabs">
-          <button
-            className={`tab-btn ${activeTab === 'steps' ? 'active' : ''}`}
-            onClick={() => dispatch(setActiveTab('steps'))}
-          >
-            <List size={18} className="tab-icon" />
-            Steps
-            <span className="tab-count">{steps.length}</span>
+      <nav className="tabs" role="tablist">
+        {tabs.map(({ id, label, icon: Icon, count }) => (
+          <button key={id} type="button" role="tab" aria-selected={activeTab === id} className={`tab ${activeTab === id ? 'active' : ''}`} onClick={() => dispatch(setActiveTab(id))}>
+            <Icon size={16} />{label}{count !== undefined && <span className="tab__count">{count}</span>}
           </button>
-          <button
-            className={`tab-btn ${activeTab === 'gherkin' ? 'active' : ''}`}
-            onClick={() => dispatch(setActiveTab('gherkin'))}
-          >
-            <FileCode size={18} className="tab-icon" />
-            Gherkin
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'code' ? 'active' : ''}`}
-            onClick={() => dispatch(setActiveTab('code'))}
-          >
-            <Code size={18} className="tab-icon" />
-            Code
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'data' ? 'active' : ''}`}
-            onClick={() => dispatch(setActiveTab('data'))}
-          >
-            <Database size={18} className="tab-icon" />
-            Data
-            {test.variables && Object.keys(test.variables).length > 0 && (
-              <span className="tab-count">{Object.keys(test.variables).length}</span>
-            )}
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
-            onClick={() => dispatch(setActiveTab('history'))}
-          >
-            <History size={18} className="tab-icon" />
-            Execution History
-          </button>
-      </div>
+        ))}
+      </nav>
 
-      {activeTab === 'data' ? (
-        <div className="data-tab">
-          <div className="steps-header">
-            <h2>Variables</h2>
-            <Button variant="save" size="sm" icon={Save} onClick={async () => {
-              try {
-                const updatedVars = { ...test.variables };
-                for (const [key, value] of Object.entries(variableOverrides)) {
-                  if (updatedVars[key]) {
-                    updatedVars[key] = { ...updatedVars[key], defaultValue: value };
+      <div className={`detail-layout ${withSide ? '' : 'detail-layout--full'}`}>
+        <div className="stack">
+          {activeTab === 'data' ? (
+            <Card title="Variables" subtitle="The values a run uses; change them for the next run, or save them as the defaults."
+              actions={(
+                <Button variant="secondary" size="sm" icon={Save} onClick={async () => {
+                  try {
+                    const updatedVars = { ...test.variables };
+                    for (const [key, value] of Object.entries(variableOverrides)) {
+                      if (updatedVars[key]) {
+                        updatedVars[key] = { ...updatedVars[key], defaultValue: value };
+                      }
+                    }
+                    await updateTestMut({
+                      originalName: test.name,
+                      name: test.name,
+                      description: test.description || undefined,
+                      variables: updatedVars
+                    }).unwrap();
+                    dispatch(showToast({ message: 'Variables saved' }));
+                  } catch (err: any) {
+                    dispatch(showToast({ message: err.message || 'Save failed', type: 'error' }));
                   }
-                }
-                await updateTestMut({
-                  originalName: test.name,
-                  name: test.name,
-                  description: test.description || undefined,
-                  variables: updatedVars
-                }).unwrap();
-                dispatch(showToast({ message: 'Variables saved' }));
-              } catch (err: any) {
-                dispatch(showToast({ message: err.message || 'Save failed', type: 'error' }));
-              }
-            }}>
-              Save Defaults
-            </Button>
-          </div>
-
-          {!test.variables || Object.keys(test.variables).length === 0 ? (
-            <p className="empty-state">No variables defined. Variables are created automatically when recording fill actions.</p>
-          ) : (
-            <div className="data-grid">
-              {Object.entries(test.variables).map(([key, info]: [string, any]) => (
-                <div key={key} className="data-row">
-                  <div className="data-var-name">
-                    <span className="step-var-badge">{`{{${key}}}`}</span>
-                    {info.description && <span className="data-var-desc">{info.description}</span>}
-                  </div>
-                  <div className="data-var-input">
-                    <input
-                      type="text"
-                      value={variableOverrides[key] ?? info.defaultValue ?? ''}
-                      onChange={e => dispatch(setVariableOverride({ key, value: e.target.value }))}
-                      placeholder={info.defaultValue || 'Enter value...'}
-                    />
-                    {info.type && <span className="data-var-type">{info.type}</span>}
-                  </div>
+                }}>
+                  Save defaults
+                </Button>
+              )}>
+              {!test.variables || Object.keys(test.variables).length === 0 ? (
+                <EmptyState icon={Database} title="No variable">Variables are created when a fill action is recorded.</EmptyState>
+              ) : (
+                <div className="data-grid">
+                  {Object.entries(test.variables).map(([key, info]: [string, any]) => (
+                    <div key={key} className="data-row">
+                      <div className="data-var-name">
+                        <span className="step-var-badge">{`{{${key}}}`}</span>
+                        {info.description && <span className="data-var-desc">{info.description}</span>}
+                      </div>
+                      <div className="data-var-input">
+                        <input
+                          type="text"
+                          value={variableOverrides[key] ?? info.defaultValue ?? ''}
+                          onChange={e => dispatch(setVariableOverride({ key, value: e.target.value }))}
+                          placeholder={info.defaultValue || 'Enter value...'}
+                        />
+                        {info.type && <span className="data-var-type">{info.type}</span>}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
+            </Card>
+          ) : activeTab === 'steps' ? (
+            <>
+              <div className="section-head">
+                <h2>Steps</h2>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Button variant="secondary" size="sm" icon={Plus} onClick={() => dispatch(openStepModal(null))}>Add step</Button>
+                  <Button variant="secondary" size="sm" icon={ShieldCheck} onClick={() => dispatch(openAssertionModal(null))}>Add assertion</Button>
+                </div>
+              </div>
+
+              {steps.length === 0 ? (
+                <Card><EmptyState icon={List} title="No step yet">Add steps to build the test, then assertions to check what it does.</EmptyState></Card>
+              ) : (
+                <div className="steps">
+                  {steps.map((step, i) => {
+                    const params = typeof step.params === 'string' ? JSON.parse(step.params) : (step.params || {});
+                    const variable = typeof step.variable === 'string' ? JSON.parse(step.variable) : step.variable;
+                    const assertion = typeof step.assertion === 'string' ? JSON.parse(step.assertion) : step.assertion;
+                    const isAssertion = step.command === 'assert';
+
+                    let paramsPreview = '';
+                    if (isAssertion && assertion) {
+                      if (assertion.type !== 'visual_match') {
+                        const parts = [assertion.type];
+                        if (assertion.selector) parts.push(`on "${assertion.selector}"`);
+                        if (assertion.expected) parts.push(`= "${assertion.expected}"`);
+                        paramsPreview = parts.join(' ');
+                      }
+                    } else {
+                      paramsPreview = Object.entries(params).map(([k, v]) => `${k}: ${String(v).substring(0, 40)}${String(v).length > 40 ? '…' : ''}`).join(', ');
+                    }
+
+                    return (
+                      <div key={step.id} className={`step ${isAssertion ? 'step--assertion' : ''}`}>
+                        <div className="step__order">{step.step_order}</div>
+                        <div className="step__body">
+                          <div className="step__head">
+                            <span className={`step__command ${isAssertion ? 'step__command--assertion' : ''}`}>
+                              {isAssertion && <ShieldCheck size={12} />}
+                              {step.command}
+                            </span>
+                            {step.intent && <span className="step__intent">{step.intent}</span>}
+                            {variable && variable.name && <span className="var-badge">{'{{' + variable.name + '}}'}</span>}
+                          </div>
+                          {paramsPreview && <div className="step__params" title={paramsPreview}>{paramsPreview}</div>}
+                          {isAssertion && assertion?.type === 'visual_match' && (
+                            <div className="vrt-preview" style={{ marginTop: '6px' }}>
+                              <span className="field__hint" style={{ display: 'block', marginBottom: '4px' }}>Visual baseline reference:</span>
+                              <img src={`/${assertion.expected}`} alt="VRT baseline" style={{ maxHeight: '80px', borderRadius: '4px' }} />
+                            </div>
+                          )}
+                        </div>
+                        <div className="step__actions">
+                          <button className="icon-button" title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => handleStepMove(step.step_order, -1)}>
+                            <ChevronUp size={15} />
+                          </button>
+                          <button className="icon-button" title="Move down" aria-label="Move down" disabled={i === steps.length - 1} onClick={() => handleStepMove(step.step_order, 1)}>
+                            <ChevronDown size={15} />
+                          </button>
+                          <button className="icon-button" title="Edit" aria-label="Edit" onClick={() => {
+                            if (isAssertion) {
+                              dispatch(openAssertionModal(step));
+                            } else {
+                              dispatch(openStepModal(step));
+                            }
+                          }}>
+                            <Pencil size={15} />
+                          </button>
+                          <button className="icon-button icon-button--danger" title="Delete" aria-label="Delete" onClick={() => handleStepDelete(step.step_order)}>
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <StepModal
+                isOpen={isStepModalOpen}
+                testName={test.name}
+                step={editingStep}
+                onClose={() => dispatch(closeStepModal())}
+                onSaved={() => { dispatch(closeStepModal()); refetch(); }}
+              />
+
+              <AssertionModal
+                isOpen={isAssertionModalOpen}
+                testName={test.name}
+                step={editingAssertionStep}
+                onClose={() => dispatch(closeAssertionModal())}
+                onSaved={() => { dispatch(closeAssertionModal()); refetch(); }}
+              />
+            </>
+          ) : activeTab === 'gherkin' ? (
+            <Card><GherkinEditor testName={test.name} /></Card>
+          ) : activeTab === 'code' ? (
+            <Card><CodePanel testName={test.name} /></Card>
+          ) : activeTab === 'campaigns' ? (
+            <Card title="Campaigns" subtitle="The campaigns this test ran in, newest first, and how it did in each." flush>
+              {campaigns.length === 0 ? (
+                <EmptyState icon={Layers} title="Not run in a campaign yet">Choose it with others on the Tests page and “Run as campaign”.</EmptyState>
+              ) : (
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead><tr><th>Campaign</th><th>Here</th><th>Whole campaign</th><th>Started</th><th className="col-chevron" /></tr></thead>
+                    <tbody>
+                      {campaigns.map((c) => (
+                        <tr key={c.id} className="clickable" onClick={() => go(`/campaigns/${c.id}`, { from: test.name })}>
+                          <td><span className="cell-title">#{c.id} {c.name}</span>{c.version && <span className="campaign-version">v{c.version}</span>}</td>
+                          <td>{c.run ? <StatusPill status={c.run.status} /> : '—'}{c.run?.duration_ms != null && <span className="cell-muted"> · {formatDuration(c.run.duration_ms)}</span>}</td>
+                          <td><div className="result-cell"><ResultBar totals={c.totals} /><span>{c.totals.passed}/{c.total} passed</span></div></td>
+                          <td className="cell-muted">{dateTime(c.created_at)}</td>
+                          <td className="col-chevron"><ChevronRight size={16} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          ) : (
+            <Card>
+              <div className="exec-history-section">
+                <ExecutionHistory testName={test.name} refreshTrigger={refreshTrigger} onTestChanged={refetch} />
+              </div>
+            </Card>
           )}
         </div>
-      ) : activeTab === 'steps' ? (
-        <>
-          <div className="steps-header">
-            <h2>Steps</h2>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <Button variant="primary" size="sm" icon={Plus} onClick={() => dispatch(openStepModal(null))}>
-                Add Step
-              </Button>
-              <Button variant="primary" size="sm" icon={ShieldCheck} onClick={() => dispatch(openAssertionModal(null))}
-                style={{ background: 'var(--accent, #0284c7)' }}
-              >
-                Add Assertion
-              </Button>
-            </div>
-          </div>
 
-          <div id="stepsList" className="steps-list">
-            {steps.length === 0 ? (
-              <p className="empty-state">No steps yet. Add steps to build the test, then add assertions to verify results.</p>
-            ) : (
-              steps.map((step, i) => {
-                const params = typeof step.params === 'string' ? JSON.parse(step.params) : (step.params || {});
-                const variable = typeof step.variable === 'string' ? JSON.parse(step.variable) : step.variable;
-                const assertion = typeof step.assertion === 'string' ? JSON.parse(step.assertion) : step.assertion;
-                const isAssertion = step.command === 'assert';
-
-                let paramsPreview = '';
-                if (isAssertion && assertion) {
-                  if (assertion.type !== 'visual_match') {
-                    const parts = [assertion.type];
-                    if (assertion.selector) parts.push(`on "${assertion.selector}"`);
-                    if (assertion.expected) parts.push(`= "${assertion.expected}"`);
-                    paramsPreview = parts.join(' ');
-                  }
-                } else {
-                  paramsPreview = Object.entries(params).map(([k, v]) => `${k}: ${String(v).substring(0, 30)}${String(v).length > 30 ? '...' : ''}`).join(', ');
-                }
-
-                return (
-                  <div key={step.id} className={`step-card ${isAssertion ? 'step-card--assertion' : ''}`}>
-                    <div className="step-order">{step.step_order}</div>
-                    <div className="step-info">
-                      <span className={`step-command ${isAssertion ? 'step-command--assertion' : ''}`}>
-                        {isAssertion && <ShieldCheck size={14} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />}
-                        {step.command}
-                      </span>
-                      {step.intent && <div className="step-intent">{step.intent}</div>}
-                      {paramsPreview && <div className="step-params-preview">{paramsPreview}</div>}
-                      {isAssertion && assertion?.type === 'visual_match' && (
-                        <div className="vrt-preview" style={{ marginTop: '8px' }}>
-                          <span style={{ fontSize: '11px', color: '#888', display: 'block', marginBottom: '4px' }}>Visual Baseline Reference:</span>
-                          <img src={`/${assertion.expected}`} alt="VRT baseline" style={{ maxHeight: '80px', borderRadius: '4px', border: '1px solid #333' }} />
-                        </div>
-                      )}
+        {withSide && (
+          <div className="stack">
+            <Card title="Recent runs" actions={runs.length > 0 && <button className="link-btn" onClick={() => dispatch(setActiveTab('history'))}>All runs</button>}>
+              {runs.length === 0 ? <p className="muted">Never run yet.</p> : (
+                <div className="side-list">
+                  {runs.slice(0, 5).map((r) => (
+                    <div key={r.id} className="side-list__row side-list__row--link" onClick={() => dispatch(setActiveTab('history'))}>
+                      <StatusPill status={r.status} />
+                      <div className="side-list__main">
+                        <span className="side-list__title">{relativeTime(r.started_at)} · {formatDuration(r.duration_ms)}</span>
+                        {r.campaign_id
+                          ? <button className="link-btn side-list__sub" onClick={(e) => { e.stopPropagation(); go(`/campaigns/${r.campaign_id}`, { from: test.name }); }}>In campaign #{r.campaign_id}</button>
+                          : <span className="side-list__sub">{r.trigger === 'manual' ? 'Run from here' : r.trigger}</span>}
+                      </div>
                     </div>
-                    {variable && variable.name && <span className="step-var-badge">{'{{' + variable.name + '}}'}</span>}
-                    <div className="step-actions">
-                      <button className="step-btn" title="Move up" disabled={i === 0} onClick={() => handleStepMove(step.step_order, -1)}>
-                        <ChevronUp size={14} />
-                      </button>
-                      <button className="step-btn" title="Move down" disabled={i === steps.length - 1} onClick={() => handleStepMove(step.step_order, 1)}>
-                        <ChevronDown size={14} />
-                      </button>
-                      <button className="step-btn" title="Edit" onClick={() => {
-                        if (isAssertion) {
-                          dispatch(openAssertionModal(step));
-                        } else {
-                          dispatch(openStepModal(step));
-                        }
-                      }}>
-                        <Pencil size={14} />
-                      </button>
-                      <button className="step-btn danger" title="Delete" onClick={() => handleStepDelete(step.step_order)}>
-                        <Trash2 size={14} />
-                      </button>
+                  ))}
+                </div>
+              )}
+            </Card>
+            <Card title="Campaigns" actions={campaigns.length > 3 && <button className="link-btn" onClick={() => dispatch(setActiveTab('campaigns'))}>All {campaigns.length}</button>}>
+              {campaigns.length === 0 ? <p className="muted">Not run in a campaign yet.</p> : (
+                <div className="side-list">
+                  {campaigns.slice(0, 3).map((c) => (
+                    <div key={c.id} className="side-list__row side-list__row--link" onClick={() => go(`/campaigns/${c.id}`, { from: test.name })}>
+                      <div className="side-list__main">
+                        <span className="side-list__title">#{c.id} {c.name}{c.version && <span className="campaign-version">v{c.version}</span>}</span>
+                        <span className="side-list__sub">{relativeTime(c.created_at)}</span>
+                      </div>
+                      {c.run && <StatusPill status={c.run.status} />}
                     </div>
-                  </div>
-                );
-              })
-            )}
+                  ))}
+                </div>
+              )}
+            </Card>
           </div>
-
-          <StepModal
-            isOpen={isStepModalOpen}
-            testName={test.name}
-            step={editingStep}
-            onClose={() => dispatch(closeStepModal())}
-            onSaved={() => { dispatch(closeStepModal()); refetch(); }}
-          />
-
-          <AssertionModal
-            isOpen={isAssertionModalOpen}
-            testName={test.name}
-            step={editingAssertionStep}
-            onClose={() => dispatch(closeAssertionModal())}
-            onSaved={() => { dispatch(closeAssertionModal()); refetch(); }}
-          />
-        </>
-      ) : activeTab === 'gherkin' ? (
-        <GherkinEditor testName={test.name} />
-      ) : activeTab === 'code' ? (
-        <CodePanel testName={test.name} />
-      ) : (
-        <div className="exec-history-section">
-          <ExecutionHistory testName={test.name} refreshTrigger={refreshTrigger} onTestChanged={refetch} />
-        </div>
-      )}
+        )}
+      </div>
 
       {confirmData && (
         <ConfirmModal
           isOpen={confirmData.isOpen}
+          title={confirmData.title}
           message={confirmData.message}
+          confirmLabel={confirmData.confirmLabel}
           onConfirm={confirmData.onConfirm}
           onCancel={() => setConfirmData(null)}
+        />
+      )}
+
+      <ConfirmModal
+        isOpen={blocker.state === 'blocked'}
+        tone="primary"
+        title="Leave without saving?"
+        message="The name or description you changed is not saved yet."
+        confirmLabel="Leave without saving"
+        onConfirm={() => blocker.proceed?.()}
+        onCancel={() => blocker.reset?.()}
+      />
+
+      {moving && (
+        <MoveToProjectDialog
+          tests={[test.name]} currentProjectId={projectId} onClose={() => setMoving(false)}
+          onMoved={(newProjectId) => {
+            dispatch(setProjectId(newProjectId));
+            refetch();
+          }}
         />
       )}
 
@@ -631,20 +728,20 @@ CRITICAL RULES:
           if (debugExecutionId) dispatch(sendDebugAction({ executionId: debugExecutionId, action: 'toggle-breakpoint', step }));
         }}
       />
-    </section>
+    </>
   );
 }
 
 /** The requirements the test checks, each a link to it: "SHOP-1 · criterion 1, 2". */
 function TestRequirements({ testName }: { testName: string }) {
-  const navigate = useNavigate();
+  const go = useGo();
   const { data: requirements = [] } = useGetTestRequirementsQuery(testName);
   return (
     <>
       {requirements.map((r) => (
-        <button key={r.key} className="info-badge requirement-chip" title={r.title} onClick={() => navigate(`/requirements/${encodeURIComponent(r.key)}`)}>
-          <ClipboardList size={12} /> {r.key}{r.criteria.length ? ` · criterion ${r.criteria.map((c) => c.number).join(', ')}` : ''}
-        </button>
+        <KeyChip key={r.key} title={r.title} onClick={() => go(`/requirements/${encodeURIComponent(r.key)}`, { from: testName })}>
+          {r.key}{r.criteria.length ? ` · criterion ${r.criteria.map((c) => c.number).join(', ')}` : ''}
+        </KeyChip>
       ))}
     </>
   );

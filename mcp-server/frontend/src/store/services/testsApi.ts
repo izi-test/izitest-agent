@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Test } from '../../types';
+import type { Test, TestCampaign } from '../../types';
 
 interface TestsResponse {
   tests: Test[];
@@ -114,6 +114,13 @@ export const testsApi = createApi({
       invalidatesTags: [{ type: 'TestList', id: 'LIST' }],
     }),
 
+    // The campaigns it ran in, newest first, with how it did in each.
+    getTestCampaigns: builder.query<TestCampaign[], string>({
+      query: (name) => `api/tests/${encodeURIComponent(name)}/campaigns`,
+      transformResponse: (response: { campaigns: TestCampaign[] }) => response.campaigns ?? [],
+      providesTags: (_result, _error, name) => [{ type: 'Test', id: name }],
+    }),
+
     getTestFeature: builder.query<string, string>({
       query: (name) => ({
         url: `api/tests/${encodeURIComponent(name)}/feature`,
@@ -153,6 +160,7 @@ export const {
   useDeleteStepMutation,
   useReorderStepsMutation,
   useAssignToProjectMutation,
+  useGetTestCampaignsQuery,
   useGetTestFeatureQuery,
   usePutTestFeatureMutation,
   useGetTestCodegenQuery,

@@ -140,20 +140,26 @@ export async function apiRouter(req, res, url) {
     // ── GET /api/tests ──
     if (method === 'GET' && path === '/api/tests') {
       const projectId = url.searchParams.get('project_id');
+      // Each test with how it last ran and the requirements it checks: what the list filters on.
       let query = `
         SELECT t.id, t.name, t.description, t.variables, t.viewport, t.project_id, t.created_at, t.updated_at,
-               COUNT(ts.id) AS step_count
+               (SELECT COUNT(*) FROM test_steps ts WHERE ts.test_id = t.id) AS step_count,
+               last.status AS last_status, last.started_at AS last_run_at, last.duration_ms AS last_duration_ms,
+               (SELECT json_group_array(key) FROM (
+                  SELECT DISTINCT r.key FROM requirement_cases c JOIN requirements r ON r.id = c.requirement_id
+                  WHERE c.test_id = t.id ORDER BY r.key)) AS requirement_keys
         FROM tests t
-        LEFT JOIN test_steps ts ON ts.test_id = t.id
+        LEFT JOIN test_executions last ON last.id = (
+          SELECT e.id FROM test_executions e WHERE e.test_id = t.id ORDER BY e.started_at DESC, e.id DESC LIMIT 1)
       `;
       const params = [];
       if (projectId !== null) {
         query += ' WHERE t.project_id = ?';
         params.push(projectId === 'null' ? null : projectId);
       }
-      query += ' GROUP BY t.id ORDER BY t.updated_at DESC';
+      query += ' ORDER BY t.updated_at DESC';
       const rows = db.prepare(query).all(...params);
-      return json(res, 200, { tests: parseRows(rows, 'variables', 'viewport') });
+      return json(res, 200, { tests: parseRows(rows, 'variables', 'viewport', 'requirement_keys') });
     }
 
     // ── GET /api/tests/:name ──
@@ -380,7 +386,7 @@ export async function apiRouter(req, res, url) {
       const rows = db.prepare(
         `SELECT id, status, started_at, finished_at, duration_ms, total_steps, completed_steps,
                 failed_step, error, new_window, trigger, assertions_total, assertions_passed, assertions_failed,
-                json_extract(triage, '$.cause') AS triage_cause
+                json_extract(triage, '$.cause') AS triage_cause, campaign_id
          FROM test_executions
          WHERE test_id = ?
          ORDER BY started_at DESC
@@ -392,6 +398,21 @@ export async function apiRouter(req, res, url) {
       ).get(test.id);
 
       return json(res, 200, { executions: rows, total: countRow.total, page, pageSize });
+    }
+
+    // ── GET /api/tests/:name/campaigns — the campaigns it ran in, newest first, with how it did in each ──
+    params = matchRoute(path, '/api/tests/:name/campaigns');
+    if (method === 'GET' && params) {
+      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
+      const ids = db.prepare(
+        `SELECT DISTINCT campaign_id AS id FROM test_executions
+         WHERE test_id = ? AND campaign_id IS NOT NULL ORDER BY campaign_id DESC LIMIT 20`
+      ).all(test.id);
+      const campaigns = ids.map(({ id }) => getCampaign(id)).filter(Boolean).map(({ requirements, runs, changes, ...c }) => ({
+        ...c, run: runs.find((r) => r.name === params.name) ?? null,
+      }));
+      return json(res, 200, { campaigns });
     }
 
     // ── GET /api/executions/:id ──
@@ -906,17 +927,26 @@ export async function apiRouter(req, res, url) {
 
     // ── PROJECTS ──
 
-    // GET /api/projects — list all projects with test count
+    // GET /api/projects — each project with what belongs to it (what a deletion leaves without a
+    // project) and its last campaign
     if (method === 'GET' && path === '/api/projects') {
       const rows = db.prepare(`
-        SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
-               COUNT(t.id) AS test_count
+        SELECT p.id, p.name, p.description, p.context, p.project_type, p.base_url, p.created_at, p.updated_at,
+               (SELECT COUNT(*) FROM tests t WHERE t.project_id = p.id) AS test_count,
+               (SELECT COUNT(*) FROM requirements r WHERE r.project_id = p.id) AS requirement_count,
+               (SELECT COUNT(*) FROM campaigns c WHERE c.project_id = p.id) AS campaign_count,
+               (SELECT COUNT(*) FROM bugs b WHERE b.project_id = p.id AND b.status = 'open') AS open_bug_count
         FROM projects p
-        LEFT JOIN tests t ON t.project_id = p.id
-        GROUP BY p.id
         ORDER BY p.updated_at DESC
       `).all();
-      return json(res, 200, { projects: rows });
+      const projects = rows.map((p) => {
+        const last = p.campaign_count ? listCampaigns({ projectId: p.id, limit: 1 })[0] : null;
+        return {
+          ...p,
+          last_campaign: last && { id: last.id, name: last.name, version: last.version, status: last.status, running: last.running, totals: last.totals, total: last.total, created_at: last.created_at },
+        };
+      });
+      return json(res, 200, { projects });
     }
 
     // GET /api/projects/:id — get project with its tests
@@ -1469,6 +1499,9 @@ export async function apiRouter(req, res, url) {
     // ── GET /api/stats — aggregated dashboard statistics ──
     if (method === 'GET' && path === '/api/stats') {
       const projectId = url.searchParams.get('project_id');
+      // The period the runs are counted over: 7, 30 (by default) or 90 days.
+      const days = [7, 30, 90].includes(Number(url.searchParams.get('days'))) ? Number(url.searchParams.get('days')) : 30;
+      const since = `DATE('now', '-${days} days')`;
 
       // Build WHERE clause for project filtering
       let testWhere = '';
@@ -1479,13 +1512,16 @@ export async function apiRouter(req, res, url) {
         execWhere = ' WHERE e.test_id IN (SELECT id FROM tests WHERE project_id = ?)';
         queryParams.push(projectId);
       }
+      const periodWhere = `${execWhere ? `${execWhere} AND` : ' WHERE'} e.started_at >= ${since}`;
 
-      // Test counts
+      // Test counts: all of them, and those never run
       const testCount = db.prepare(
-        `SELECT COUNT(*) AS total FROM tests t${testWhere}`
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM test_executions x WHERE x.test_id = t.id) THEN 1 ELSE 0 END) AS never_run
+         FROM tests t${testWhere}`
       ).get(...queryParams);
 
-      // Execution summary
+      // Execution summary, over the period
       const execSummary = db.prepare(
         `SELECT
            COUNT(*) AS total_executions,
@@ -1496,7 +1532,7 @@ export async function apiRouter(req, res, url) {
            SUM(e.assertions_total) AS assertions_total,
            SUM(e.assertions_passed) AS assertions_passed,
            SUM(e.assertions_failed) AS assertions_failed
-         FROM test_executions e${execWhere}`
+         FROM test_executions e${periodWhere}`
       ).get(...queryParams);
 
       // Recent tests (last 10)
@@ -1515,32 +1551,30 @@ export async function apiRouter(req, res, url) {
         `SELECT e.id, e.test_name, e.status, e.started_at, e.finished_at, e.duration_ms,
                 e.total_steps, e.completed_steps, e.error,
                 e.assertions_total, e.assertions_passed, e.assertions_failed
-         FROM test_executions e${execWhere}
+         FROM test_executions e${periodWhere}
          ORDER BY e.started_at DESC
          LIMIT 20`
       ).all(...queryParams);
 
-      // Execution trend — daily counts for last 30 days
+      // Execution trend — daily counts over the period
       const execTrend = db.prepare(
         `SELECT
            DATE(e.started_at) AS date,
            COUNT(*) AS total,
            SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS passed,
            SUM(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS failed
-         FROM test_executions e${execWhere}
-         ${execWhere ? 'AND' : 'WHERE'} e.started_at >= DATE('now', '-30 days')
+         FROM test_executions e${periodWhere}
          GROUP BY DATE(e.started_at)
          ORDER BY date ASC`
       ).all(...queryParams);
 
-      // Top flaky tests (tests with both pass and fail in last 30 days)
+      // Top flaky tests (tests with both pass and fail over the period)
       const flakyTests = db.prepare(
         `SELECT e.test_name,
                 COUNT(*) AS total_runs,
                 SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS pass_count,
                 SUM(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS fail_count
-         FROM test_executions e${execWhere}
-         ${execWhere ? 'AND' : 'WHERE'} e.started_at >= DATE('now', '-30 days')
+         FROM test_executions e${periodWhere}
          GROUP BY e.test_name
          HAVING fail_count > 0 AND pass_count > 0
          ORDER BY fail_count DESC
@@ -1548,8 +1582,10 @@ export async function apiRouter(req, res, url) {
       ).all(...queryParams);
 
       return json(res, 200, {
+        days,
         tests: {
           total: testCount.total,
+          never_run: testCount.never_run || 0,
           recent: recentTests,
         },
         executions: {

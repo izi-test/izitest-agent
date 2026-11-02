@@ -1,311 +1,290 @@
-import { useNavigate } from 'react-router-dom';
-import { useAppSelector } from '../store/hooks';
+import { useState } from 'react';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { setActiveTab } from '../store/slices/testDetailSlice';
 import { useGetStatsQuery } from '../store/services/statsApi';
+import { useGetProjectsQuery } from '../store/services/projectsApi';
+import { useGetRequirementsQuery } from '../store/services/requirementsApi';
+import { useGetCampaignsQuery } from '../store/services/campaignsApi';
+import { useGetBugsQuery } from '../store/services/bugsApi';
+import { useGo, useUrlState } from '../navigation';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
-  BarChart, Bar,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
 import {
-  FlaskConical, Play, CheckCircle2, XCircle, Clock, ShieldCheck,
-  TrendingUp, AlertTriangle, Layers, ChevronRight,
+  FlaskConical, Play, Timer, TrendingUp, AlertTriangle, ChevronRight, ArrowUpRight, ClipboardList, Layers, Bug, History,
 } from 'lucide-react';
+import { Card, EmptyState, PageHeader, Pill, ResultBar, Segmented, StatusPill } from './ui';
+import { formatDuration, relativeTime, shortDate } from '../format';
 
-const COLORS = {
-  passed: '#34d399',
-  failed: '#f87171',
-  running: '#818cf8',
-  pending: '#8888a8',
-  accent: '#8a4cfc',
-};
+// The dashboard: where the project in scope stands over a period — its tests, how its runs went,
+// its requirements' coverage, its last campaign, its open bugs — each a way into the page that
+// has the detail.
 
-function formatDuration(ms: number | null): string {
-  if (!ms) return '—';
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60000).toFixed(1)}m`;
-}
+const COLORS = { passed: '#16A34A', failed: '#DC2626', running: '#2563EB', error: '#D97706', grid: '#E2E8F0', muted: '#64748B' };
+const PERIODS = [{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: '90', label: '90 days' }] as const;
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
-}
+const percent = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 
 export function Dashboard() {
-  const navigate = useNavigate();
-  const selectedProjectId = useAppSelector(state => state.ui.selectedProjectId);
-  const { data: stats, isLoading } = useGetStatsQuery(selectedProjectId);
+  const dispatch = useAppDispatch();
+  const go = useGo();
+  const scope = useAppSelector((state) => state.ui.selectedProjectId);
+  const [days, setDays] = useUrlState('days', '30');
+  const { data: stats, isLoading } = useGetStatsQuery({ projectId: scope, days: Number(days) });
+  const { data: projects = [] } = useGetProjectsQuery();
+  const { data: requirements = [] } = useGetRequirementsQuery(scope);
+  const { data: campaigns = [] } = useGetCampaignsQuery(scope);
+  const { data: bugs = [] } = useGetBugsQuery({ status: 'open', projectId: scope });
+  const project = projects.find((p) => p.id === scope);
+  // When the page opened: what "this week" counts from.
+  const [now] = useState(() => Date.now());
+
+  const openTest = (name: string, tab?: 'history') => {
+    if (tab) dispatch(setActiveTab(tab));
+    go(`/tests/${encodeURIComponent(name)}`, { from: 'the dashboard' });
+  };
+
+  const header = (
+    <PageHeader
+      title="Dashboard"
+      subtitle={`${project?.name ?? 'All projects'} · last ${days} days`}
+      actions={<Segmented label="Period" options={PERIODS.map((p) => ({ ...p }))} value={days as '7' | '30' | '90'} onChange={setDays} />}
+    />
+  );
 
   if (isLoading || !stats) {
-    return (
-      <section className="dashboard">
-        <p className="empty-state">Loading dashboard...</p>
-      </section>
-    );
+    return <>{header}<Card><p className="empty-state">Loading the dashboard…</p></Card></>;
   }
 
   const { tests, executions } = stats;
-  const passRate = executions.total > 0
-    ? Math.round((executions.passed / executions.total) * 100)
-    : 0;
-  const assertionRate = executions.assertions_total > 0
-    ? Math.round((executions.assertions_passed / executions.assertions_total) * 100)
-    : 0;
-
-  const pieData = [
+  const passRate = percent(executions.passed, executions.passed + executions.failed);
+  const assertionRate = percent(executions.assertions_passed, executions.assertions_total);
+  const lastWeek = executions.trend.filter((d) => Date.parse(d.date) >= now - 7 * 86_400_000).reduce((n, d) => n + d.total, 0);
+  const results = [
     { name: 'Passed', value: executions.passed, color: COLORS.passed },
     { name: 'Failed', value: executions.failed, color: COLORS.failed },
-    ...(executions.running > 0 ? [{ name: 'Running', value: executions.running, color: COLORS.running }] : []),
-  ].filter(d => d.value > 0);
+    { name: 'Running', value: executions.running, color: COLORS.running },
+  ].filter((d) => d.value > 0);
 
-  const hasData = executions.total > 0;
+  const coverage = (['passing', 'failing', 'not_run', 'not_covered'] as const).map((status) => ({
+    status, count: requirements.filter((r) => r.coverage.status === status).length,
+  }));
+  const latest = campaigns[0];
+  const high = bugs.filter((b) => b.severity === 'high').length;
+  const medium = bugs.filter((b) => b.severity === 'medium').length;
 
   return (
-    <section className="dashboard">
-      {/* ── Stat Cards ── */}
-      <div className="dash-cards">
-        <div className="dash-card">
-          <div className="dash-card__icon" style={{ background: 'rgba(129,140,248,0.10)', color: '#818cf8' }}>
-            <FlaskConical size={22} />
-          </div>
-          <div className="dash-card__body">
-            <span className="dash-card__value">{tests.total}</span>
-            <span className="dash-card__label">Total Tests</span>
-          </div>
-        </div>
+    <>
+      {header}
 
-        <div className="dash-card">
-          <div className="dash-card__icon" style={{ background: 'rgba(52,211,153,0.10)', color: '#34d399' }}>
-            <Play size={22} />
+      <div className="kpis">
+        <button type="button" className="kpi" onClick={() => go('/tests')}>
+          <div className="kpi__top"><span className="kpi__icon"><FlaskConical size={18} /></span><ArrowUpRight size={16} className="kpi__arrow" /></div>
+          <span className="kpi__label">Tests</span>
+          <span className="kpi__value">{tests.total}</span>
+          <span className="kpi__sub">{tests.never_run ? `${tests.never_run} never run` : 'All have run'}</span>
+        </button>
+        <button type="button" className="kpi" onClick={() => go('/tests?sort=last_run')}>
+          <div className="kpi__top"><span className="kpi__icon"><Play size={18} /></span><ArrowUpRight size={16} className="kpi__arrow" /></div>
+          <span className="kpi__label">Runs</span>
+          <span className="kpi__value">{executions.total}</span>
+          <span className="kpi__sub">{days === '7' ? `over ${days} days` : `${lastWeek} this week`}</span>
+        </button>
+        <button type="button" className="kpi" onClick={() => go('/tests?status=failed')} title="The tests whose last run failed">
+          <div className="kpi__top">
+            <span className={`kpi__icon ${passRate >= 80 ? 'kpi__icon--green' : 'kpi__icon--red'}`}><TrendingUp size={18} /></span>
+            <ArrowUpRight size={16} className="kpi__arrow" />
           </div>
-          <div className="dash-card__body">
-            <span className="dash-card__value">{executions.total}</span>
-            <span className="dash-card__label">Executions</span>
-          </div>
-        </div>
-
-        <div className="dash-card">
-          <div className="dash-card__icon" style={{ background: passRate >= 80 ? 'rgba(52,211,153,0.10)' : 'rgba(248,113,113,0.10)', color: passRate >= 80 ? '#34d399' : '#f87171' }}>
-            <TrendingUp size={22} />
-          </div>
-          <div className="dash-card__body">
-            <span className="dash-card__value">{passRate}%</span>
-            <span className="dash-card__label">Pass Rate</span>
-          </div>
-        </div>
-
-        <div className="dash-card">
-          <div className="dash-card__icon" style={{ background: 'rgba(251,191,36,0.10)', color: '#fbbf24' }}>
-            <Clock size={22} />
-          </div>
-          <div className="dash-card__body">
-            <span className="dash-card__value">{formatDuration(executions.avg_duration_ms)}</span>
-            <span className="dash-card__label">Avg Duration</span>
-          </div>
-        </div>
-
-        <div className="dash-card">
-          <div className="dash-card__icon" style={{ background: 'rgba(138,76,252,0.15)', color: '#bd9dff' }}>
-            <ShieldCheck size={22} />
-          </div>
-          <div className="dash-card__body">
-            <span className="dash-card__value">{assertionRate}%</span>
-            <span className="dash-card__label">Assertions Pass</span>
-          </div>
-        </div>
+          <span className="kpi__label">Pass rate</span>
+          <span className="kpi__value">{executions.total ? `${passRate}%` : '—'}</span>
+          <span className="kpi__sub">{executions.assertions_total ? `Assertions ${assertionRate}% passed` : 'No assertion run yet'}</span>
+        </button>
+        <button type="button" className="kpi" onClick={() => go('/tests?sort=last_run')}>
+          <div className="kpi__top"><span className="kpi__icon kpi__icon--amber"><Timer size={18} /></span><ArrowUpRight size={16} className="kpi__arrow" /></div>
+          <span className="kpi__label">Avg duration</span>
+          <span className="kpi__value">{executions.total ? formatDuration(executions.avg_duration_ms) : '—'}</span>
+          <span className="kpi__sub">a run, over {executions.total} run{executions.total === 1 ? '' : 's'}</span>
+        </button>
       </div>
 
-      {/* ── Charts Row ── */}
-      <div className="dash-charts">
-        {/* Execution Trend */}
-        <div className="dash-panel">
-          <h3 className="dash-panel__title">Execution Trend (30 days)</h3>
+      <div className="dash-row dash-row--charts">
+        <Card
+          title="Runs over time" subtitle="Each day's runs, passed and failed"
+          actions={<div className="legend"><span className="legend__item"><span className="legend__dot" style={{ background: COLORS.passed }} />Passed</span><span className="legend__item"><span className="legend__dot" style={{ background: COLORS.failed }} />Failed</span></div>}
+        >
           {executions.trend.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <AreaChart data={executions.trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gradPassed" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={COLORS.passed} stopOpacity={0.3} />
+                    <stop offset="0%" stopColor={COLORS.passed} stopOpacity={0.22} />
                     <stop offset="100%" stopColor={COLORS.passed} stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="gradFailed" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={COLORS.failed} stopOpacity={0.3} />
+                    <stop offset="0%" stopColor={COLORS.failed} stopOpacity={0.18} />
                     <stop offset="100%" stopColor={COLORS.failed} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border, #e5e7eb)" />
-                <XAxis dataKey="date" tickFormatter={formatDate} fontSize={12} tick={{ fill: 'var(--text-muted)' }} />
-                <YAxis fontSize={12} tick={{ fill: 'var(--text-muted)' }} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ background: '#252531', border: '1px solid rgba(72,71,81,0.25)', borderRadius: '8px', fontSize: '13px', color: '#f2effb' }}
-                  labelFormatter={(label) => formatDate(String(label))}
-                />
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} vertical={false} />
+                <XAxis dataKey="date" tickFormatter={shortDate} fontSize={12} tickLine={false} axisLine={{ stroke: COLORS.grid }} />
+                <YAxis fontSize={12} allowDecimals={false} tickLine={false} axisLine={false} />
+                <Tooltip labelFormatter={(label) => shortDate(String(label))} />
                 <Area type="monotone" dataKey="passed" name="Passed" stroke={COLORS.passed} fill="url(#gradPassed)" strokeWidth={2} />
                 <Area type="monotone" dataKey="failed" name="Failed" stroke={COLORS.failed} fill="url(#gradFailed)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="dash-panel__empty">No execution data yet</div>
+            <div className="chart-empty">No run over these {days} days</div>
           )}
+        </Card>
+
+        <Card title="Results" subtitle={`Across ${executions.total} run${executions.total === 1 ? '' : 's'}`}>
+          {results.length > 0 ? (
+            <>
+              <div className="donut">
+                <ResponsiveContainer width="100%" height={180}>
+                  <PieChart>
+                    <Pie data={results} cx="50%" cy="50%" innerRadius={58} outerRadius={80} paddingAngle={2} dataKey="value" stroke="none">
+                      {results.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="donut__center"><span className="donut__value">{executions.total}</span><span className="donut__label">runs</span></div>
+              </div>
+              <ul className="breakdown">
+                {results.map((r) => (
+                  <li key={r.name}>
+                    <span className="legend__dot" style={{ background: r.color }} />{r.name}
+                    <span className="breakdown__value">{r.value}</span>
+                    <span className="breakdown__share">{percent(r.value, executions.total)}%</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <div className="chart-empty">No run yet</div>
+          )}
+        </Card>
+      </div>
+
+      <div className="dash-row dash-row--summary">
+        <Card title="Requirement coverage" icon={ClipboardList} className="summary-card"
+          actions={<span className="tag">{requirements.length} requirement{requirements.length === 1 ? '' : 's'}</span>}>
+          {requirements.length ? (
+            <>
+              <div className="result-bar result-bar--lg">
+                {coverage.filter((c) => c.count).map((c) => (
+                  <span key={c.status} className={`result-bar__part bar--${{ passing: 'green', failing: 'red', not_run: 'amber', not_covered: 'slate' }[c.status]}`} style={{ flexGrow: c.count }} />
+                ))}
+              </div>
+              <div className="coverage-legend">
+                <span><span className="legend__dot" style={{ background: COLORS.passed }} />Passing <strong>{coverage[0].count}</strong></span>
+                <span><span className="legend__dot" style={{ background: COLORS.failed }} />Failing <strong>{coverage[1].count}</strong></span>
+                <span><span className="legend__dot" style={{ background: COLORS.error }} />Not run <strong>{coverage[2].count}</strong></span>
+                <span><span className="legend__dot" style={{ background: '#CBD5E1' }} />Not covered <strong>{coverage[3].count}</strong></span>
+              </div>
+            </>
+          ) : <p className="muted">No requirement yet.</p>}
+          <a className="summary-card__link" href="#" onClick={(e) => { e.preventDefault(); go('/requirements'); }}>View requirements →</a>
+        </Card>
+
+        <Card title="Latest campaign" icon={Layers} className="summary-card"
+          actions={latest && <StatusPill status={latest.running ? 'running' : latest.status} />}>
+          {latest ? (
+            <>
+              <div>
+                <div className="summary-card__title">#{latest.id} {latest.name}{latest.version && <span className="campaign-version">v{latest.version}</span>}</div>
+                <div className="muted" style={{ fontSize: 13 }}>{relativeTime(latest.created_at)}{latest.duration_ms != null && ` · ${formatDuration(latest.duration_ms)}`}</div>
+              </div>
+              <div className="result-cell">
+                <ResultBar totals={latest.totals} />
+                <span>{latest.totals.passed}/{latest.total} passed</span>
+              </div>
+              {latest.changes?.regressed.length ? <span><Pill tone="red">{latest.changes.regressed.length} regressed</Pill></span> : null}
+            </>
+          ) : <p className="muted">No campaign yet.</p>}
+          <a className="summary-card__link" href="#" onClick={(e) => { e.preventDefault(); go(latest ? `/campaigns/${latest.id}` : '/campaigns', { from: 'the dashboard' }); }}>
+            {latest ? 'Open the report →' : 'View campaigns →'}
+          </a>
+        </Card>
+
+        <Card title="Open bugs" icon={Bug} className="summary-card">
+          <div className="summary-card__big" style={{ color: bugs.length ? 'var(--red)' : 'var(--text)' }}>{bugs.length}</div>
+          <div className="cell-chips">
+            {high > 0 && <Pill tone="red">{high} high</Pill>}
+            {medium > 0 && <Pill tone="amber">{medium} medium</Pill>}
+            {bugs.length - high - medium > 0 && <Pill tone="slate">{bugs.length - high - medium} low</Pill>}
+            {!bugs.length && <span className="muted">Nothing open.</span>}
+          </div>
+          <a className="summary-card__link" href="#" onClick={(e) => { e.preventDefault(); go('/bugs'); }}>View bugs →</a>
+        </Card>
+      </div>
+
+      <div className="dash-row dash-row--lists">
+        <div className="stack">
+          {executions.flaky.length > 0 && (
+            <Card title="Flaky tests" icon={AlertTriangle} actions={<Pill tone="amber">{executions.flaky.length}</Pill>} subtitle="Passed and failed over the period">
+              <ul className="list">
+                {executions.flaky.map((f) => (
+                  <li key={f.test_name} className="list__row" onClick={() => openTest(f.test_name, 'history')}>
+                    <div className="list__main">
+                      <div className="list__title">{f.test_name}</div>
+                      <div className="result-cell" style={{ marginTop: 6 }}>
+                        <div className="result-bar">
+                          <span className="result-bar__part bar--green" style={{ flexGrow: f.pass_count }} />
+                          <span className="result-bar__part bar--red" style={{ flexGrow: f.fail_count }} />
+                        </div>
+                        <span>{f.pass_count} passed · {f.fail_count} failed</span>
+                      </div>
+                    </div>
+                    <Pill tone="amber" dot={false}>{percent(f.pass_count, f.total_runs)}% stable</Pill>
+                    <ChevronRight size={16} className="list__chevron" />
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+          <Card title="Recently updated tests" icon={FlaskConical}>
+            {tests.recent.length ? (
+              <ul className="list">
+                {tests.recent.slice(0, 6).map((t) => (
+                  <li key={t.name} className="list__row" onClick={() => openTest(t.name)}>
+                    <div className="list__main">
+                      <div className="list__title">{t.name}</div>
+                      <div className="list__sub">{t.description || 'No description'} · {t.step_count} steps</div>
+                    </div>
+                    <span className="cell-muted">{relativeTime(t.updated_at)}</span>
+                    <ChevronRight size={16} className="list__chevron" />
+                  </li>
+                ))}
+              </ul>
+            ) : <EmptyState icon={FlaskConical} title="No test yet" action={null}>Create one with “New test”, at the top right.</EmptyState>}
+          </Card>
         </div>
 
-        {/* Pass/Fail Pie */}
-        <div className="dash-panel dash-panel--narrow">
-          <h3 className="dash-panel__title">Pass / Fail</h3>
-          {hasData && pieData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="45%"
-                  innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={3}
-                  dataKey="value"
-                  stroke="none"
-                >
-                  {pieData.map((entry, i) => (
-                    <Cell key={i} fill={entry.color} />
+        <Card title="Recent runs" icon={History} flush>
+          {executions.recent.length ? (
+            <div className="table-wrap">
+              <table className="table">
+                <thead><tr><th>Test</th><th>Status</th><th>Assertions</th><th className="col-num">Duration</th><th className="col-num">When</th><th className="col-chevron" /></tr></thead>
+                <tbody>
+                  {executions.recent.slice(0, 10).map((e) => (
+                    <tr key={e.id} className="clickable" onClick={() => openTest(e.test_name, 'history')} title="Open its run history">
+                      <td><span className="cell-title mono">{e.test_name}</span></td>
+                      <td><StatusPill status={e.status} /></td>
+                      <td className="cell-muted">{e.assertions_total > 0 ? `${e.assertions_passed}/${e.assertions_total}` : '—'}</td>
+                      <td className="col-num cell-muted">{formatDuration(e.duration_ms)}</td>
+                      <td className="col-num cell-muted">{relativeTime(e.started_at)}</td>
+                      <td className="col-chevron"><ChevronRight size={16} /></td>
+                    </tr>
                   ))}
-                </Pie>
-                <Legend
-                  verticalAlign="bottom"
-                  iconType="circle"
-                  iconSize={8}
-                  formatter={(value: string) => <span style={{ fontSize: '12px', color: '#8888a8' }}>{value}</span>}
-                />
-                <Tooltip
-                  contentStyle={{ background: '#252531', border: '1px solid rgba(72,71,81,0.25)', borderRadius: '8px', fontSize: '13px', color: '#f2effb' }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="dash-panel__empty">No execution data yet</div>
-          )}
-        </div>
+                </tbody>
+              </table>
+            </div>
+          ) : <EmptyState icon={Play} title={`No run over these ${days} days`}>Run a test from its page, or a campaign.</EmptyState>}
+        </Card>
       </div>
-
-      {/* ── Flaky Tests ── */}
-      {executions.flaky.length > 0 && (
-        <div className="dash-panel">
-          <h3 className="dash-panel__title">
-            <AlertTriangle size={16} style={{ color: '#f59e0b' }} />
-            Flaky Tests
-          </h3>
-          <ResponsiveContainer width="100%" height={Math.max(120, executions.flaky.length * 44)}>
-            <BarChart data={executions.flaky} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border, #e5e7eb)" horizontal={false} />
-              <XAxis type="number" fontSize={12} tick={{ fill: 'var(--text-muted)' }} allowDecimals={false} />
-              <YAxis type="category" dataKey="test_name" width={160} fontSize={12} tick={{ fill: '#f2effb' }} />
-              <Tooltip
-                contentStyle={{ background: '#252531', border: '1px solid rgba(72,71,81,0.25)', borderRadius: '8px', fontSize: '13px', color: '#f2effb' }}
-              />
-              <Bar dataKey="pass_count" name="Passed" stackId="a" fill={COLORS.passed} radius={[0, 0, 0, 0]} />
-              <Bar dataKey="fail_count" name="Failed" stackId="a" fill={COLORS.failed} radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {/* ── Tables Row ── */}
-      <div className="dash-tables">
-        {/* Recent Tests */}
-        <div className="dash-panel">
-          <h3 className="dash-panel__title">
-            <FlaskConical size={16} />
-            Recent Tests
-          </h3>
-          {tests.recent.length > 0 ? (
-            <table className="dash-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Steps</th>
-                  <th>Updated</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {tests.recent.map(t => (
-                  <tr key={t.name} className="dash-table__row--clickable" onClick={() => navigate(`/tests/${encodeURIComponent(t.name)}`)}>
-                    <td>
-                      <span className="dash-table__name">{t.name}</span>
-                      {t.description && <span className="dash-table__desc">{t.description}</span>}
-                    </td>
-                    <td>
-                      <span className="dash-table__badge">
-                        <Layers size={12} /> {t.step_count}
-                      </span>
-                    </td>
-                    <td className="dash-table__muted">{formatDate(t.updated_at)}</td>
-                    <td><ChevronRight size={14} className="dash-table__arrow" /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="dash-panel__empty">No tests yet</div>
-          )}
-        </div>
-
-        {/* Recent Executions */}
-        <div className="dash-panel">
-          <h3 className="dash-panel__title">
-            <Play size={16} />
-            Recent Reports
-          </h3>
-          {executions.recent.length > 0 ? (
-            <table className="dash-table">
-              <thead>
-                <tr>
-                  <th>Test</th>
-                  <th>Status</th>
-                  <th>Assertions</th>
-                  <th>Duration</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {executions.recent.map(e => (
-                  <tr key={e.id}>
-                    <td>
-                      <span className="dash-table__name">{e.test_name}</span>
-                    </td>
-                    <td>
-                      <span className={`dash-status dash-status--${e.status}`}>
-                        {e.status === 'success' ? <CheckCircle2 size={13} /> : e.status === 'failed' ? <XCircle size={13} /> : <Clock size={13} />}
-                        {e.status}
-                      </span>
-                    </td>
-                    <td>
-                      {e.assertions_total > 0 ? (
-                        <span className="dash-table__assertions">
-                          <span className="dash-assertion dash-assertion--pass">{e.assertions_passed}</span>
-                          /
-                          <span className="dash-assertion dash-assertion--fail">{e.assertions_failed}</span>
-                          / {e.assertions_total}
-                        </span>
-                      ) : (
-                        <span className="dash-table__muted">—</span>
-                      )}
-                    </td>
-                    <td className="dash-table__muted">{formatDuration(e.duration_ms)}</td>
-                    <td className="dash-table__muted">{formatDateTime(e.started_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="dash-panel__empty">No executions yet</div>
-          )}
-        </div>
-      </div>
-    </section>
+    </>
   );
 }
