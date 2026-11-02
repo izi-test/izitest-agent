@@ -469,7 +469,7 @@ les testent. Le même objet, d'où qu'elle vienne :
 
 | D'où | Comment |
 | :--- | :--- |
-| Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré. |
+| Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré ; l'agent reçoit l'URL de base et le contexte du projet, et s'il s'arrête sans sauver le test (pas d'URL d'où partir), la fenêtre reste ouverte avec son dernier message. |
 | Un fichier (un cahier de recette, un export) | `import_requirements(path)` ou le bouton **Import** de la page Requirements (voir plus bas). |
 | Un site Jira | `import_from_jira(jql)` ou l'onglet **From Jira** de l'import (voir plus bas), une fois le site réglé dans Settings → Jira. |
 | Un outil (une story Jira) | l'agent la lit (par exemple avec un serveur MCP Atlassian) et la garde : `source: "jira"`, sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |

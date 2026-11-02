@@ -194,7 +194,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       const response = await fetch('/api/agent/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, requirement, case_id: preset?.caseId }),
+        body: JSON.stringify({ prompt, requirement, case_id: preset?.caseId, project_id: projectId ?? null }),
         signal: controller.signal,
       });
 
@@ -229,7 +229,14 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
             } else if (event.type === 'done') {
               if (event.exitCode === 0) {
                 try {
-                  // Verify the test was actually created by invalidating the cache
+                  // The agent may end without saving the test (a URL it lacks, a page that does not
+                  // load): it then says why, in its output, which stays open here.
+                  const saved = await fetch(`/api/tests/${encodeURIComponent(name.trim())}`);
+                  if (!saved.ok) {
+                    setAgentStatus('error');
+                    setError('The agent stopped without saving the test: its last message, below, says why. Add what it lacks to the description (a URL to start from, say) and generate again.');
+                    continue;
+                  }
                   dispatch(testsApi.util.invalidateTags([{ type: 'TestList', id: 'LIST' }]));
 
                   if (projectId) {

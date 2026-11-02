@@ -327,8 +327,18 @@ CRITICAL RULES:
     dispatch(closeLiveModal());
   };
 
-  if (isLoading || !test) {
+  if (isLoading) {
     return <Card><p className="empty-state">Loading…</p></Card>;
+  }
+  if (!test) {
+    return (
+      <Card>
+        <EmptyState icon={List} title={`No test named “${testName}”`}
+          action={<Button variant="secondary" icon={ArrowLeft} onClick={back.go}>{back.label}</Button>}>
+          It was deleted, renamed, or never saved — an AI agent that stopped before the end does not save it.
+        </EmptyState>
+      </Card>
+    );
   }
 
   const steps = test.steps || [];

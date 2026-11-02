@@ -24,7 +24,7 @@ import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectR
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
-import { designTests, planDesigned, withResolution, recordingBrief } from './requirement-design.js';
+import { designTests, planDesigned, withResolution, recordingBrief, projectBrief } from './requirement-design.js';
 import { importRequirements } from './requirement-import.js';
 import { jiraConfig, maskedJiraConfig, saveJiraConfig, siteOf, jiraClient, testJira, jiraProjects, importFromJira, commentOnJira } from './jira.js';
 import { xrayConfig, maskedXrayConfig, saveXrayConfig, xrayClient, testXray, exportToXray } from './xray.js';
@@ -1286,6 +1286,9 @@ export async function apiRouter(req, res, url) {
       if (linkedRequirement) {
         body.prompt += `\n\n${recordingBrief(linkedRequirement, requirementLink.caseId, { viaMcp: agentConfig.mode !== 'api' })}`;
       }
+      // The app the test is for: where it is and what to know of it, as the project says.
+      const project = body.project_id ? db.prepare('SELECT name, base_url, context FROM projects WHERE id = ?').get(body.project_id) : null;
+      body.prompt += `\n\n${projectBrief(project)}`;
 
       // ── API mode: internal agent via Vercel AI SDK ──
       if (agentConfig.mode === 'api') {
@@ -1330,7 +1333,7 @@ export async function apiRouter(req, res, url) {
           'list_profiles', 'navigate', 'click', 'fill', 'extract', 'screenshot',
           'get_tabs', 'get_page_info', 'scroll', 'wait', 'execute_js', 'keyboard',
           'get_cookies', 'snapshot', 'start_recording', 'record_step', 'stop_recording',
-          'list_tests', 'run_test', 'fix_test_step', 'delete_test', 'add_assertion'
+          'list_tests', 'run_test', 'fix_test_step', 'delete_test', 'add_assertion', 'close_window'
         ].map(t => `mcp__izitest-agent__${t}`).join(',');
         args.push('-p', body.prompt, '--allowedTools', mcpToolNames, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
       } else if (agentConfig.cli?.provider === 'copilot') {

@@ -14,7 +14,7 @@ process.env.IZITEST_DB_PATH = join(await mkdtemp(join(tmpdir(), 'requirement-des
 const { db, initDatabase } = await import('../lib/db.js');
 initDatabase();
 const { saveRequirement, getRequirement, planCases, updateCase, linkTest, formatRequirement, nonConformityOf } = await import('../lib/requirements.js');
-const { designBrief, parseDesign, resolveScenario, withResolution, designTests, planDesigned, recordingBrief, definitionsFor } = await import('../lib/requirement-design.js');
+const { designBrief, parseDesign, resolveScenario, withResolution, designTests, planDesigned, recordingBrief, projectBrief, definitionsFor } = await import('../lib/requirement-design.js');
 const { seedProjectStepDefinitions, createStepDefinition } = await import('../lib/gherkin/step-definition-store.js');
 const { cliInvocation } = await import('../lib/agent/complete.js');
 
@@ -150,6 +150,16 @@ test('what the agent recording a case is told: the criteria, its own, and where 
   assert.match(brief, /non_conformity: true/);
   assert.match(brief, new RegExp(`Pass requirement: "SHOP-7", case_id: ${third.id} to start_recording\\.$`));
   assert.doesNotMatch(recordingBrief(requirement), /case #|start_recording/, 'the internal agent links by itself');
+});
+
+test('what the agent recording a test is told of the app: its project, where to start, its context, and to stop when it cannot', () => {
+  const brief = projectBrief({ name: 'Shop', base_url: 'https://shop.test', context: 'Login at /login.\n' });
+  assert.match(brief, /^The app under test is the project "Shop"\.\nIt is at https:\/\/shop\.test: start there, unless the description gives another URL\.\nWhat to know about it:\nLogin at \/login\.\n/);
+  assert.match(brief, /Nobody answers questions during this run\./);
+  assert.match(brief, /close_window/);
+  // Without a project, or one with no base URL nor context: only what to do when it cannot record.
+  assert.match(projectBrief(null), /^Nobody answers questions/);
+  assert.doesNotMatch(projectBrief({ name: 'Bare', base_url: null, context: '' }), /It is at|What to know/);
 });
 
 test('a failing assertion is a non-conformity only when claimed, on a test checking a requirement, the element found', () => {

@@ -285,3 +285,20 @@ export function recordingBrief(requirement, caseId = null, { viaMcp = false } = 
   if (viaMcp) lines.push(`Pass requirement: "${requirement.key}"${planned ? `, case_id: ${planned.id}` : ''} to start_recording.`);
   return lines.join('\n');
 }
+
+/**
+ * What the agent recording a test is told of the app: its project, the URL to start from, the
+ * project's context. Run without a terminal, it cannot ask: what it lacks, it says, and stops.
+ */
+export function projectBrief(project) {
+  const lines = [];
+  if (project) {
+    lines.push(`The app under test is the project "${project.name}".`);
+    if (project.base_url) lines.push(`It is at ${project.base_url}: start there, unless the description gives another URL.`);
+    if (project.context?.trim()) lines.push('What to know about it:', project.context.trim());
+  }
+  lines.push(
+    'Nobody answers questions during this run. If you cannot record the test — no URL to start from, a page that does not',
+    'load —, close the recording window with close_window, then end with one sentence that says what is missing.');
+  return lines.join('\n');
+}
