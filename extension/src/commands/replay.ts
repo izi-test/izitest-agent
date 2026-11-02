@@ -4,7 +4,8 @@ import { resolveTabId, delay, TOP_FRAME } from '../helpers';
 import { clickViaLocator, clickToggleViaHandle, focusViaLocator, clearAndType, isStaleContextError, toggleStateOf } from './page-helpers';
 import { findElementWithLocators, type ElementCondition } from './locators';
 import { resolveVariableElement, type ReplayStep } from './variable-resolver';
-import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdUpload, cmdKeyboard, cmdScroll, wantedChecked } from './actions';
+import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdUpload, cmdDrag, cmdKeyboard, cmdScroll, wantedChecked } from './actions';
+import { dragElements } from './drag';
 import { cmdExecuteJs, cmdWait } from './queries';
 import { setPickedValue } from '../dom/picked-input';
 import { fileInputOf, putFiles } from '../dom/file-input';
@@ -35,6 +36,7 @@ const COMMAND_DISPATCH: Record<string, (params: any) => Promise<any>> = {
   fill: cmdFill,
   select: cmdSelect,
   upload: cmdUpload,
+  drag: cmdDrag,
   scroll: cmdScroll,
   execute_js: cmdExecuteJs,
   wait: cmdWait,
@@ -174,7 +176,7 @@ export async function cmdReplaySequence(
       }
 
       // ─── Locator-based element commands ─────────────────────
-      const elementCommands = ['click', 'fill', 'select', 'scroll'];
+      const elementCommands = ['click', 'fill', 'select', 'upload', 'drag', 'scroll'];
       const hasLocators = step.locators && step.locators.length > 0 && elementCommands.includes(step.command);
 
       if (hasLocators) {
@@ -189,6 +191,7 @@ export async function cmdReplaySequence(
         const elementCondition: ElementCondition =
           step.command === 'click' && baseParams.viaLabel ? 'any' :
           step.command === 'click'  ? 'visible' :
+          step.command === 'drag'   ? 'visible' :
           step.command === 'fill'   ? 'enabled' :
           step.command === 'select' ? 'enabled' :
           'any';
@@ -271,6 +274,20 @@ export async function cmdReplaySequence(
                 if ('error' in put) throw new Error(put.error);
               } finally {
                 await found.dispose().catch(() => {});
+              }
+            } else if (step.command === 'drag') {
+              // Where it is dropped has locators of its own, recorded with the step's params;
+              // a step written by hand may only give its selector.
+              const targetLocators: Locator[] = baseParams.targetLocators?.length
+                ? baseParams.targetLocators
+                : [{ type: 'css', value: String(baseParams.target ?? '') }];
+              const dropped = await findElementWithLocators(page, targetLocators, 'visible');
+              if (!dropped.result) throw new Error(`Where to drop it was not found: all ${targetLocators.length} locators failed:\n${dropped.errors.join('\n')}`);
+              try {
+                const how = await dragElements(page, handle, dropped.result.handle, baseParams.position);
+                console.log(`  ✋ Dropped on ${dropped.result.locatorUsed}="${dropped.result.locatorValue}" (${how} drag)`);
+              } finally {
+                await dropped.result.handle.dispose().catch(() => {});
               }
             } else if (step.command === 'scroll') {
               console.log(`  📜 Scrolling to element...`);

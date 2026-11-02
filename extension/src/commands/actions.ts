@@ -6,7 +6,8 @@ import { CMD_KEY, MODIFIER_MAP, focusViaLocator, clearAndType } from './page-hel
 import { attachNetworkCapture } from './network';
 import { adoptOpenedWindow, rememberOwnedWindow } from '../owned-windows';
 import { armEffects } from '../effects';
-import type { NavigateParams, ClickParams, FillParams, SelectParams, UploadParams, KeyboardParams, ScrollParams } from '../types';
+import { dragBetween, dropPoint } from './drag';
+import type { NavigateParams, ClickParams, FillParams, SelectParams, UploadParams, DragParams, KeyboardParams, ScrollParams } from '../types';
 import type { CDPSession, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
 
 // ─── Ref resolution (content script element map) ────────────────────
@@ -27,6 +28,8 @@ interface ResolvedElement {
   labelFor?: string;
   /** A date, time, colour or range input (its type): its value is set, not typed. */
   picked?: string;
+  width: number;
+  height: number;
 }
 
 // Roles Playwright's getByRole finds by name.
@@ -492,6 +495,56 @@ export async function cmdUpload({ selector, ref, fileData, tabId, sessionId }: U
     success: true, selector: ref ?? selector, files: result.names,
     ...(result.input ? { input: result.input } : {}), ...(target ? { target } : {}),
   };
+}
+
+/**
+ * Drag an element and drop it on another, at its centre or near one of its edges (see
+ * drag.ts). Both are measured where they are, on screen together. `changes` says whether
+ * the dragged element moved, and what else the drop showed or took away.
+ */
+export async function cmdDrag({ ref, selector, targetRef, target, position, tabId, sessionId }: DragParams) {
+  const resolvedTabId = await resolveTabId(tabId, sessionId);
+  if (!ref && !selector) throw new Error('Provide what to drag: ref or selector');
+  if (!targetRef && !target) throw new Error('Provide where to drop it: targetRef or target');
+  const page = await getPage(resolvedTabId);
+  const measure = (r?: string, s?: string) => () => r ? resolveElementRef(resolvedTabId, r) : resolveElementBySelector(resolvedTabId, { selector: s });
+  const { from, to } = await measureBoth(measure(ref, selector), measure(targetRef, target));
+  assertNotCovered(from, 'dragged');
+
+  const [source, dropTarget] = [await describeRefTarget(resolvedTabId, ref), await describeRefTarget(resolvedTabId, targetRef)];
+  const effects = await armEffects(resolvedTabId);
+  const how = await dragBetween(page, from, dropPoint(to, position));
+  const changed = await effects.collect();
+
+  const after = await measure(ref, selector)().catch(() => null);
+  const moved = !after ? 'the dragged element is no longer on the page, or no longer shows'
+    : after.x !== from.x || after.y !== from.y ? `the dragged element moved, from (${from.x},${from.y}) to (${after.x},${after.y})`
+    : 'the dragged element is where it was';
+  return {
+    success: true, tag: from.tag, text: from.text, drag: how,
+    changes: [moved, ...changed.filter((line) => !line.startsWith('no visible change'))],
+    ...(source ? { target: source } : {}), ...(dropTarget ? { dropTarget } : {}),
+  };
+}
+
+/**
+ * Measure two elements on screen together. Measuring one scrolls it into view when it is
+ * not, which can scroll the other away: measured again until neither moves.
+ */
+async function measureBoth(first: () => Promise<ResolvedElement>, second: () => Promise<ResolvedElement>) {
+  let from = await first();
+  let to = await second();
+  const same = (a: ResolvedElement, b: ResolvedElement) => a.x === b.x && a.y === b.y;
+  for (let round = 0; round < 2; round++) {
+    const fromAgain = await first();
+    if (same(fromAgain, from)) return { from, to };
+    from = fromAgain;
+    const toAgain = await second();
+    if (same(toAgain, to)) return { from, to };
+    to = toAgain;
+  }
+  throw new ExpectedRefusal('Not dragged: the element and where to drop it are too far apart to be on screen together, ' +
+    'and drag does not scroll while it holds the element. Drop it somewhere closer first, or make the window taller.');
 }
 
 export async function cmdKeyboard({ key, modifiers, tabId, sessionId }: KeyboardParams) {

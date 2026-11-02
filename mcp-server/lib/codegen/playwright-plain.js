@@ -4,6 +4,7 @@
 
 import { chooseTarget, throughLabel, withFixme } from './locators.js';
 import { recordedPathNote, uploadPathsOf } from '../upload-files.js';
+import { dropTargetOf, dragToCode } from './drag.js';
 
 export function generatePlaywrightPlain(test) {
   const lines = [];
@@ -97,6 +98,11 @@ function renderStep(step) {
         : `await page.setInputFiles(${jsLiteral(t.css)}, ${arg});`);
       const note = recordedPathNote(step);
       return note ? `${note}\n${call}` : call;
+    }
+    case 'drag': {
+      const from = target();
+      const to = chooseTarget(dropTargetOf(step), jsLiteral);
+      return withFixme(from, withFixme(to, dragToCode(locatorOf(from), locatorOf(to), p.position)));
     }
     case 'wait':
       if (p.ms != null && p.ms !== '') {

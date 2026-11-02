@@ -52,6 +52,17 @@ function deriveIntent(command, params, locators) {
       return `Upload ${names.map(n => `"${n}"`).join(', ') || 'files'}`;
     }
 
+    case 'drag': {
+      // A sortable item is a <div> of <span>s: no name but its text.
+      const nameOf = (list) => (list || [])
+        .filter(l => ['aria', 'label', 'text'].includes(l.type) && l.value)
+        .map(l => l.value)[0] || null;
+      const what = nameOf(locators);
+      const where = nameOf(params.targetLocators) || params.target;
+      const edge = params.position && params.position !== 'center' ? `the ${params.position} of ` : '';
+      return `Drag ${what ? `"${what}"` : 'element'}${where ? ` to ${edge}"${where}"` : ''}`;
+    }
+
     case 'keyboard': {
       const modPrefix = params.modifiers?.length
         ? params.modifiers.join('+') + '+'

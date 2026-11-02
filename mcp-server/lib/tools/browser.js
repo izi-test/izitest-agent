@@ -55,14 +55,16 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
   // click/fill/select by ref send back the element's locators, computed just before acting
   // (a snapshot of a very large page leaves them out). Record them under the ref, so the
   // action is saved with them, and keep them out of the reply the agent reads.
+  const learnRef = (ref, info) => {
+    if (!ref || !info) return;
+    const s = sess();
+    const key = String(ref).replace('@', '');
+    s.refMap = { ...s.refMap, [key]: { ...s.refMap?.[key], ...info } };
+  };
   const learnTarget = (ref, result) => {
     if (!result?.target) return result;
     const { target, ...shown } = result;
-    if (ref) {
-      const s = sess();
-      const key = String(ref).replace('@', '');
-      s.refMap = { ...s.refMap, [key]: { ...s.refMap?.[key], ...target } };
-    }
+    learnRef(ref, target);
     return shown;
   };
   const setLastRefMap = (refs, freshPage) => { const s = sess(); s.refMap = freshPage ? refs : { ...s.refMap, ...refs }; };
@@ -657,6 +659,51 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
         : saveActionToHistory('upload', { selector, ...fileParams, tabId }, ref, screenshotBase64, intent);
       if (input) shown.input = input.selector;
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(shown, null, 2) }] };
+    }
+  );
+
+  // --- Tool: drag ---
+  server.tool(
+    'drag',
+    [
+      'Drag an element and drop it on another, with the mouse, as a person would: an item of a sortable list, a card to',
+      'another column, a file to a folder, an item to a bin. Works with draggable="true" elements (HTML5 drag and drop) and',
+      'with pages that follow the mouse (SortableJS, dnd-kit, jQuery UI). The snapshot marks what can be dragged with',
+      '[draggable] or [cursor=grab]. `position` is where on the target it is dropped: its center (default), or near its top,',
+      'bottom, left or right edge — in a vertical list "top" puts it before the target, "bottom" after it.',
+      'The result says in `changes` whether the dragged element moved. Both must fit on screen together: drag does not scroll.',
+    ].join('\n'),
+    {
+      ref: z.string().optional().describe('Reference from a previous snapshot of what to drag (e.g. @e5)'),
+      selector: z.string().optional().describe('CSS selector of what to drag'),
+      targetRef: z.string().optional().describe('Reference from a previous snapshot of where to drop it'),
+      target: z.string().optional().describe('CSS selector of where to drop it'),
+      position: z.enum(['center', 'top', 'bottom', 'left', 'right']).optional().describe('Where on the target: its center (default), or near one of its edges'),
+      profile: z.string().optional(),
+      tabId: z.number().optional(),
+      intent: z.string().optional().describe('Functional description of this step (e.g. "Put Cost first"). Recorded as step intent during test recording.')
+    },
+    async ({ ref, selector, targetRef, target, position, profile, tabId, intent }) => {
+      const { dropTarget, ...result } = learnTarget(ref, await sendCommand(profile, 'drag', { ref, selector, targetRef, target, position, tabId })) ?? {};
+      learnRef(targetRef, dropTarget);
+      let screenshotBase64 = null;
+      if (getRecording()?.use_vrt) {
+        try {
+          const snap = await sendCommand(profile, 'screenshot', { tabId, annotate: false });
+          if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
+        } catch(e) {}
+      }
+      // Where it was dropped is kept like what was dragged: a selector, and its locators for
+      // the replay to race (in the params: the step editor keeps them).
+      const drop = targetRef ? sess().refMap?.[String(targetRef).replace('@', '')] : null;
+      const params = {
+        selector, target: drop?.selector ?? target,
+        ...(position && position !== 'center' ? { position } : {}),
+        ...(drop?.locators?.length ? { targetLocators: drop.locators } : {}),
+        tabId,
+      };
+      const actionId = saveActionToHistory('drag', params, ref, screenshotBase64, intent);
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
     }
   );
 

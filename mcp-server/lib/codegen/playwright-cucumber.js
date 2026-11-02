@@ -6,6 +6,7 @@
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
 import { chooseTarget, throughLabel, withFixme, selectorFor } from './locators.js';
 import { uploadPathsOf } from '../upload-files.js';
+import { dropTargetOf, dragToCode } from './drag.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
@@ -39,7 +40,9 @@ export function generatePlaywrightCucumber(test, definitions) {
 // an ID the page generates at each load.
 function withStableTarget(step) {
   if (!step.params?.selector) return step;
-  return { ...step, params: { ...step.params, selector: selectorFor(step) } };
+  const params = { ...step.params, selector: selectorFor(step) };
+  if (step.command === 'drag' && params.target) params.target = selectorFor(dropTargetOf(step));
+  return { ...step, params };
 }
 
 /**
@@ -118,6 +121,19 @@ When('I set {string} checked to {string}', async function (selector, checked) {
 
 When('I upload {string} to {string}', async function (file, selector) {
   await this.page.setInputFiles(selector, file);
+});
+
+When('I drag {string} to {string}', async function (source, target) {
+  await this.page.locator(source).dragTo(this.page.locator(target));
+});
+
+// A quarter of the way in from that edge: the top of an item in a list puts it before.
+When('I drag {string} to the {word} of {string}', async function (source, edge, target) {
+  const at = { center: [1 / 2, 1 / 2], top: [1 / 2, 1 / 4], bottom: [1 / 2, 3 / 4], left: [1 / 4, 1 / 2], right: [3 / 4, 1 / 2] }[edge];
+  if (!at) throw new Error(\`No "\${edge}" to drop on: top, bottom, left, right or center\`);
+  const to = this.page.locator(target);
+  const { width, height } = await to.boundingBox();
+  await this.page.locator(source).dragTo(to, { targetPosition: { x: width * at[0], y: height * at[1] } });
 });
 
 When('I press {string}', async function (key) {
@@ -304,6 +320,12 @@ function commandToPlaywright(tpl, argNames) {
       return withFixme(t, t.locator
         ? `await ${t.locator}.setInputFiles(${arg});`
         : `await this.page.setInputFiles(${resolve(t.css)}, ${arg});`);
+    }
+    case 'drag': {
+      const from = target();
+      const to = chooseTarget(dropTargetOf(tpl), resolve, 'this.page');
+      const locatorOf = (t) => t.locator ?? `this.page.locator(${resolve(t.css)})`;
+      return withFixme(from, withFixme(to, dragToCode(locatorOf(from), locatorOf(to), params.position)));
     }
     case 'keyboard':
       return `await this.page.keyboard.press(${resolve(params.key)});`;

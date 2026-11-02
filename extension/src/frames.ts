@@ -283,12 +283,12 @@ export interface FramePoint {
  * then each parent in turn places the point on its own viewport and checks the click would
  * land on the <iframe> — a banner over the iframe stops it just like one over a button.
  */
-export async function measureInFrame(
+export async function measureInFrame<T extends FramePoint>(
   tabId: number,
   frameId: number,
   uncover: boolean,
-  measureLocal: (uncover: boolean) => Promise<FramePoint>
-): Promise<FramePoint> {
+  measureLocal: (uncover: boolean) => Promise<T>
+): Promise<T> {
   const local = await measureLocal(uncover);
   if (local.coveredBy || local.scrolled) return local;
 

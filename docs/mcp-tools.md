@@ -15,6 +15,7 @@ These tools are used for direct, real-time control of the browser.
 | `click` | Clicks an element. On a checkbox, radio or switch (or its label), returns the state it left (`checked`); with `checked`, sets that state and does not click when it is already so. | `ref` (@eX), `selector`, `text`, `checked` |
 | `fill` | Fills an input/textarea/contenteditable. A date, time, colour or range input gets its value set instead of typed (see below). | `ref` (@eX), `selector`, `value`, `clear` |
 | `upload_file` | Gives files to a file input, as picking them in the file dialog would. The ref may be the input — often hidden — or its drop zone, label or "Upload" button (see below). | `files` (paths), `ref` (@eX), `selector` |
+| `drag` | Drags an element and drops it on another, with the mouse: a sortable list, a card to another column. Works with `draggable="true"` (HTML5) and with pages that follow the mouse (see below). | `ref` / `selector`, `targetRef` / `target`, `position` (center, top, bottom, left, right) |
 | `extract` | Retrieves content (text, attributes) from the page. `attribute: "value"` on a field reads what it holds now. | `selector`, `attribute`, `multiple` |
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
 | `get_page_info` | Detailed info (title, URL, element counts). | `tabId`, `profile` |
@@ -54,6 +55,25 @@ These tools are used for direct, real-time control of the browser.
   quand le chemin est celui de la machine qui a enregistré — à copier dans le projet ; en Gherkin,
   `When I upload "<avatar>" to "#avatar-input"` (un seul fichier : plusieurs n'ont pas de phrase).
   Une assertion sur le nom affiché (`✓ avatar.png`) reste littérale : seul le chemin est variable.
+- **Glisser-déposer** (`drag`) : la souris presse l'élément, va jusqu'à la cible en plusieurs
+  mouvements, et relâche. Une page qui suit la souris (SortableJS en mode fallback, dnd-kit, jQuery UI)
+  n'a besoin de rien d'autre. Un élément `draggable="true"` lance le glisser-déposer de Chrome, que
+  des événements souris envoyés par CDP ne terminent jamais : il est intercepté
+  (`Input.setInterceptDrags`) et mené jusqu'au dépôt par `Input.dispatchDragEvent` — la page reçoit
+  les `dragenter`, `dragover`, `drop` et `dragend` de Chrome, `dataTransfer` compris, comme avec le
+  `dragTo` de Playwright. Le résultat dit lequel a servi (`drag: "native"` ou `"mouse"`) et, dans
+  `changes`, si l'élément glissé a bougé. `position` est l'endroit de la cible où il est déposé : son
+  centre, ou à un quart de son haut, de son bas, de sa gauche ou de sa droite — dans une liste
+  verticale, `top` le pose avant la cible, `bottom` après. Les deux doivent tenir ensemble à l'écran :
+  `drag` ne fait pas défiler la page pendant qu'il tient l'élément.
+  La snapshot liste ce qui se glisse, nommé par son texte : `[generic] "⠿ Cost Efficiency #5"
+  [draggable]`, ou `[cursor=grab]` pour une page qui suit la souris (aussi avec
+  `purposeFilter: "click"`). Un élément que rien ne nomme (ni test ID, ni id, ni nom) est enregistré
+  par son `data-id`, `data-value` ou `data-key` s'il est seul à l'avoir — `div[data-value="cost"]` —
+  plutôt que par sa position, que le tri change. La cible est gardée avec ses propres localisateurs
+  (`params.targetLocators`), que le rejeu essaie comme ceux de l'élément glissé. En Playwright,
+  `await page.locator(…).dragTo(page.locator(…))`, avec `targetPosition` calculé sur la boîte de la
+  cible pour un bord ; en Gherkin, `When I drag "…" to "…"` et `When I drag "…" to the top of "…"`.
 - **Case ou radio en `display: none`** derrière un label visible (les étoiles d'une note) : listée
   et manipulée par son label, avec sa valeur quand son nom ne la dit pas :
   `[radio] "★" value="4" [unchecked]`.

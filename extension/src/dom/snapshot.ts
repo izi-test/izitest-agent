@@ -297,6 +297,9 @@ export interface ClickTarget {
   labelFor?: string;
   /** A date, time, colour or range input (its type): fill sets its value, it does not type. */
   picked?: string;
+  /** Its box's size: a drop can go near an edge of it. */
+  width: number;
+  height: number;
 }
 
 interface MeasureOptions {
@@ -323,7 +326,7 @@ function measureForClick(el: Element, { uncover = false }: MeasureOptions = {}):
   // position is shifted by every frame it sits in. levels carries those offsets.
   let levels = frameLevels(el as never, document as never);
   if (!levels) {
-    return { x: 0, y: 0, tag: el.tagName.toLowerCase(), text: el.textContent?.slice(0, 50) || '',
+    return { x: 0, y: 0, width: 0, height: 0, tag: el.tagName.toLowerCase(), text: el.textContent?.slice(0, 50) || '',
       coveredBy: 'a cross-origin frame around it, which this extension cannot see into' };
   }
 
@@ -361,6 +364,8 @@ function measureForClick(el: Element, { uncover = false }: MeasureOptions = {}):
   const target = {
     x: Math.round(originX + rect.x + rect.width / 2),
     y: Math.round(originY + rect.y + rect.height / 2),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
     tag: el.tagName.toLowerCase(),
     text: el.textContent?.slice(0, 50) || '',
     ...(toggle ? { toggle } : {}),
@@ -850,10 +855,16 @@ function pageTools() {
       ['role', el.getAttribute('role')],
       ['href', tag === 'a' ? el.getAttribute('href') : null],
       ['type', tag === 'input' ? el.getAttribute('type') : null],
+      // The items of a list told apart by what each stands for (data-value="cost"), where
+      // only their position was left: a sorted list changes it.
+      ['data-id', el.getAttribute('data-id')],
+      ['data-value', el.getAttribute('data-value')],
+      ['data-key', el.getAttribute('data-key')],
     ];
 
     for (const [attr, val] of semanticAttrs) {
       if (!val) continue;
+      if (attr.startsWith('data-') && isDynamicId(val)) continue;
       // For href, use startsWith match to handle long URLs
       if (attr === 'href' && val.length > 60) {
         const shortHref = CSS.escape(val.slice(0, 50));
@@ -1317,6 +1328,21 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       }
     }
 
+    // Something to drag: draggable="true", or the outermost element under a grab or move
+    // cursor (a list sorted with mouse events). Listed, named by its text when it has no name
+    // — a sortable item is a <div> of <span>s — so that drag can take its ref.
+    let dragHint = '';
+    if (tag !== 'body' && tag !== 'html') {
+      const grabs = (node: Element | null) => !!node && /grab|move/.test(window.getComputedStyle(node).cursor);
+      if (el.getAttribute('draggable') === 'true') dragHint = ' [draggable]';
+      else if (!interactive && grabs(el) && !grabs(el.parentElement)) dragHint = ' [cursor=grab]';
+      if (dragHint && !interactive) {
+        label = name || ((el as HTMLElement).innerText ?? el.textContent ?? '').replace(/\s+/g, ' ').trim();
+        interactive = !!label;
+        if (!interactive) dragHint = '';
+      }
+    }
+
     // A checkbox or radio styled away (opacity 0, no size) behind a label that shows: it is
     // operated through that label, so it is listed (a click goes to the label, see
     // measureForClick). Without a name of its own — the text sits next to the label, not in
@@ -1355,7 +1381,7 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
     // purposeFilter "click" + searchText hid the very element the agent was looking for.
     const searchedAnyway = !!providedOptions.searchText && interactive;
     if (!skipNodeRender && !searchedAnyway && providedOptions.purposeFilter && providedOptions.purposeFilter !== 'read') {
-      const clickableRegion = pointerOnly && providedOptions.purposeFilter === 'click';
+      const clickableRegion = (pointerOnly || !!dragHint) && providedOptions.purposeFilter === 'click';
       if (!clickableRegion && !matchesPurposeFilter(role, tag, providedOptions.purposeFilter)) {
         skipNodeRender = true;
       }
@@ -1459,6 +1485,8 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       // cursor=pointer indicates clickable non-semantic elements (divs, spans with click handlers)
       if (pointerOnly) {
         line += ` [cursor=pointer]`;
+      } else if (dragHint) {
+        line += dragHint;
       } else if (!interactive) {
         const cursor = window.getComputedStyle(el).cursor;
         if (cursor === 'pointer') line += ` [cursor=pointer]`;

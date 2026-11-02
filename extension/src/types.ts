@@ -62,6 +62,20 @@ export interface UploadParams {
   sessionId?: string;
 }
 
+export interface DragParams {
+  /** What is dragged: a ref, or a selector. */
+  ref?: string;
+  selector?: string;
+  /** Where it is dropped: a ref, or a selector (what a recorded step keeps). */
+  targetRef?: string;
+  target?: string;
+  /** Where on the target: its centre (default), or near one of its edges. */
+  position?: 'center' | 'top' | 'bottom' | 'left' | 'right';
+  tabId?: number;
+  /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
+  sessionId?: string;
+}
+
 export interface KeyboardParams {
   key: string;
   modifiers?: KeyboardModifier[];
