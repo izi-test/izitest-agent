@@ -3357,6 +3357,25 @@ body {
 .case-scenario__unresolved ul { margin: 4px 0 0 18px; padding: 0; }
 .create-wf-hint--linked { margin: 0 0 12px; color: var(--accent-bright); }
 
+/* Importing requirements from a file */
+.import-panel { border: 1px dashed var(--border-hover); border-radius: var(--radius-sm); padding: 12px; }
+.import-file { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--accent-bright); cursor: pointer; }
+.import-file input { font-size: 12px; color: var(--text-muted); }
+.import-columns { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 12px; margin: 8px 0; }
+.import-columns label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-muted); }
+.import-columns select, .import-sheet { padding: 5px 8px; background: var(--bg-tertiary); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; }
+.import-warnings { margin: 6px 0; padding-left: 18px; font-size: 12px; color: var(--orange); }
+.import-item { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 6px 10px; font-size: 12px; }
+.import-item summary { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.import-item ol { margin: 6px 0 2px 18px; padding: 0; }
+.import-description { margin: 6px 0 0; color: var(--text-muted); white-space: pre-wrap; }
+.import-status { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: var(--radius-full); white-space: nowrap; }
+.import-status--new { background: var(--green-bg); color: var(--green); }
+.import-status--changed { background: var(--orange-bg); color: var(--orange); }
+.import-status--unchanged { background: var(--bg-elevated); color: var(--text-muted); }
+.import-linked { font-size: 11px; color: var(--orange); white-space: nowrap; }
+.import-done { font-size: 13px; color: var(--green); margin: 0 0 8px; }
+
 /* Campaigns: tests replayed together for a version of the app */
 .campaign-row { align-items: center; }
 .campaign-row .requirement-title { display: flex; flex-direction: column; white-space: normal; }

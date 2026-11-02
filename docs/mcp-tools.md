@@ -118,6 +118,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
 | `save_requirement` | Saves a requirement — from a request, written by hand, or a Jira story — with its acceptance criteria (see below). |
+| `import_requirements` | Imports requirements from a file — CSV, TSV, Excel, a Jira CSV export, JSON, Markdown —, a dry run first (see below). |
 | `design_tests` | Lays out how to design a requirement's tests: its criteria, its cases, the app, the project's Gherkin phrases, and the method — review, what is left unsaid, scenarios by test technique (see below). |
 | `plan_tests` | Plans a requirement's test cases: per criterion, nominal, alternative, error, boundary — with their technique, priority and scenario in Gherkin; says which scenarios are ready and which have steps to record. |
 | `link_test` | Links a saved test to a requirement: to a planned case, a criterion, or the whole requirement. |
@@ -466,6 +467,7 @@ les testent. Le même objet, d'où qu'elle vienne :
 | D'où | Comment |
 | :--- | :--- |
 | Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré. |
+| Un fichier (un cahier de recette, un export) | `import_requirements(path)` ou le bouton **Import** de la page Requirements (voir plus bas). |
 | Un outil (une story Jira) | l'agent la lit (par exemple avec un serveur MCP Atlassian) et la garde : `source: "jira"`, sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |
 | Un testeur | page **Requirements** du tableau de bord : écrire l'exigence et ses critères, demander des scénarios (« Propose scenarios »), planifier des cas, y lier des tests. |
 
@@ -490,6 +492,36 @@ l'affaire du test.
 À l'export, les exigences d'un test deviennent des étiquettes : `test('…', { tag: ['@REQ-1'] }, …)`
 en Playwright (`npx playwright test --grep @REQ-1`), `@REQ-1` sur la feature Cucumber
 (`cucumber-js --tags @REQ-1`), avec un commentaire qui dit le critère vérifié.
+
+#### Importer des exigences d'un fichier : `import_requirements`
+
+Beaucoup de cahiers de recette vivent dans des tableurs. L'import lit :
+
+- **un tableau** — CSV ou TSV (le séparateur `;` d'un Excel français est reconnu, comme l'encodage
+  Windows-1252 d'un vieil Excel), ou Excel `.xlsx` (la feuille `sheet`, par défaut la première). Les
+  colonnes se reconnaissent à leur nom, en anglais ou en français : clé (`Key`, `Réf.`, `ID Exigence`,
+  `Issue key`), titre (`Title`, `Summary`, `Intitulé`), description, critères d'acceptation (`Acceptance
+  criteria`, `Critères d'acceptation`, `Règles de gestion`, un champ personnalisé Jira), priorité
+  (`Priorité`, `Criticité` : « Haute », « Majeure », « Highest », « P1 »…), lien. `columns` désigne une
+  colonne que son nom ne trahit pas. Un critère par ligne dans une cellule, ou par ligne du tableau :
+  une ligne sans clé ni titre complète l'exigence du dessus, des lignes de même clé (ou, sans clé, de
+  même titre) n'en font qu'une. Une colonne de simples numéros (1, 2, 3) numérote les lignes : ce ne sont
+  pas des clés. Un **export CSV de Jira** s'importe tel quel (source `jira`).
+- **du JSON** — une liste d'exigences, `{ requirements: [...] }`, ou le résultat d'une recherche Jira
+  (`{ issues: [{ key, fields: { summary, description, priority } }] }`).
+- **du Markdown** — un titre par exigence (sa clé en tête : `## SHOP-12 — Titre`), les éléments de ses
+  listes comme critères, une ligne `Priorité :` ou `Lien :`, le reste comme description. Le titre du
+  document et ceux des chapitres (des titres sans liste à eux, au-dessus d'autres) n'en sont pas.
+
+Sans colonne de critères, ceux qu'une description range sous « Acceptance criteria » ou « Critères
+d'acceptation » (y compris le `h3.` et les listes `#` de Jira) en sont extraits.
+
+C'est d'abord un **essai** (`dry_run`, par défaut) : chaque exigence est dite nouvelle, modifiée ou
+inchangée, rien n'est enregistré. Importée à nouveau, une exigence est mise à jour sous sa clé (ou son
+titre) et ses critères inchangés gardent leurs tests ; une exigence modifiée qui a des tests liés est
+signalée. Dans le tableau de bord, le bouton **Import** de la page Requirements prend un fichier ou un
+texte collé, montre l'aperçu et la colonne de chaque champ (modifiable), puis importe dans le projet
+choisi.
 
 #### Concevoir les tests d'une exigence : `design_tests`
 

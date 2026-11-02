@@ -308,3 +308,26 @@ export interface Campaign {
 
 /** A campaign as listed: without its runs and requirements, with what failed. */
 export type CampaignSummary = Omit<Campaign, 'requirements' | 'runs'> & { failing_requirements: string[]; failed: string[] };
+
+/** What a file of requirements holds, previewed or imported (mcp-server/lib/requirement-import.js). */
+export interface RequirementImport {
+  format: 'csv' | 'xlsx' | 'json' | 'markdown';
+  headers: string[] | null;
+  columns: Partial<Record<'key' | 'title' | 'description' | 'criteria' | 'priority' | 'url', string>> | null;
+  warnings: string[];
+  saved: boolean;
+  items: Array<{
+    key: string | null;
+    title: string;
+    description: string;
+    criteria: string[];
+    priority: Requirement['priority'];
+    url: string | null;
+    source: Requirement['source'];
+    status: 'new' | 'changed' | 'unchanged';
+    linked_tests: number;
+  }>;
+  new: number;
+  changed: number;
+  unchanged: number;
+}

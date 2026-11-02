@@ -9,6 +9,9 @@ import {
   SOURCES, PRIORITIES, CASE_KINDS, TECHNIQUES, saveRequirement, getRequirement, listRequirements, planCases, linkTest, formatRequirement,
 } from '../requirements.js';
 import { designBrief, withResolution } from '../requirement-design.js';
+import { FORMATS, importRequirements, formatImport } from '../requirement-import.js';
+import { readFile, stat } from 'node:fs/promises';
+import { isAbsolute, extname } from 'node:path';
 
 const text = (t, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: 'text', text: t }] });
 const REQUIREMENT = z.string().describe('The requirement: its key ("REQ-12", "SHOP-123") or id');
@@ -44,6 +47,50 @@ export function registerRequirementTools(server) {
         });
         const head = isNew ? `Saved ${requirement.key}.` : changed ? `Updated ${requirement.key}: its content changed — check that its tests still match it.` : `${requirement.key} is unchanged.`;
         return text(`${head}\n\n${formatRequirement(requirement)}\n\nNext: design_tests(requirement: "${requirement.key}") to review its criteria and design its scenarios, then plan_tests.`);
+      } catch (err) {
+        return text(err.message, true);
+      }
+    }
+  );
+
+  // --- Tool: import_requirements ---
+  const IMPORTABLE = ['.csv', '.tsv', '.txt', '.xlsx', '.xlsm', '.json', '.md', '.markdown'];
+  const column = z.string().nullable().optional();
+  server.tool(
+    'import_requirements',
+    [
+      'Import requirements from a file: a spreadsheet (CSV, TSV, Excel .xlsx — a test plan, a Jira CSV export), JSON (a list, or a',
+      'Jira search result), or a Markdown spec (a heading per requirement, its list items as criteria). Columns are found by their',
+      'names, in English or French (Key/Réf., Title/Summary/Intitulé, Description, Acceptance criteria/Critères d\'acceptation,',
+      'Priority/Priorité, Link/Lien); criteria written in a description under "Acceptance criteria" are taken out of it.',
+      'By default a dry run: it says what is new, what changed, what is unchanged, and saves nothing — show it to the user, then',
+      'call again with dry_run: false. Imported again, a requirement is updated under its key (or its title), and its criteria',
+      'whose text did not change keep their tests; a changed one with tests linked is flagged.',
+    ].join('\n'),
+    {
+      path: z.string().optional().describe(`The file, by its absolute path on this machine (${IMPORTABLE.join(', ')})`),
+      content: z.string().optional().describe('Or the file\'s text (CSV, JSON, Markdown), when there is no file'),
+      format: z.enum(FORMATS).optional().describe('Default: told from the file\'s name, else its content'),
+      sheet: z.string().optional().describe('Excel: the sheet to read (default: the first)'),
+      columns: z.object({ key: column, title: column, description: column, criteria: column, priority: column, url: column }).optional()
+        .describe('A table\'s column for a field, by its header, when it is not found by its name; null: not that field'),
+      project_id: z.number().optional().describe('The project the requirements belong to'),
+      dry_run: z.boolean().optional().describe('Default true: show what would be imported, save nothing'),
+    },
+    async ({ path, content, format, sheet, columns, project_id, dry_run }) => {
+      try {
+        let data = content;
+        if (path) {
+          if (!isAbsolute(path)) return text('Give the file\'s absolute path.', true);
+          if (!IMPORTABLE.includes(extname(path).toLowerCase())) return text(`Not a file to import requirements from: ${path} (${IMPORTABLE.join(', ')})`, true);
+          if ((await stat(path)).size > 5 * 1024 * 1024) return text('The file is too big (5 MB at most).', true);
+          data = await readFile(path);
+        }
+        if (data == null) return text('Give the file: its path, or its content.', true);
+        const result = importRequirements({
+          content: data, filename: path ?? '', format, sheet, columns: columns ?? {}, projectId: project_id ?? null, dryRun: dry_run !== false,
+        });
+        return text(formatImport(result));
       } catch (err) {
         return text(err.message, true);
       }

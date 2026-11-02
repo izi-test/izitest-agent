@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  ClipboardList, Plus, Trash2, Save, ArrowLeft, FlaskConical, Link2, X, ExternalLink, Sparkles, AlertTriangle, FileCode, Bot, Loader2, Play,
+  ClipboardList, Plus, Trash2, Save, ArrowLeft, FlaskConical, Link2, X, ExternalLink, Sparkles, AlertTriangle, FileCode, Bot, Loader2, Play, Upload,
 } from 'lucide-react';
 import {
   useGetRequirementsQuery, useGetRequirementQuery, useCreateRequirementMutation, useUpdateRequirementMutation,
@@ -9,6 +9,8 @@ import {
 } from '../store/services/requirementsApi';
 import { useGetTestsQuery } from '../store/services/testsApi';
 import { useStartCampaignMutation } from '../store/services/campaignsApi';
+import { useGetProjectsQuery } from '../store/services/projectsApi';
+import { RequirementImportPanel } from './RequirementImport';
 import { useAppSelector } from '../store/hooks';
 import { Button } from './Button';
 import { CreateTestModal, type CreateMode, type CreateTestPreset } from './CreateTestModal';
@@ -63,22 +65,31 @@ function CoverageBadge({ coverage }: { coverage: Requirement['coverage'] }) {
 export function RequirementsPage({ onOpen }: { onOpen: (key: string) => void }) {
   const projectId = useAppSelector((state) => state.ui.selectedProjectId);
   const { data: requirements = [], isLoading } = useGetRequirementsQuery(projectId);
+  const { data: projects = [] } = useGetProjectsQuery(undefined);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   return (
     <div className="dashboard requirements-page">
       <div className="dash-panel">
         <div className="dash-panel__title">
           <ClipboardList size={16} /> Requirements
-          <Button size="sm" variant="action" icon={Plus} className="requirements-new" onClick={() => setCreating(!creating)}>New requirement</Button>
+          <Button size="sm" variant="action" icon={Upload} className="requirements-new" onClick={() => { setImporting(!importing); setCreating(false); }}>Import</Button>
+          <Button size="sm" variant="action" icon={Plus} onClick={() => { setCreating(!creating); setImporting(false); }}>New requirement</Button>
         </div>
         <p className="explore-help">
           What the tests are for: each requirement, its acceptance criteria, and the tests that check them. A request made in
-          “Create Test with AI” is kept here too; an agent saves them with save_requirement.
+          “Create Test with AI” is kept here too; an agent saves them with save_requirement, or imports a file with import_requirements.
         </p>
+        {importing && (
+          <RequirementImportPanel
+            projectId={projectId} projectName={projects.find((p) => p.id === projectId)?.name ?? null}
+            onDone={() => setImporting(false)} onCancel={() => setImporting(false)}
+          />
+        )}
         {creating && <RequirementForm projectId={projectId} onSaved={(key) => { setCreating(false); onOpen(key); }} onCancel={() => setCreating(false)} />}
         {isLoading && <p className="dash-panel__empty">Loading…</p>}
-        {!isLoading && requirements.length === 0 && !creating && <p className="dash-panel__empty">No requirement yet.</p>}
+        {!isLoading && requirements.length === 0 && !creating && !importing && <p className="dash-panel__empty">No requirement yet.</p>}
         <div className="bug-list">
           {requirements.map((r) => (
             <button key={r.id} className="requirement-row" onClick={() => onOpen(r.key)}>

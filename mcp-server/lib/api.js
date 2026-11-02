@@ -25,6 +25,7 @@ import { listBugs, setBugStatus, listExplorations, getExploration, runExploratio
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
 import { designTests, planDesigned, withResolution, recordingBrief } from './requirement-design.js';
+import { importRequirements } from './requirement-import.js';
 import { complete, agentName } from './agent/complete.js';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport } from './campaigns.js';
 import { generateTestCode } from './codegen/index.js';
@@ -427,6 +428,22 @@ export async function apiRouter(req, res, url) {
           source: body.source ?? 'manual', url: body.url ?? null, projectId: body.project_id ?? null, priority: body.priority ?? 'medium',
         });
         return json(res, 201, { requirement });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/requirements/import — { filename, content | content_base64, format, sheet, columns, project_id, dry_run }:
+    // what the file holds, new, changed or unchanged — saved unless dry_run (lib/requirement-import.js)
+    if (method === 'POST' && path === '/api/requirements/import') {
+      const body = await readBody(req);
+      try {
+        const content = body.content_base64 != null ? Buffer.from(body.content_base64, 'base64') : body.content;
+        const result = importRequirements({
+          content, filename: body.filename ?? '', format: body.format || null, sheet: body.sheet || null, columns: body.columns ?? {},
+          projectId: body.project_id ?? null, dryRun: body.dry_run !== false,
+        });
+        return json(res, 200, { import: result });
       } catch (err) {
         return json(res, 400, { error: err.message });
       }

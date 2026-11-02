@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Requirement, RequirementCase, TestRequirement } from '../../types';
+import type { Requirement, RequirementCase, RequirementImport, TestRequirement } from '../../types';
 
 type RequirementInput = Partial<Pick<Requirement, 'title' | 'description' | 'priority' | 'source' | 'key'>> & {
   criteria?: Array<string | { id?: number; text: string }>;
@@ -63,6 +63,14 @@ export const requirementsApi = createApi({
       query: ({ ref, caseId }) => ({ url: `api/requirements/${encodeURIComponent(ref)}/cases/${caseId}`, method: 'DELETE' }),
       invalidatesTags: (_result, _error, { ref }) => ['Requirements', { type: 'Requirement', id: ref }, 'TestRequirements'],
     }),
+    // A file of requirements: previewed (dry_run), or imported.
+    importRequirements: builder.mutation<{ import: RequirementImport }, {
+      filename?: string; content?: string; content_base64?: string; format?: string; sheet?: string;
+      columns?: Record<string, string | null>; project_id?: number | null; dry_run: boolean;
+    }>({
+      query: (body) => ({ url: 'api/requirements/import', method: 'POST', body }),
+      invalidatesTags: (_result, _error, { dry_run }) => (dry_run ? [] : ['Requirements', 'Requirement', 'TestRequirements']),
+    }),
     getTestRequirements: builder.query<TestRequirement[], string>({
       query: (testName) => `api/tests/${encodeURIComponent(testName)}/requirements`,
       transformResponse: (response: { requirements: TestRequirement[] }) => response.requirements ?? [],
@@ -83,5 +91,6 @@ export const {
   useDesignRequirementMutation,
   usePlanDesignMutation,
   useDismissDesignMutation,
+  useImportRequirementsMutation,
   useGetTestRequirementsQuery,
 } = requirementsApi;
