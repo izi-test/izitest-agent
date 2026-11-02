@@ -75,7 +75,8 @@ export function identityOf(step, side = 'element') {
   const selector = side === 'target' ? params.target : params.selector;
   return {
     role: role?.value ?? null,
-    name: role?.name ?? value('aria') ?? value('label') ?? null,
+    // A field a Gherkin phrase names by its label has no recording: that label is its name.
+    name: role?.name ?? value('aria') ?? value('label') ?? (side === 'element' ? params.label : null) ?? null,
     placeholder: value('placeholder'),
     text: value('text'),
     testid: value('testid'),

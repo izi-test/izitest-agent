@@ -112,6 +112,10 @@ export function chooseTarget(step, literal, page = 'page') {
   // came out as page.click(''), which Playwright refuses.
   if (selector && sound(selector)) return { css: selector };
 
+  // A field a Gherkin phrase names by its label: nothing recorded, the label is all there is.
+  const label = step.params?.label;
+  if (!selector && label) return { locator: fieldByLabel(step, label, literal, page) };
+
   const locators = Array.isArray(step.locators) ? step.locators : [];
   const valueOf = (type) => locators.find(l => l.type === type)?.value;
 
@@ -185,6 +189,23 @@ export function chooseTarget(step, literal, page = 'page') {
   if (positional) return { css: positional.value };
 
   return { css: selector, fragile: true };
+}
+
+/**
+ * The field labelled `label`, as IziTest's replay finds it (extension/src/dom/field-label.ts):
+ * by its <label>, aria-label or aria-labelledby, or its placeholder — the first that shows.
+ * Two "Email" fields on a page (a login form, a contact form) are no error, as they are none
+ * in the replay: getByLabel alone failed on Playwright's strict mode.
+ * A box is checked through its <label> when the page draws it instead (the input styled
+ * away, with no size): check() on the input itself times out, the replay clicks the label.
+ * Checked on the label, Playwright reads the state of the box it labels.
+ */
+function fieldByLabel(step, label, literal, page) {
+  const byLabel = `${page}.getByLabel(${literal(label)}, { exact: true })`;
+  const either = step.command === 'click'
+    ? `${page}.locator(${literal(`label:text-is(${quoted(label)})`)}).or(${byLabel})`
+    : `${byLabel}.or(${page}.getByPlaceholder(${literal(label)}, { exact: true }))`;
+  return `${either}.locator('visible=true').first()`;
 }
 
 /**

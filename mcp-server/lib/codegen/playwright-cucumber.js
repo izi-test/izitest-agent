@@ -94,6 +94,14 @@ const DEFAULT_STEPS_JS = `import { Given, When, Then } from '@cucumber/cucumber'
 import { expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
+// A field named by its label, as IziTest's replay finds it: by its <label>, aria-label or
+// aria-labelledby, or its placeholder — the first that shows. A box goes through its <label>
+// when the page draws it instead of the input (styled away, with no size).
+const field = (page, label) => page.getByLabel(label, { exact: true })
+  .or(page.getByPlaceholder(label, { exact: true })).locator('visible=true').first();
+const box = (page, label) => page.locator(\`label:text-is(\${JSON.stringify(label)})\`)
+  .or(page.getByLabel(label, { exact: true })).locator('visible=true').first();
+
 // ─── Navigation ─────────────────────────────────────────────────────
 Given('I am on {string}', async function (url) {
   await this.page.goto(url);
@@ -126,6 +134,22 @@ When('I uncheck {string}', async function (selector) {
 
 When('I set {string} checked to {string}', async function (selector, checked) {
   await this.page.locator(selector).setChecked(checked === 'true');
+});
+
+When('I fill the field {string} with {string}', async function (label, value) {
+  await field(this.page, label).fill(value);
+});
+
+When('I select {string} in the field {string}', async function (option, label) {
+  await field(this.page, label).selectOption(option);
+});
+
+When('I check the field {string}', async function (label) {
+  await box(this.page, label).check();
+});
+
+When('I uncheck the field {string}', async function (label) {
+  await box(this.page, label).uncheck();
 });
 
 When('I upload {string} to {string}', async function (file, selector) {

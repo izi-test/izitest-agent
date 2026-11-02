@@ -218,3 +218,15 @@ test('Gherkin: a click by its text alone has its phrase, and the Cucumber export
   const exported = generatePlaywrightCucumber({ name: 't', project_id: 1, steps: [step] }, defaults).files.find((f) => f.path.endsWith('t.feature')).content;
   assert.match(exported, /When I click on 'role=button\[name="Sign in"s\]'/);
 });
+
+test('a field named by its label in a Gherkin phrase: by that label or placeholder, the first that shows', () => {
+  assert.match(render({ command: 'fill', params: { label: 'Email', value: 'a@b.c' } }),
+    /await page\.getByLabel\('Email', \{ exact: true \}\)\.or\(page\.getByPlaceholder\('Email', \{ exact: true \}\)\)\.locator\('visible=true'\)\.first\(\)\.fill\('a@b\.c'\);/);
+  assert.match(render({ command: 'select', params: { label: 'Subject', value: 'Support' } }),
+    /await page\.getByLabel\('Subject', \{ exact: true \}\)\.or\(.*\)\.first\(\)\.selectOption\('Support'\);/);
+  // A box the page draws instead of its input is checked through its <label>.
+  assert.match(render({ command: 'click', params: { label: 'Remember me', checked: true } }),
+    /await page\.locator\('label:text-is\("Remember me"\)'\)\.or\(page\.getByLabel\('Remember me', \{ exact: true \}\)\)\.locator\('visible=true'\)\.first\(\)\.check\(\);/);
+  // A recorded selector wins: the label is only for a step that has nothing else.
+  assert.match(render({ command: 'fill', params: { selector: '#login-email', label: 'Email', value: 'x' } }), /await page\.fill\('#login-email', 'x'\);/);
+});

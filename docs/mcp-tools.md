@@ -82,6 +82,20 @@ These tools are used for direct, real-time control of the browser.
   et prenait le clic (et la détection de listes de la fin d'enregistrement en faisait un « élément de
   liste »). À l'export, un tel clic va au rôle et au nom enregistrés (`getByRole`), sinon au texte
   (`getByText`) — il sortait en `page.click('')` ; en Gherkin, `When I click on the text "…"`.
+- **Champ nommé par son label** (Gherkin, sans sélecteur) : `When I fill the field "Email" with "…"`,
+  `When I select "…" in the field "Subject"`, `When I check the field "Remember me"` et `When I
+  uncheck the field "…"` donnent à `fill`, `select` et `click` un `label` au lieu d'un `selector` :
+  un scénario écrit sans avoir vu la page (`design_tests`) peut nommer un champ. L'extension le
+  cherche comme `getByLabel(…, { exact: true })` de Playwright : son `aria-labelledby`, sinon son
+  `aria-label`, sinon son `<label for>` ou le `<label>` qui l'entoure — le texte entier du label,
+  espaces resserrés, casse comprise (`Phone *` pour `<label><span>Phone</span> <em>*</em>`) —, ou
+  enfin son `placeholder`. Elle prend le premier qui se voit, dans l'ordre de la page (iframes de même
+  origine comprises) : sur le Test Arena, « Email » est le champ du login, pas celui du formulaire de
+  contact plus bas. Une case que la page dessine elle-même (l'input invisible, sans taille) est
+  cliquée par son label. Un champ pas encore affiché est attendu 5 s ; un label introuvable échoue en
+  citant les champs présents : `No field labelled "Courriel" (…). Fields on the page: "Email",
+  "Password", …`. Ce qui est tapé devient une variable nommée d'après le label (`{{email}}`).
+  L'export est décrit plus bas (*Champs nommés par leur label à l'export*).
 - **Case ou radio en `display: none`** derrière un label visible (les étoiles d'une note) : listée
   et manipulée par son label, avec sa valeur quand son nom ne la dit pas :
   `[radio] "★" value="4" [unchecked]`.
@@ -380,6 +394,27 @@ Pour `attribute_equals`, l'attribut `value` d'un champ est ce qu'il contient au 
 comme le lit `toHaveValue` : l'attribut HTML n'est que la valeur de départ (absent d'un champ rempli
 par le test).
 
+#### Champs nommés par leur label à l'export
+
+Les phrases qui nomment un champ par son label (voir *Champs particuliers*) se rejouent et
+s'exportent sans sélecteur :
+
+| Gherkin | Étape | Playwright |
+| :--- | :--- | :--- |
+| `When I fill the field "Email" with "…"` | `fill { label, value }` | `page.getByLabel('Email', { exact: true }).or(page.getByPlaceholder('Email', { exact: true })).locator('visible=true').first().fill(…)` |
+| `When I select "…" in the field "Subject"` | `select { value, label }` | la même cible, `.selectOption(…)` |
+| `When I check the field "Remember me"` / `I uncheck the field "…"` | `click { label, checked }` | `page.locator('label:text-is("Remember me")').or(page.getByLabel('Remember me', { exact: true })).locator('visible=true').first().check()` / `.uncheck()` |
+
+Le code trouve le champ que trouve le rejeu : par son label ou son placeholder, le premier visible.
+`getByLabel` seul échouait sur le mode strict de Playwright dès que deux champs portent le même
+label (le login et le contact du Test Arena ont chacun un « Email »), et sur un doublon caché (le
+champ de recherche du menu mobile). Une case passe par son `<label>` quand la page la dessine
+elle-même : `check()` sur l'input invisible attend jusqu'au timeout, et sur le label, Playwright
+lit l'état de la case qu'il nomme. En `playwright-cucumber`, le `.feature` garde les phrases telles
+quelles et `default.steps.js` les définit avec deux fonctions qui font la même chose, `field()` et
+`box()`. Une étape enregistrée avec un sélecteur le garde : le label ne sert qu'à une étape qui n'a
+rien d'autre.
+
 #### Cases à cocher
 
 Un clic sur une case à cocher, un bouton radio ou un interrupteur (`role="switch"`), ou sur son
@@ -392,7 +427,8 @@ Avec l'état enregistré :
   clicked » dans le résultat de l'étape) ;
 - **`playwright-plain`** et les étapes métier génèrent `.check()` ou `.uncheck()`, qui laissent la
   case dans l'état voulu, label compris : `page.locator('label', { hasText: 'Jardin' }).check()` ;
-- **Gherkin** : `When I check "…"`, `When I uncheck "…"` ;
+- **Gherkin** : `When I check "…"`, `When I uncheck "…"` ; sans sélecteur, par le label de la case :
+  `When I check the field "Remember me"`, `When I uncheck the field "…"` ;
 - **Variable** : `add_test_variable({ test_name, step, param: "checked", name: "jardin" })` fait de
   l'état une variable (`"true"` ou `"false"`) : `When I set "…" checked to "{{jardin}}"` dans
   l'onglet Gherkin, `setChecked(…)` dans le code généré.
@@ -458,7 +494,8 @@ en Playwright (`npx playwright test --grep @REQ-1`), `@REQ-1` sur la feature Cuc
 Une seule méthode, quel que soit l'agent qui l'applique. IziTest ne raisonne pas : il expose
 l'exigence, ses cas déjà là, l'appli (le projet, son adresse, ses notes) et les **phrases Gherkin du
 projet** — en disant, pour chacune, quel argument est un sélecteur CSS, et lesquelles sont des étapes
-métier —, puis les règles :
+métier ; les phrases qui nomment un champ par son label (`I fill the field "…" with "…"`, `I select
+"…" in the field "…"`, `I check the field "…"`) n'en demandent aucun —, puis les règles :
 
 1. **Revue de testabilité** : un critère se teste quand il dit ce qu'on fait et ce qu'on voit ensuite,
    avec ses valeurs. Un mot vague (« rapide », « simple »), un résultat absent, une valeur manquante :

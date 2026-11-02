@@ -19,6 +19,8 @@ export interface ClickParams {
   sessionId?: string;
   text?: string;
   ref?: string;
+  /** A field named by the label a person reads next to it, not a selector (see dom/field-label.ts). */
+  label?: string;
   /**
    * For a checkbox, radio or switch (or its label): the state wanted. The click is skipped
    * when the box is already in it. A string after a {{variable}} is replaced ("true"/"false").
@@ -39,6 +41,8 @@ export interface FillParams {
   sessionId?: string;
   clear?: boolean;
   ref?: string;
+  /** A field named by the label a person reads next to it, not a selector (see dom/field-label.ts). */
+  label?: string;
   typing?: TypingMode;
 }
 
@@ -49,6 +53,8 @@ export interface SelectParams {
   /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;
   ref?: string;
+  /** A field named by the label a person reads next to it, not a selector (see dom/field-label.ts). */
+  label?: string;
   matchBy?: 'value' | 'text';
 }
 

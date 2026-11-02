@@ -17,6 +17,12 @@ export const DEFAULT_STEP_DEFINITIONS = [
   { keyword: 'When',  pattern: 'I check {string}',                command: 'click',    params_template: { selector: '{0}', checked: true } },
   { keyword: 'When',  pattern: 'I uncheck {string}',              command: 'click',    params_template: { selector: '{0}', checked: false } },
   { keyword: 'When',  pattern: 'I set {string} checked to {string}', command: 'click', params_template: { selector: '{0}', checked: '{1}' } },
+  // A field named by the label a person reads next to it (or its placeholder): a scenario
+  // written without seeing the page can name it, where it cannot know a CSS selector.
+  { keyword: 'When',  pattern: 'I fill the field {string} with {string}', command: 'fill',   params_template: { label: '{0}', value: '{1}' } },
+  { keyword: 'When',  pattern: 'I select {string} in the field {string}', command: 'select', params_template: { value: '{0}', label: '{1}' } },
+  { keyword: 'When',  pattern: 'I check the field {string}',              command: 'click',  params_template: { label: '{0}', checked: true } },
+  { keyword: 'When',  pattern: 'I uncheck the field {string}',            command: 'click',  params_template: { label: '{0}', checked: false } },
   // One file; an upload of several has no phrase.
   { keyword: 'When',  pattern: 'I upload {string} to {string}',   command: 'upload',   params_template: { file: '{0}', selector: '{1}' } },
   { keyword: 'When',  pattern: 'I drag {string} to {string}',     command: 'drag',     params_template: { selector: '{0}', target: '{1}' } },

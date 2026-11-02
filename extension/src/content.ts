@@ -1,7 +1,7 @@
 // IziTest Agent — Content Script
 // Injected into every page to enable deep DOM interaction
 
-import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, elementByText, selectOption, setInputValue, setInputFiles } from './dom/snapshot';
+import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, elementByText, selectOption, setInputValue, setInputFiles, noFieldLabelled } from './dom/snapshot';
 import FindSimilarElements from './utils/FindSimilarElements';
 import { announceToParent, listenForHops } from './dom/frame-hop';
 import type { FileData } from './dom/file-input';
@@ -92,11 +92,12 @@ import type { FileData } from './dom/file-input';
 
     if (message.type === 'locate_element') {
       locateElement(
-        { selector: message.selector as string | undefined, text: message.text as string | undefined },
+        { selector: message.selector as string | undefined, text: message.text as string | undefined, label: message.label as string | undefined },
         { uncover: message.uncover === true }
       )
         .then(result => {
           if (result) sendResponse({ success: true, element: result });
+          else if (message.label) sendResponse({ success: false, error: noFieldLabelled(message.label as string) });
           else sendResponse({ success: false, error: `Element not found: ${message.selector || message.text}` });
         })
         .catch(error => sendResponse({ success: false, error: String(error) }));
@@ -104,7 +105,7 @@ import type { FileData } from './dom/file-input';
 
     if (message.type === 'select_option') {
       sendResponse(selectOption(
-        { ref: message.ref as string | undefined, selector: message.selector as string | undefined },
+        { ref: message.ref as string | undefined, selector: message.selector as string | undefined, label: message.label as string | undefined },
         message.value as string,
         (message.matchBy as 'text' | 'value' | undefined) ?? 'text'
       ));
@@ -112,14 +113,14 @@ import type { FileData } from './dom/file-input';
 
     if (message.type === 'set_input_value') {
       sendResponse(setInputValue(
-        { ref: message.ref as string | undefined, selector: message.selector as string | undefined },
+        { ref: message.ref as string | undefined, selector: message.selector as string | undefined, label: message.label as string | undefined },
         message.value as string
       ));
     }
 
     if (message.type === 'set_input_files') {
       sendResponse(setInputFiles(
-        { ref: message.ref as string | undefined, selector: message.selector as string | undefined },
+        { ref: message.ref as string | undefined, selector: message.selector as string | undefined, label: message.label as string | undefined },
         message.files as FileData[]
       ));
     }

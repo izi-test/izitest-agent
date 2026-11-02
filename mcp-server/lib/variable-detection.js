@@ -33,9 +33,11 @@ const FIELD_NAME_SOURCES = [
 
 /** A variable name for the field a step fills, from its recorded locators; null without one. */
 export function deriveVarNameFromLocators(step) {
-  // A field filled by selector has no locators: its selector is all there is.
+  // A field filled by selector has no locators: its selector is all there is. One a Gherkin
+  // phrase names by its label ("I fill the field "Email" with …"): that label.
   const locators = step.locators?.length ? step.locators
-    : step.params?.selector ? [{ type: 'css', value: step.params.selector }] : [];
+    : step.params?.selector ? [{ type: 'css', value: step.params.selector }]
+    : step.params?.label ? [{ type: 'label', value: step.params.label }] : [];
   const placeholders = new Set(locators.filter((l) => l.type === 'placeholder').map((l) => l.value));
   for (const source of FIELD_NAME_SOURCES) {
     for (const locator of locators) {

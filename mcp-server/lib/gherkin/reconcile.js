@@ -84,7 +84,7 @@ function commonPhrases(before, after) {
   return matched;
 }
 
-const targetOf = (step) => step.params?.selector ?? step.params?.url ?? null;
+const targetOf = (step) => step.params?.selector ?? step.params?.label ?? step.params?.url ?? null;
 
 /** The parsed steps of an edited phrase, with what the Gherkin cannot say taken from the steps it replaces. */
 function carryOver(oldSteps, newSteps) {

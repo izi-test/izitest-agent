@@ -2,6 +2,7 @@
 
 import { log } from './logger.js';
 import { db, parseJson } from './db.js';
+import { deriveVarNameFromLocators } from './variable-detection.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -43,8 +44,11 @@ export function saveTest(test) {
       const value = step.params.value;
       if (/^\{\{.+\}\}$/.test(value)) return; // already a variable placeholder
 
-      let varName = 'input_' + (i + 1);
-      while (usedVarNames.has(varName)) varName = 'input_' + (i + 1) + '_' + Math.random().toString(36).slice(2, 5);
+      // Named after the label a Gherkin phrase gives the field ("I fill the field "Email" …"):
+      // {{email}} reads better than {{input_4}} in the exported code and its Examples.
+      const base = (step.params.label && deriveVarNameFromLocators(step)) || 'input_' + (i + 1);
+      let varName = base;
+      while (usedVarNames.has(varName)) varName = base + '_' + Math.random().toString(36).slice(2, 5);
       usedVarNames.add(varName);
 
       step.params.value = `{{${varName}}}`;

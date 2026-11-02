@@ -2,6 +2,7 @@ import { describeBlocker, frameLevels, hitTestThroughFrames, type FrameLevel } f
 import { toggleOf, isToggleInput, styledAwayToggleLabel, textAround, type ToggleState } from './toggle';
 import { pickedInputType, setPickedValue } from './picked-input';
 import { fileInputOf, putFiles, type FileData } from './file-input';
+import { fieldByLabel, fieldNames } from './field-label';
 
 export type SnapshotPurpose = 'fill' | 'click' | 'read';
 
@@ -114,7 +115,8 @@ export function refProblem(ref: string): string | null {
 }
 
 /**
- * Locate an element by CSS selector or visible text and return where to click it.
+ * Locate an element by CSS selector, visible text or the label of a field, and return where
+ * to click it.
  *
  * Same contract as resolveRef, and the same reason for existing: measuring from inside the
  * page is reliable, whereas page.evaluate() through the extension transport can land on a
@@ -141,7 +143,7 @@ export function elementByText(wanted: string, docs: Document[] = searchableDocum
 }
 
 export async function locateElement(
-  by: { selector?: string; text?: string },
+  by: { selector?: string; text?: string; label?: string },
   options: MeasureOptions = {}
 ): Promise<ClickTarget | null> {
   // The page and every same-origin iframe in it, outermost first: the snapshot already
@@ -164,6 +166,8 @@ export async function locateElement(
         if (el) break;
       }
     }
+  } else if (by.label) {
+    el = fieldByLabel(by.label, docs);
   }
 
   if (!el) return null;
@@ -171,15 +175,15 @@ export async function locateElement(
 }
 
 /**
- * Choose an option in a native <select>, found by snapshot ref or by CSS selector — in the
- * page or in a same-origin iframe.
+ * Choose an option in a native <select>, found by snapshot ref, CSS selector or label — in
+ * the page or in a same-origin iframe.
  *
  * Done here rather than through page.evaluate(), which only sees the top frame and can land
  * on a stale execution context. No click either: clicking a native <select> opens its
  * dropdown, and focus is all a framework needs to see the change as a user's.
  */
 export function selectOption(
-  by: { ref?: string; selector?: string },
+  by: FieldBy,
   value: string,
   matchBy: 'text' | 'value' = 'text'
 ): { success: true; selectedValue: string; selectedText: string } | { success: false; error: string } {
@@ -221,7 +225,7 @@ export function selectOption(
  * picked-input.ts): such an input is not typed into.
  */
 export function setInputValue(
-  by: { ref?: string; selector?: string },
+  by: FieldBy,
   value: string
 ): { success: true; value: string } | { success: false; error: string } {
   const found = elementBy(by, 'Input');
@@ -238,7 +242,7 @@ export function setInputValue(
  * step sets files on it, not on the drop zone.
  */
 export function setInputFiles(
-  by: { ref?: string; selector?: string },
+  by: FieldBy,
   files: FileData[]
 ): { success: true; names: string[]; input?: RefNodeInfo } | { success: false; error: string } {
   const found = elementBy(by, 'Element');
@@ -255,17 +259,34 @@ export function setInputFiles(
   return { success: true, names: result.names, ...(described ? { input: described } : {}) };
 }
 
-/** The element a ref names, or the first a selector matches in the page or its same-origin iframes. */
-function elementBy(by: { ref?: string; selector?: string }, what: string): { el: Element } | { error: string } {
+/** How a command names its element: a snapshot ref, a CSS selector, or the label of a field. */
+type FieldBy = { ref?: string; selector?: string; label?: string };
+
+/**
+ * The element a ref names, the first a selector matches in the page or its same-origin
+ * iframes, or the field with that label (see field-label.ts).
+ */
+function elementBy(by: FieldBy, what: string): { el: Element } | { error: string } {
   if (by.ref) {
     const el = window.__izitestRefMap?.get(by.ref);
     return el ? { el } : { error: `Ref not found: ${by.ref} — take a new snapshot` };
+  }
+  if (by.label) {
+    const el = fieldByLabel(by.label, searchableDocuments());
+    return el ? { el } : { error: `${what} not found: ${noFieldLabelled(by.label)}` };
   }
   for (const doc of by.selector ? searchableDocuments() : []) {
     const el = doc.querySelector(by.selector!);
     if (el) return { el };
   }
-  return { error: `${what} not found: ${by.selector ?? 'no ref or selector given'}` };
+  return { error: `${what} not found: ${by.selector ?? 'no ref, selector or label given'}` };
+}
+
+/** Why no field has that label, with the fields there are: the agent can correct the phrase. */
+export function noFieldLabelled(label: string): string {
+  const names = fieldNames(searchableDocuments());
+  return `No field labelled "${label}" (by <label>, aria-label, aria-labelledby or placeholder)` +
+    (names.length ? `. Fields on the page: ${names.map((n) => `"${n}"`).join(', ')}` : '. No labelled field shows on the page');
 }
 
 /** This document and the documents of its same-origin iframes, recursively. */

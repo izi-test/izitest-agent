@@ -54,6 +54,8 @@ test('a field is named after its label, not its placeholder', () => {
   const invite = { locators: [{ type: 'placeholder', value: 'colleague@company.com' }, { type: 'aria', value: 'Invite member 1' }] };
   assert.equal(deriveVarNameFromLocators(invite), 'invite_member_1');
   assert.equal(deriveVarNameFromLocators({ locators: [{ type: 'aria', value: 'Nom affiché' }] }), 'nom_affiche');
+  // Named by a Gherkin phrase, with nothing recorded: by the label it names.
+  assert.equal(deriveVarNameFromLocators({ command: 'fill', params: { label: 'Mot de passe', value: 'x' } }), 'mot_de_passe');
 });
 
 test('without a label: the submitted name, then the placeholder', () => {

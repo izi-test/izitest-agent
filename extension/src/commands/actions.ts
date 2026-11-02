@@ -198,7 +198,7 @@ export async function resolveElementRef(tabId: number, ref: string): Promise<Res
 }
 
 /**
- * Where to click an element named by CSS selector or visible text.
+ * Where to click an element named by CSS selector, visible text or the label of a field.
  *
  * Measured from inside the page, like refs are. page.evaluate() through the extension
  * transport can land on a stale execution context and see an empty document, which made
@@ -208,11 +208,11 @@ export async function resolveElementRef(tabId: number, ref: string): Promise<Res
  */
 export async function resolveElementBySelector(
   tabId: number,
-  by: { selector?: string; text?: string }
+  by: { selector?: string; text?: string; label?: string }
 ): Promise<ResolvedElement> {
   await ensureContentScript(tabId);
   const message = { type: 'locate_element', ...by };
-  const notFound = `Element not found: ${by.selector ?? by.text}`;
+  const notFound = `Element not found: ${by.selector ?? by.text ?? `the field "${by.label}"`}`;
   try {
     return await settleAndMeasure(measureIn(tabId, TOP_FRAME, message, notFound));
   } catch (onPage) {
@@ -235,6 +235,27 @@ async function settleAndMeasure(ask: (uncover: boolean) => Promise<ResolvedEleme
   // hidden, page timers are (see resolveRef) — then read the final position.
   await delay(REF_SCROLL_SETTLE_MS);
   return ask(false);
+}
+
+// How long a field named by its label is waited for: a selector has Puppeteer's
+// waitForSelector to fall back on (see cmdFill), a label has nothing of the kind.
+const FIELD_WAIT_MS = 5000;
+const FIELD_POLL_MS = 250;
+
+/**
+ * Where the field with this label is, once the page shows it: a form rendered after the
+ * page has loaded is not there at the first look. Fails with the fields there are instead.
+ */
+async function waitForField(tabId: number, label: string): Promise<ResolvedElement> {
+  const deadline = Date.now() + FIELD_WAIT_MS;
+  for (;;) {
+    try {
+      return await resolveElementBySelector(tabId, { label });
+    } catch (error) {
+      if (error instanceof ExpectedRefusal || Date.now() >= deadline) throw error;
+    }
+    await delay(FIELD_POLL_MS);
+  }
 }
 
 /**
@@ -301,7 +322,7 @@ export async function cmdNavigate(
   return { tabId: targetTabId, windowId: updatedTab.windowId, url: updatedTab.url, title: updatedTab.title };
 }
 
-export async function cmdClick({ selector, tabId, sessionId, text, ref, checked }: ClickParams) {
+export async function cmdClick({ selector, tabId, sessionId, text, ref, label, checked }: ClickParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
   const page = await getPage(resolvedTabId);
 
@@ -309,11 +330,12 @@ export async function cmdClick({ selector, tabId, sessionId, text, ref, checked 
   // events: that is what makes the click a genuine user gesture (so target=_blank and
   // window.open are not treated as popups) and it avoids page.evaluate(), which through
   // the extension transport can land on a stale execution context and see no document.
+  if (!ref && !selector && !text && !label) throw new Error('Provide selector, text, label, or ref to click');
   const element = ref
     ? await resolveElementRef(resolvedTabId, ref)
-    : await resolveElementBySelector(resolvedTabId, { selector, text });
-
-  if (!ref && !selector && !text) throw new Error('Provide selector, text, or ref to click');
+    : label && !selector
+      ? await waitForField(resolvedTabId, label)
+      : await resolveElementBySelector(resolvedTabId, { selector, text });
 
   // A click toggles a checkbox: asked for a state it is already in, leave it there.
   const wanted = wantedChecked(checked);
@@ -387,7 +409,7 @@ function watchForNewTab(openerTabId: number, waitMs = NEW_TAB_WATCH_MS): Promise
   });
 }
 
-export async function cmdFill({ selector, value, tabId, sessionId, clear, ref, typing }: FillParams) {
+export async function cmdFill({ selector, value, tabId, sessionId, clear, ref, label, typing }: FillParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
   const page = await getPage(resolvedTabId);
   const shouldClear = clear ?? true;
@@ -406,7 +428,20 @@ export async function cmdFill({ selector, value, tabId, sessionId, clear, ref, t
     return { success: true, selector: ref, ...(target ? { target } : {}) };
   }
 
-  if (!selector) throw new Error('Provide selector or ref to fill');
+  // Named by its label, as a scenario written without seeing the page names it.
+  if (label && !selector) {
+    const field = await waitForField(resolvedTabId, label);
+    assertNotCovered(field, 'filled');
+    if (field.picked) {
+      await setPicked(resolvedTabId, { label }, value);
+      return { success: true, label };
+    }
+    await page.mouse.click(field.x, field.y);
+    await clearAndType(page, value, shouldClear, typing);
+    return { success: true, label };
+  }
+
+  if (!selector) throw new Error('Provide selector, label or ref to fill');
 
   // Same path as fill by ref: found from inside the page — iframes included — and checked
   // for anything covering it. The Puppeteer path below only sees the top frame; it stays as
@@ -435,7 +470,7 @@ export async function cmdFill({ selector, value, tabId, sessionId, clear, ref, t
 }
 
 /** Set a date, time, colour or range input from inside the page (see dom/picked-input.ts). */
-async function setPicked(tabId: number, by: { ref?: string; selector?: string }, value: string): Promise<void> {
+async function setPicked(tabId: number, by: { ref?: string; selector?: string; label?: string }, value: string): Promise<void> {
   const result = await askFrameOf(tabId, by, { type: 'set_input_value', ...by, value });
   if (!result.success) throw new Error(result.error);
 }
@@ -443,11 +478,11 @@ async function setPicked(tabId: number, by: { ref?: string; selector?: string },
 type PageAnswer = { success: boolean; error?: string };
 
 /**
- * Send `message` to the frame that holds the element. A ref names its frame; a selector is
- * looked for on the page first, then in cross-origin iframes — but only when the page says
- * it is not there.
+ * Send `message` to the frame that holds the element. A ref names its frame; a selector or a
+ * label is looked for on the page first, then in cross-origin iframes — but only when the
+ * page says it is not there.
  */
-async function askFrameOf<T extends PageAnswer>(tabId: number, by: { ref?: string; selector?: string }, message: Record<string, unknown>): Promise<T> {
+async function askFrameOf<T extends PageAnswer>(tabId: number, by: { ref?: string; selector?: string; label?: string }, message: Record<string, unknown>): Promise<T> {
   const ask = (frameId: number) =>
     sendToFrame<T>(tabId, frameId, message).then((r) => r ?? ({ success: false, error: 'No answer from the page' } as T));
   let result = await ask(by.ref ? await frameOfRef(tabId, by.ref) : TOP_FRAME);
@@ -458,21 +493,23 @@ async function askFrameOf<T extends PageAnswer>(tabId: number, by: { ref?: strin
   return result;
 }
 
-export async function cmdSelect({ selector, value, tabId, sessionId, ref, matchBy }: SelectParams) {
+export async function cmdSelect({ selector, value, tabId, sessionId, ref, label, matchBy }: SelectParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
-  if (!ref && !selector) throw new Error('Provide selector or ref to select');
+  if (!ref && !selector && !label) throw new Error('Provide selector, label or ref to select');
 
   // Chosen from inside the page (see selectOption): it reaches selects inside same-origin
   // iframes, which the previous page.evaluate() — top frame only — could not.
   type SelectAnswer = PageAnswer & { selectedValue?: string; selectedText?: string };
   await ensureContentScript(resolvedTabId);
   const target = await describeRefTarget(resolvedTabId, ref);
-  const result = await askFrameOf<SelectAnswer>(resolvedTabId, { ref, selector },
-    { type: 'select_option', ref, selector, value, matchBy: matchBy || 'text' });
+  // A label is waited for, as fill waits for its field: the form may still be rendering.
+  if (label && !ref && !selector) await waitForField(resolvedTabId, label);
+  const result = await askFrameOf<SelectAnswer>(resolvedTabId, { ref, selector, label },
+    { type: 'select_option', ref, selector, label, value, matchBy: matchBy || 'text' });
 
   if (!result.success) throw new Error(result.error);
   return {
-    success: true, selector: ref ?? selector, selectedValue: result.selectedValue, selectedText: result.selectedText,
+    success: true, selector: ref ?? selector ?? label, selectedValue: result.selectedValue, selectedText: result.selectedText,
     ...(target ? { target } : {}),
   };
 }
