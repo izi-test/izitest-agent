@@ -8,10 +8,12 @@ import { chooseTarget, throughLabel, withFixme, selectorFor } from './locators.j
 import { uploadPathsOf } from '../upload-files.js';
 import { dropTargetOf, dragToCode } from './drag.js';
 import { collectorLines, oracleCode, needsAxe, AXE_IMPORT } from './oracles.js';
+import { requirementTags } from './requirement-tags.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
-  const feature = toScenarioOutline(
+  const tags = requirementTags(test);
+  const feature = (tags.length ? `${tags.join(' ')}\n` : '') + toScenarioOutline(
     serializeTestToFeatureWith(test, definitions, { singleStep: withStableTarget }),
     test.variables
   );
@@ -40,6 +42,11 @@ export function generatePlaywrightCucumber(test, definitions) {
 // label:has(input[name="darkMode"])…), not the selector as recorded — positional, or holding
 // an ID the page generates at each load.
 function withStableTarget(step) {
+  // A click by its text alone gets the target generated code uses: the role and name
+  // recorded with it — "I click on 'role=button[name="Sign in"s]'", not the heading with that text.
+  if (step.command === 'click' && !step.params?.selector && step.params?.text) {
+    return { ...step, params: { ...step.params, selector: selectorFor(step) } };
+  }
   if (!step.params?.selector) return step;
   const params = { ...step.params, selector: selectorFor(step) };
   if (step.command === 'drag' && params.target) params.target = selectorFor(dropTargetOf(step));
@@ -136,6 +143,10 @@ When('I drag {string} to the {word} of {string}', async function (source, edge, 
   const to = this.page.locator(target);
   const { width, height } = await to.boundingBox();
   await this.page.locator(source).dragTo(to, { targetPosition: { x: width * at[0], y: height * at[1] } });
+});
+
+When('I click on the text {string}', async function (text) {
+  await this.page.getByText(text, { exact: true }).click();
 });
 
 When('I press {string}', async function (key) {

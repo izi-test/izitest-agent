@@ -43,9 +43,11 @@ import {
   ShieldCheck,
   Monitor,
   FileCode,
-  Code
+  Code,
+  ClipboardList,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useGetTestRequirementsQuery } from '../store/services/requirementsApi';
 
 interface TestDetailProps {
   testName: string;
@@ -380,6 +382,7 @@ CRITICAL RULES:
               {assertionCount} assertion{assertionCount > 1 ? 's' : ''}
             </span>
           )}
+          <TestRequirements testName={test.name} />
           <ProjectAssign
             testName={test.name}
             currentProjectId={projectId}
@@ -629,5 +632,20 @@ CRITICAL RULES:
         }}
       />
     </section>
+  );
+}
+
+/** The requirements the test checks, each a link to it: "SHOP-1 · criterion 1, 2". */
+function TestRequirements({ testName }: { testName: string }) {
+  const navigate = useNavigate();
+  const { data: requirements = [] } = useGetTestRequirementsQuery(testName);
+  return (
+    <>
+      {requirements.map((r) => (
+        <button key={r.key} className="info-badge requirement-chip" title={r.title} onClick={() => navigate(`/requirements/${encodeURIComponent(r.key)}`)}>
+          <ClipboardList size={12} /> {r.key}{r.criteria.length ? ` · criterion ${r.criteria.map((c) => c.number).join(', ')}` : ''}
+        </button>
+      ))}
+    </>
   );
 }

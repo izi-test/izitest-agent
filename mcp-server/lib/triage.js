@@ -28,6 +28,7 @@ export const CAUSES = {
   changed_value: 'The page shows another value: a regression, or an intended change',
   disabled: 'The element is there but disabled',
   app_regression: 'Suspected app regression: the page fails where the test used to pass',
+  non_conformity: 'Non-conformity: the app does not do what the requirement asks',
   environment: 'Environment: the page did not load',
   unknown: 'No cause found',
 };
@@ -181,8 +182,9 @@ export function causeWithoutCandidate(kind, signals = {}) {
  * left in), `failed` the failed step's result ({ step, error, assertionResult }), `values`
  * what the run filled in. Bounded: past the budget the cause is unknown, never a hang.
  */
-export async function diagnoseFailure({ stored, failed, tabId, sendCommand, values = {}, history = {} }) {
-  const work = diagnose({ stored, failed, tabId, sendCommand, values, history });
+export async function diagnoseFailure({ stored, failed, tabId, sendCommand, values = {}, history = {}, requirements = [] }) {
+  const work = diagnose({ stored, failed, tabId, sendCommand, values, history })
+    .then((diagnosis) => stored.steps[failed.step - 1]?.command === 'assert' ? againstRequirements(diagnosis, requirements) : diagnosis);
   const late = new Promise(resolve => setTimeout(() => resolve({
     cause: 'unknown', confidence: 'low', summary: 'The diagnosis took too long and was stopped', evidence: {}, proposals: [],
   }), TRIAGE_BUDGET_MS));
@@ -190,6 +192,25 @@ export async function diagnoseFailure({ stored, failed, tabId, sendCommand, valu
     log(`Triage failed: ${err.message}`);
     return { cause: 'unknown', confidence: 'low', summary: `The diagnosis could not run: ${err.message}`, evidence: {}, proposals: [] };
   }), late]);
+}
+
+/**
+ * A test that checks a requirement, failing on what the page shows: the app does not do what
+ * the requirement asks. Its expected value comes from the requirement, not from the app: no
+ * repair offers to expect what the page shows instead. A selector that broke (test_drift) or
+ * a page that was slow (timing) are still the test's.
+ */
+export function againstRequirements(diagnosis, requirements) {
+  if (!requirements?.length || !['changed_value', 'app_regression'].includes(diagnosis.cause)) return diagnosis;
+  const what = requirements.map((r) => `${r.key} (${r.title}${r.criteria.length ? `, criterion ${r.criteria.map((c) => `${c.number}: ${c.text}`).join('; ')}` : ''})`).join(', ');
+  return {
+    ...diagnosis,
+    cause: 'non_conformity',
+    confidence: 'medium',
+    summary: `${diagnosis.summary} — the test checks ${what}`,
+    evidence: { ...diagnosis.evidence, requirements: requirements.map((r) => r.key) },
+    proposals: diagnosis.proposals.filter((proposal) => proposal.kind !== 'expect'),
+  };
 }
 
 async function diagnose({ stored, failed, tabId, sendCommand, history }) {

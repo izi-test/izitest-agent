@@ -23,6 +23,7 @@ import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
+import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, requirementsOfTest } from './requirements.js';
 import { generateTestCode } from './codegen/index.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
@@ -246,7 +247,7 @@ export async function apiRouter(req, res, url) {
       if (!test) return json(res, 404, { error: 'Test not found' });
 
       try {
-        const result = generateTestCode(test, framework, projectDefinitions);
+        const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name) }, framework, projectDefinitions);
         if (result.error) return json(res, result.status, { error: result.error });
         return json(res, 200, { framework, files: result.files });
       } catch (err) {
@@ -404,6 +405,83 @@ export async function apiRouter(req, res, url) {
       return json(res, 200, {
         execution: { ...execution, steps: parseRows(steps, 'assertion_result'), repairs: repairsById(repairIds).map(withDiff) }
       });
+    }
+
+    // ── Requirements (lib/requirements.js): what tests are for, and their coverage ──
+
+    // GET /api/requirements?project_id= — newest first, each with its coverage
+    if (method === 'GET' && path === '/api/requirements') {
+      const projectId = url.searchParams.get('project_id');
+      return json(res, 200, { requirements: listRequirements({ projectId: projectId ? Number(projectId) : undefined }) });
+    }
+
+    // POST /api/requirements — { title, description, criteria, source, key, url, project_id, priority }
+    if (method === 'POST' && path === '/api/requirements') {
+      const body = await readBody(req);
+      try {
+        const { requirement } = saveRequirement({
+          key: body.key || undefined, title: body.title, description: body.description ?? '', criteria: body.criteria ?? [],
+          source: body.source ?? 'manual', url: body.url ?? null, projectId: body.project_id ?? null, priority: body.priority ?? 'medium',
+        });
+        return json(res, 201, { requirement });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // GET /api/tests/:name/requirements — what the test checks
+    params = matchRoute(path, '/api/tests/:name/requirements');
+    if (method === 'GET' && params) {
+      return json(res, 200, { requirements: requirementsOfTest(params.name) });
+    }
+
+    // GET | PUT | DELETE /api/requirements/:ref (key or id)
+    params = matchRoute(path, '/api/requirements/:ref');
+    if (params && ['GET', 'PUT', 'DELETE'].includes(method)) {
+      const existing = getRequirement(params.ref);
+      if (!existing) return json(res, 404, { error: 'Requirement not found' });
+      if (method === 'GET') return json(res, 200, { requirement: existing });
+      if (method === 'DELETE') {
+        deleteRequirement(existing.id);
+        return json(res, 200, { success: true });
+      }
+      const body = await readBody(req);
+      try {
+        // What the body does not give stays as it is; criteria given with their id keep their cases.
+        const { requirement } = saveRequirement({
+          key: existing.key, title: body.title ?? existing.title, description: body.description ?? existing.description,
+          criteria: body.criteria ?? existing.criteria.map((c) => ({ id: c.id, text: c.text })),
+          source: body.source ?? existing.source, url: body.url ?? existing.external_url,
+          projectId: body.project_id ?? existing.project_id, priority: body.priority ?? existing.priority,
+        });
+        return json(res, 200, { requirement });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/requirements/:ref/cases — { test_name, case_id, criterion, kind, title }: a test linked (to a planned case), or a case planned
+    params = matchRoute(path, '/api/requirements/:ref/cases');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      try {
+        const requirement = body.test_name
+          ? linkTest(params.ref, body.test_name, { caseId: body.case_id ?? null, criterion: body.criterion ?? null, kind: body.kind ?? 'nominal', title: body.title ?? null })
+          : planCases(params.ref, [{ title: body.title, criterion: body.criterion ?? null, kind: body.kind ?? 'nominal' }]);
+        return json(res, 200, { requirement });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // DELETE /api/requirements/:ref/cases/:caseId — a planned case gone, or a test unlinked
+    params = matchRoute(path, '/api/requirements/:ref/cases/:caseId');
+    if (method === 'DELETE' && params) {
+      try {
+        return json(res, 200, { requirement: deleteCase(parseInt(params.caseId)) });
+      } catch (err) {
+        return json(res, 404, { error: err.message });
+      }
     }
 
     // ── Bugs the explorer found (lib/bugs.js), and its explorations ──
@@ -925,6 +1003,8 @@ export async function apiRouter(req, res, url) {
     if (method === 'POST' && path === '/api/agent/run') {
       const body = await readBody(req);
       if (!body.prompt) return json(res, 400, { error: 'prompt is required' });
+      // The requirement the test is for (the dashboard saves the request as one): linked when recorded.
+      const requirementLink = body.requirement ? { requirement: String(body.requirement), caseId: body.case_id ?? null, criterion: null } : null;
 
       // Load agent config
       const settingsRow = db.prepare("SELECT value FROM settings WHERE key = 'agent'").get();
@@ -933,6 +1013,11 @@ export async function apiRouter(req, res, url) {
         cli: { provider: 'claude', command: 'claude' },
         api: { model: 'anthropic/claude-haiku-4-5-20251001', apiKey: '' }
       };
+
+      // A CLI agent records through the MCP tools: told to link there. The internal one links by itself.
+      if (requirementLink && agentConfig.mode !== 'api') {
+        body.prompt += `\n\nThis test checks requirement ${requirementLink.requirement}: pass requirement: "${requirementLink.requirement}" to start_recording.`;
+      }
 
       // ── API mode: internal agent via Vercel AI SDK ──
       if (agentConfig.mode === 'api') {
@@ -958,7 +1043,8 @@ export async function apiRouter(req, res, url) {
           body.prompt,
           sendCommand,
           (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); },
-          abortController.signal
+          abortController.signal,
+          { requirementLink }
         );
 
         if (!res.writableEnded) res.end();

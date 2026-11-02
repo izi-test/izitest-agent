@@ -14,6 +14,7 @@ import { DebugController, activeDebugControllers } from '../debug-controller.js'
 import { uniqueVarName, listVariable, variabilizeInput } from '../variable-detection.js';
 import { linkAssertionToVariables } from '../test-variable.js';
 import { formatTriage } from '../triage.js';
+import { getRequirement, linkRecorded, requirementsOfTest } from '../requirements.js';
 import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair } from '../repairs.js';
 
 
@@ -90,8 +91,11 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       use_vrt: z.boolean().optional().describe('Enable Visual Regression Testing (VRT). If true, a background screenshot will be captured automatically at every interaction step to allow retroactive visual assertions.'),
       viewport_width: z.number().optional().describe('Viewport width in pixels (e.g. 1280, 1920). Only applies when a new window is opened.'),
       viewport_height: z.number().optional().describe('Viewport height in pixels (e.g. 720, 1080). Only applies when a new window is opened.'),
+      requirement: z.string().optional().describe('The requirement this test checks (key, e.g. "REQ-12"): the saved test is linked to it'),
+      case_id: z.number().int().optional().describe('The planned case it records (from plan_tests)'),
+      criterion: z.number().int().optional().describe('Without a case: the criterion it checks, by its number'),
     },
-    async ({ name, description, use_vrt, viewport_width, viewport_height }) => {
+    async ({ name, description, use_vrt, viewport_width, viewport_height, requirement, case_id, criterion }) => {
       const recording = getRecording();
       if (recording) {
         // Idempotent: if already recording the same test, return success
@@ -103,7 +107,14 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }
 
       const viewport = (viewport_width && viewport_height) ? { width: viewport_width, height: viewport_height } : null;
-      setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport });
+      // Checked now, not at the end of the recording: a wrong key would lose the link then.
+      if (requirement) {
+        const found = getRequirement(requirement);
+        if (!found) return { isError: true, content: [{ type: 'text', text: `No requirement ${requirement}: save_requirement first, or drop the parameter.` }] };
+        if (case_id != null && !found.cases.some((c) => c.id === case_id)) return { isError: true, content: [{ type: 'text', text: `${found.key} has no case #${case_id}.` }] };
+      }
+      const link = requirement ? { requirement, caseId: case_id ?? null, criterion: criterion ?? null } : null;
+      setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link });
       log(`Recording started: ${name} (VRT: ${use_vrt ? 'enabled' : 'disabled'}, viewport: ${viewport ? `${viewport.width}x${viewport.height}` : 'default'})`);
       
       let newTabId = null;
@@ -264,6 +275,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       setRecording(null);
 
       let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
+      summary += linkRecorded(recording);
       if (varCount > 0) {
         summary += `\n\n${varCount} variable(s) detected for dynamic replay:\n`;
         for (const [name, info] of Object.entries(variables)) {
@@ -420,7 +432,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
             ? `It accepts what the page shows now: ask the user whether that change is intended before resolve_repair(repair_id=${repair.id}, decision="apply").\n`
             : `If the test passes, tell the user what it changes, and on their word save it: resolve_repair(repair_id=${repair.id}, decision="apply").\n`;
           text += `If it does not fix the test, fix the step by hand:\n`;
-        } else if (['app_regression', 'environment', 'changed_value', 'disabled'].includes(triage?.cause)) {
+        } else if (['app_regression', 'environment', 'changed_value', 'disabled', 'non_conformity'].includes(triage?.cause)) {
           text += `This does not look like a broken test (${triage.cause}): do NOT change the test to make it pass — report it to the user first. To fix the step by hand once they agree:\n`;
         }
         text += `1. Use 'snapshot' to see the current page state.\n`;
@@ -540,7 +552,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: add_assertion ---
   server.tool(
     'add_assertion',
-    'Add an assertion step to a saved test. The assertion is first evaluated live against the current browser page to verify it passes. If it fails, the assertion is NOT added and the failure details are returned so you can fix the selector or expected value. Only passing assertions are saved to the test — except the checks of what the page does wrong on its own (no_console_errors, no_failed_requests, link_ok, no_a11y_violations): failing, such a check makes the test reproduce the bug (it passes once the bug is fixed); passing, it guards against it.',
+    'Add an assertion step to a saved test. The assertion is first evaluated live against the current browser page to verify it passes. If it fails, the assertion is NOT added and the failure details are returned so you can fix the selector or expected value. Only passing assertions are saved to the test — except the checks of what the page does wrong on its own (no_console_errors, no_failed_requests, link_ok, no_a11y_violations): failing, such a check makes the test reproduce the bug (it passes once the bug is fixed); passing, it guards against it. And except, on a test linked to a requirement, the expected result the requirement states, when the element is there but shows something else and you pass non_conformity: true: the test then reports that non-conformity — give the expected value from the requirement, never what the page shows.',
     {
       test_name: z.string().describe('Name of the test to add the assertion to'),
       assertion_type: z.enum([
@@ -554,9 +566,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       attribute: z.string().optional().describe('Attribute name for attribute_equals assertion'),
       description: z.string().optional().describe('Human-readable description of what this assertion verifies'),
       step_order: z.number().optional().describe('Position to insert (1-indexed). If omitted, appends at the end.'),
-      tabId: z.number().optional().describe('Tab to check the assertion in: e.g. the tabId run_test reports, to assert on the page a replay ended on. Default: this session\'s window.')
+      tabId: z.number().optional().describe('Tab to check the assertion in: e.g. the tabId run_test reports, to assert on the page a replay ended on. Default: this session\'s window.'),
+      non_conformity: z.boolean().optional().describe('On a test linked to a requirement: the expected value is the requirement\'s, the page does not show it, and you checked the steps before did what they should. The assertion is saved failing: the test reports the non-conformity.')
     },
-    async ({ test_name, assertion_type, selector, expected, attribute, description, step_order, tabId }) => {
+    async ({ test_name, assertion_type, selector, expected, attribute, description, step_order, tabId, non_conformity }) => {
       const assertion = { type: assertion_type };
       if (selector) assertion.selector = selector;
       if (expected !== undefined) assertion.expected = expected;
@@ -590,13 +603,24 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       // A check of what the page does wrong is added failing too: the test then reproduces the bug.
       const isOracle = ORACLE_ASSERTIONS.has(assertion_type);
-      if (!result.passed && !isOracle) {
+      // So is the expected result of a requirement the test checks, when the page shows something
+      // else — once the agent says so (non_conformity), having checked the steps before did what
+      // they should: a click that missed its button leaves the page as it was, and that is the
+      // test's mistake, not the app's. Never when the element is not found: a wrong selector.
+      const requirements = requirementsOfTest(test_name);
+      const elementFound = !/not found/i.test(String(result.actual ?? ''));
+      const nonConformity = !result.passed && non_conformity === true && requirements.length > 0 && elementFound;
+      if (!result.passed && !isOracle && !nonConformity) {
         let msg = `Assertion FAILED — not added to test "${test_name}".\n`;
         msg += `  Type: ${assertion_type}\n`;
         if (selector) msg += `  Selector: ${selector}\n`;
         msg += `  Expected: ${result.expected}\n`;
         msg += `  Actual:   ${result.actual}\n\n`;
         msg += `Fix the selector or expected value and try again. Use 'snapshot' to inspect the current page.`;
+        if (requirements.length && elementFound) {
+          msg += `\n\nThis test checks ${requirements.map((r) => r.key).join(', ')}. If the expected value is the requirement's and the page really does not meet it — `
+            + `check first that the steps before did what they should (snapshot, screenshot) — call again with non_conformity: true: it is saved failing, and the test reports the non-conformity.`;
+        }
         return { content: [{ type: 'text', text: msg }] };
       }
 
@@ -622,9 +646,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       saveTest(test);
       const pos = step_order || test.steps.length;
-      let summary = !result.passed
-        ? `Assertion FAILS now and was added to test "${test_name}" at step ${pos}: the test reproduces this bug, and will pass once it is fixed.\n`
-        : `Assertion PASSED and added to test "${test_name}" at step ${pos}.\n`;
+      let summary = result.passed ? `Assertion PASSED and added to test "${test_name}" at step ${pos}.\n`
+        : isOracle ? `Assertion FAILS now and was added to test "${test_name}" at step ${pos}: the test reproduces this bug, and will pass once it is fixed.\n`
+          : `Assertion FAILS now and was added to test "${test_name}" at step ${pos}: the app does not meet ${requirements.map((r) => r.key).join(', ')} — the test reports this non-conformity until the app is fixed. Tell the user.\n`;
       summary += `  Type: ${assertion_type}\n`;
       if (selector) summary += `  Selector: ${selector}\n`;
       summary += `  Expected: ${result.expected}\n`;

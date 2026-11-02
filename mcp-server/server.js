@@ -21,6 +21,7 @@ import { scopeToolsToSession } from './lib/tools/session-scope.js';
 import { registerBrowserTools } from './lib/tools/browser.js';
 import { registerTestTools } from './lib/tools/test.js';
 import { registerExploreTools } from './lib/tools/explore.js';
+import { registerRequirementTools } from './lib/tools/requirements.js';
 import { instrumentTools, registerBenchTools } from './lib/bench.js';
 import { registerAgentTools } from './lib/agent/mcp-adapter.js';
 import { initDatabase } from './lib/db.js';
@@ -132,6 +133,8 @@ function createMcpServer(connectionId) {
   registerTestTools(server, deps);
   registerExploreTools(server, deps);
   unscope();
+
+  registerRequirementTools(server);
 
   registerAgentTools(server);
   registerBenchTools(server);

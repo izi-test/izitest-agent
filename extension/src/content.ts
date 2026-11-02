@@ -1,7 +1,7 @@
 // IziTest Agent — Content Script
 // Injected into every page to enable deep DOM interaction
 
-import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, selectOption, setInputValue, setInputFiles } from './dom/snapshot';
+import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, elementByText, selectOption, setInputValue, setInputFiles } from './dom/snapshot';
 import FindSimilarElements from './utils/FindSimilarElements';
 import { announceToParent, listenForHops } from './dom/frame-hop';
 import type { FileData } from './dom/file-input';
@@ -164,16 +164,8 @@ import type { FileData } from './dom/file-input';
         if (message.selector) {
           el = document.querySelector(message.selector as string);
         } else if (message.text) {
-          // Find element by visible text content
-          const text = (message.text as string).trim();
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-          let node: Node | null;
-          while ((node = walker.nextNode())) {
-            const elem = node as Element;
-            if (elem.children.length === 0 || elem.childNodes.length === 1) {
-              if (elem.textContent?.trim() === text) { el = elem; break; }
-            }
-          }
+          // The element the click by text went to (see elementByText), not the first with that text.
+          el = elementByText((message.text as string).trim(), [document]);
         }
         if (!el) {
           sendResponse({ success: true, result: null });

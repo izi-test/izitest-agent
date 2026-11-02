@@ -77,6 +77,11 @@ These tools are used for direct, real-time control of the browser.
   (`params.targetLocators`), que le rejeu essaie comme ceux de l'élément glissé. En Playwright,
   `await page.locator(…).dragTo(page.locator(…))`, avec `targetPosition` calculé sur la boîte de la
   cible pour un bord ; en Gherkin, `When I drag "…" to "…"` et `When I drag "…" to the top of "…"`.
+- **Clic par le texte** (`click({ text })`) : le texte visé est d'abord celui d'un contrôle visible —
+  « Sign in » est le bouton, pas le titre du formulaire juste au-dessus, qui venait avant dans la page
+  et prenait le clic (et la détection de listes de la fin d'enregistrement en faisait un « élément de
+  liste »). À l'export, un tel clic va au rôle et au nom enregistrés (`getByRole`), sinon au texte
+  (`getByText`) — il sortait en `page.click('')` ; en Gherkin, `When I click on the text "…"`.
 - **Case ou radio en `display: none`** derrière un label visible (les étoiles d'une note) : listée
   et manipulée par son label, avec sa valeur quand son nom ne la dit pas :
   `[radio] "★" value="4" [unchecked]`.
@@ -98,10 +103,14 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. |
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
+| `save_requirement` | Saves a requirement — from a request, written by hand, or a Jira story — with its acceptance criteria (see below). |
+| `plan_tests` | Plans a requirement's test cases: per criterion, nominal, alternative, error, boundary. |
+| `link_test` | Links a saved test to a requirement: to a planned case, a criterion, or the whole requirement. |
+| `get_requirement` / `list_requirements` | A requirement with its criteria, cases, tests and coverage; or all of them with their coverage. |
 | `list_repairs` | Lists the repairs proposed for failed runs, and where each stands. |
 | `verify_repair` | Replays the test with a proposed repair made, without saving it. |
 | `resolve_repair` | Applies a repair to the saved test, or rejects it — on the user's word. |
-| `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. |
+| `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
@@ -405,6 +414,40 @@ enregistré.
 | `substitutions` | object | Remplacement textuel brut dans tous les paramètres (clé → valeur) |
 | `start_step` | number | Reprendre l'exécution à une étape spécifique (1-indexed) |
 | `new_window` | boolean | Si `true`, exécute dans une nouvelle fenêtre au lieu d'un nouvel onglet |
+
+### Exigences : de quoi un test est la preuve
+
+Une exigence dit ce que l'appli doit faire : un titre, une description, ses **critères
+d'acceptation** (un comportement observable chacun, avec son résultat attendu), et les **cas** qui
+les testent. Le même objet, d'où qu'elle vienne :
+
+| D'où | Comment |
+| :--- | :--- |
+| Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré. |
+| Un outil (une story Jira) | l'agent la lit (par exemple avec un serveur MCP Atlassian) et la garde : `source: "jira"`, sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |
+| Un testeur | page **Requirements** du tableau de bord : écrire l'exigence et ses critères, planifier des cas, y lier des tests. |
+
+Un cas est d'abord **planifié** (`plan_tests` : son titre, le critère qu'il vérifie, son type —
+`nominal`, `alternative`, `error`, `boundary`), puis enregistré : `start_recording(requirement, case_id)`
+— ou `create_test_from_gherkin(…, requirement, case_id)` — lie le test sauvé à ce cas. `link_test` lie
+un test existant. Un test lié à l'exigence d'un projet rejoint ce projet s'il n'en a pas.
+
+**La couverture** se lit des liens et du dernier rejeu de chaque test (pas des vérifications de
+réparation ni des confirmations de bugs) : `not_covered` (un critère sans test), `failing` (un
+test a échoué), `not_run` (un test jamais rejoué), `passing`.
+
+**Le résultat attendu vient de l'exigence, pas de ce que l'appli affiche.** Si la page montre autre
+chose, ce n'est pas une valeur à accepter : `add_assertion` refuse d'abord, comme toujours, puis —
+quand l'élément est bien là et que l'agent passe `non_conformity: true` après avoir vérifié que les
+étapes précédentes ont fait ce qu'elles devaient — l'enregistre en échec : le test signale la
+non-conformité tant que l'appli ne la corrige pas. Au triage, l'échec d'une assertion d'un test lié
+à une exigence est une **non-conformité** (`non_conformity`) : aucune réparation ne propose
+d'attendre la valeur affichée ; un sélecteur cassé (`test_drift`) ou une page lente (`timing`) restent
+l'affaire du test.
+
+À l'export, les exigences d'un test deviennent des étiquettes : `test('…', { tag: ['@REQ-1'] }, …)`
+en Playwright (`npx playwright test --grep @REQ-1`), `@REQ-1` sur la feature Cucumber
+(`cucumber-js --tags @REQ-1`), avec un commentaire qui dit le critère vérifié.
 
 ### Exploration autonome : `explore_app`
 

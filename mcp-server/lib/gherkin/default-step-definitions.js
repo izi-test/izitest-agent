@@ -9,6 +9,8 @@ export const DEFAULT_STEP_DEFINITIONS = [
 
   // Interaction
   { keyword: 'When',  pattern: 'I click on {string}',             command: 'click',    params_template: { selector: '{0}' } },
+  // A click recorded by its text alone (click({ text })): no selector to name it by.
+  { keyword: 'When',  pattern: 'I click on the text {string}',    command: 'click',    params_template: { text: '{0}' } },
   { keyword: 'When',  pattern: 'I fill {string} with {string}',   command: 'fill',     params_template: { selector: '{0}', value: '{1}' } },
   { keyword: 'When',  pattern: 'I select {string} in {string}',   command: 'select',   params_template: { value: '{0}', selector: '{1}' } },
   // A click recorded on a checkbox carries the state it left: these phrases set it.

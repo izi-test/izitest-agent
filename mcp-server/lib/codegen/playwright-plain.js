@@ -6,6 +6,7 @@ import { chooseTarget, throughLabel, withFixme } from './locators.js';
 import { recordedPathNote, uploadPathsOf } from '../upload-files.js';
 import { dropTargetOf, dragToCode } from './drag.js';
 import { needsCollectors, needsAxe, collectorLines, oracleCode, AXE_IMPORT } from './oracles.js';
+import { requirementTags } from './requirement-tags.js';
 
 export function generatePlaywrightPlain(test) {
   const lines = [];
@@ -34,7 +35,13 @@ export function generatePlaywrightPlain(test) {
     lines.push('');
   }
 
-  lines.push(`test(${jsLiteral(test.name || 'untitled')}, async ({ page }) => {`);
+  // The requirements it checks, as tags: `npx playwright test --grep @REQ-12` runs them.
+  const tags = requirementTags(test);
+  lines.push(`test(${jsLiteral(test.name || 'untitled')}, ${tags.length ? `{ tag: [${tags.map(jsLiteral).join(', ')}] }, ` : ''}async ({ page }) => {`);
+  for (const requirement of test.requirements ?? []) {
+    const criteria = requirement.criteria?.length ? `: criterion ${requirement.criteria.map((c) => c.number).join(', ')}` : '';
+    lines.push(`  // Checks ${requirement.key} — ${requirement.title}${criteria}`);
+  }
 
   if (test.description) {
     for (const descLine of String(test.description).split('\n')) {

@@ -10,7 +10,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', 'data');
 mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(join(DATA_DIR, 'izitest.db'));
+// IZITEST_DB_PATH: another database file — a test's own, thrown away after.
+const db = new Database(process.env.IZITEST_DB_PATH || join(DATA_DIR, 'izitest.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -267,6 +268,43 @@ export function initDatabase() {
       first_seen TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       last_seen TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
+  `);
+
+  // What a test is for (lib/requirements.js): requirements — from a prompt, written in the
+  // dashboard, imported from a tool — their acceptance criteria, and the test cases that
+  // cover them, planned first, then linked to the test that checks them.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS requirements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT UNIQUE,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'manual',
+      external_url TEXT,
+      priority TEXT NOT NULL DEFAULT 'medium',
+      content_hash TEXT,
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+    CREATE TABLE IF NOT EXISTS acceptance_criteria (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      requirement_id INTEGER NOT NULL REFERENCES requirements(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      text TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS requirement_cases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      requirement_id INTEGER NOT NULL REFERENCES requirements(id) ON DELETE CASCADE,
+      criterion_id INTEGER REFERENCES acceptance_criteria(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'nominal',
+      test_id INTEGER REFERENCES tests(id) ON DELETE SET NULL,
+      position INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_criteria_requirement ON acceptance_criteria(requirement_id);
+    CREATE INDEX IF NOT EXISTS idx_cases_requirement ON requirement_cases(requirement_id);
+    CREATE INDEX IF NOT EXISTS idx_cases_test ON requirement_cases(test_id);
   `);
 
   log('SQLite database initialized');

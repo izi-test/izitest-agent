@@ -13,10 +13,12 @@ import { ProjectSwitcher, ProjectSelector } from './components/ProjectSelector';
 import { ChatPanel } from './components/ChatPanel';
 import { Dashboard } from './components/Dashboard';
 import { BugsPage } from './components/BugsPage';
+import { RequirementsPage, RequirementPage } from './components/Requirements';
 import { Button } from './components/Button';
 import { useGetTestsQuery } from './store/services/testsApi';
 import {
   Bug,
+  ClipboardList,
   FlaskConical,
   Plus,
   MessageSquare,
@@ -111,6 +113,14 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               </button>
 
               <button
+                className={`sidebar-nav__item ${location.pathname.startsWith('/requirements') ? 'active' : ''}`}
+                onClick={() => navigate('/requirements')}
+              >
+                <ClipboardList size={18} />
+                <span>Requirements</span>
+              </button>
+
+              <button
                 className={`sidebar-nav__item ${location.pathname === '/bugs' ? 'active' : ''}`}
                 onClick={() => navigate('/bugs')}
               >
@@ -156,6 +166,8 @@ export default function App() {
         <Route path="/tests" element={<TestListPage />} />
         <Route path="/projects/:projectId" element={<TestListPage />} />
         <Route path="/tests/:testName" element={<TestDetailPage />} />
+        <Route path="/requirements" element={<RequirementsRoute />} />
+        <Route path="/requirements/:key" element={<RequirementRoute />} />
         <Route path="/bugs" element={<BugsRoute />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/chat" element={<ChatPage />} />
@@ -194,6 +206,24 @@ function TestDetailPage() {
     <TestDetail
       testName={decodeURIComponent(testName)}
       onBack={() => navigate(backPath)}
+    />
+  );
+}
+
+function RequirementsRoute() {
+  const navigate = useNavigate();
+  return <RequirementsPage onOpen={(key) => navigate(`/requirements/${encodeURIComponent(key)}`)} />;
+}
+
+function RequirementRoute() {
+  const navigate = useNavigate();
+  const { key } = useParams();
+  if (!key) return <Navigate to="/requirements" replace />;
+  return (
+    <RequirementPage
+      requirementKey={decodeURIComponent(key)}
+      onBack={() => navigate('/requirements')}
+      onOpenTest={(name) => navigate(`/tests/${encodeURIComponent(name)}`)}
     />
   );
 }

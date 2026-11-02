@@ -3,6 +3,7 @@ import { Button } from './Button';
 import { X, Wand2, Loader2, Folder, Square, FileCode, Bot } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { useGetProjectsQuery, } from '../store/services/projectsApi';
+import { useCreateRequirementMutation } from '../store/services/requirementsApi';
 import {
   testsApi,
   useAssignToProjectMutation,
@@ -64,6 +65,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
 
   const { data: projects = [] } = useGetProjectsQuery(undefined, { skip: !isOpen });
   const [assignToProject] = useAssignToProjectMutation();
+  const [createRequirement] = useCreateRequirementMutation();
   const [createTest] = useCreateTestMutation();
   const [putTestFeature] = usePutTestFeatureMutation();
 
@@ -149,6 +151,19 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
     setAgentOutput('');
 
     const prompt = buildPrompt(name.trim(), description.trim(), useVrt, viewport);
+    // The request is kept as a requirement (source "prompt"), and the test the agent records is
+    // linked to it: what the test is for is not lost with the conversation.
+    let requirement: string | undefined;
+    try {
+      const firstLine = description.trim().split('\n')[0];
+      const saved = await createRequirement({
+        title: firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine,
+        description: description.trim(), source: 'prompt', project_id: projectId,
+      }).unwrap();
+      requirement = saved.requirement.key;
+    } catch {
+      requirement = undefined;
+    }
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -157,7 +172,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated }: CreateTestMo
       const response = await fetch('/api/agent/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, requirement }),
         signal: controller.signal,
       });
 

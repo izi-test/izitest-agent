@@ -100,7 +100,7 @@ export interface ExecutionStep {
 
 /** Why a run failed, worked out on the page it failed on (mcp-server/lib/triage.js). */
 export interface Triage {
-  cause: 'test_drift' | 'timing' | 'changed_value' | 'disabled' | 'app_regression' | 'environment' | 'unknown';
+  cause: 'test_drift' | 'timing' | 'changed_value' | 'disabled' | 'app_regression' | 'non_conformity' | 'environment' | 'unknown';
   confidence: 'high' | 'medium' | 'low';
   summary: string;
   evidence?: {
@@ -176,4 +176,46 @@ export interface Exploration {
   error: string | null;
   started_at: string;
   finished_at: string | null;
+}
+
+/** A requirement: what tests are for (mcp-server/lib/requirements.js). */
+export interface Criterion {
+  id: number;
+  position: number;
+  text: string;
+}
+
+export interface RequirementCase {
+  id: number;
+  criterion_id: number | null;
+  title: string;
+  kind: 'nominal' | 'alternative' | 'error' | 'boundary';
+  position: number;
+  test: string | null;
+  test_id: number | null;
+  last_run: { id: number; status: string; started_at: string } | null;
+}
+
+export interface Requirement {
+  id: number;
+  key: string;
+  project_id: number | null;
+  title: string;
+  description: string;
+  source: 'prompt' | 'manual' | 'jira' | 'import';
+  external_url: string | null;
+  priority: 'high' | 'medium' | 'low';
+  created_at: string;
+  updated_at: string;
+  criteria: Criterion[];
+  cases: RequirementCase[];
+  coverage: { status: 'passing' | 'failing' | 'not_run' | 'not_covered'; criteria: number; covered: number; tests: number; planned: number };
+}
+
+/** A requirement a test checks, with the criteria it covers there. */
+export interface TestRequirement {
+  id: number;
+  key: string;
+  title: string;
+  criteria: Array<{ number: number; text: string; kind: string }>;
 }

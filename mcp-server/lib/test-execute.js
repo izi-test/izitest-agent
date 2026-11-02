@@ -6,6 +6,7 @@ import { loadTest } from './test-store.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
+import { requirementsOfTest } from './requirements.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -681,7 +682,7 @@ async function triageRun({ name, test, executionId, failedStepOrder, globalError
   const failedTab = action?.tabId ?? tabId;
 
   const startedAt = Date.now();
-  const diagnosis = await diagnoseFailure({ stored: test, failed, tabId: failedTab, sendCommand, values, history: passes });
+  const diagnosis = await diagnoseFailure({ stored: test, failed, tabId: failedTab, sendCommand, values, history: passes, requirements: requirementsOfTest(name) });
   const ids = saveRepairs(name, executionId, diagnosis, runOptions, test);
   const triage = { ...diagnosis, proposals: diagnosis.proposals.map((proposal, i) => ({ id: ids[i], ...proposal, change: undefined })) };
   db.prepare('UPDATE test_executions SET triage = ? WHERE id = ?').run(JSON.stringify(triage), executionId);

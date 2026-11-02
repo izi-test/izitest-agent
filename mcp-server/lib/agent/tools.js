@@ -18,6 +18,7 @@ import { log } from '../logger.js';
 import { CODEGEN_FRAMEWORKS, generateTestCode, formatCodeFiles } from '../codegen/index.js';
 import { buildBusinessStep } from '../gherkin/business-step.js';
 import { addTestVariable } from '../test-variable.js';
+import { linkRecorded, requirementsOfTest } from '../requirements.js';
 
 function projectDefinitions(projectId) {
   return db.prepare(
@@ -115,10 +116,13 @@ export const AGENT_TOOLS = [
         gherkin: { type: 'string', description: 'The full Gherkin .feature content to parse' },
         test_name: { type: 'string', description: 'Name for the test' },
         test_description: { type: 'string', description: 'Optional description' },
+        requirement: { type: 'string', description: 'The requirement this test checks (key, e.g. "REQ-12"): the test is linked to it' },
+        case_id: { type: 'number', description: 'The planned case it is (from plan_tests)' },
+        criterion: { type: 'number', description: 'Without a case: the criterion it checks, by its number' },
       },
       required: ['project_id', 'gherkin', 'test_name'],
     },
-    handler({ project_id, gherkin, test_name, test_description }) {
+    handler({ project_id, gherkin, test_name, test_description, requirement, case_id, criterion }) {
       const definitions = db.prepare(
         'SELECT * FROM step_definitions WHERE project_id = ?'
       ).all(project_id).map(r => ({
@@ -147,12 +151,15 @@ export const AGENT_TOOLS = [
       db.prepare('UPDATE tests SET project_id = ? WHERE id = ?').run(project_id, testId);
 
       log(`[Agent Tool] Created test "${test_name}" (${steps.length} steps) in project ${project_id}`);
+      // Linked to what it checks, like a recording started for a requirement.
+      const linked = requirement ? linkRecorded({ name: test_name, link: { requirement, caseId: case_id ?? null, criterion: criterion ?? null } }).trim() : null;
       return {
         data: {
           test_id: testId,
           test_name,
           step_count: steps.length,
           steps: steps.map(s => ({ command: s.command, intent: s.intent })),
+          ...(linked ? { requirement: linked } : {}),
         },
       };
     },
@@ -375,7 +382,7 @@ export const AGENT_TOOLS = [
       const test = loadTest(test_name);
       if (!test) return { error: `Test "${test_name}" not found` };
 
-      const result = generateTestCode(test, framework, projectDefinitions);
+      const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name) }, framework, projectDefinitions);
       if (result.error) return { error: result.error };
 
       const count = result.files.length;

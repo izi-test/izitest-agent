@@ -120,6 +120,26 @@ export function refProblem(ref: string): string | null {
  * page is reliable, whereas page.evaluate() through the extension transport can land on a
  * stale execution context and see an empty document.
  */
+const CONTROL = 'button,a[href],input,select,textarea,summary,label,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"],[onclick]';
+
+/**
+ * The element a person means by its text: a leaf whose whole text it is — one that shows,
+ * and in a control first. "Sign in" is the button, not the form's heading above it, which
+ * came first in the page: the click, and the list detection of the click recorded, took it.
+ */
+export function elementByText(wanted: string, docs: Document[] = searchableDocuments()): Element | null {
+  const leaves: Element[] = [];
+  for (const doc of docs) {
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Element;
+      if (node.children.length === 0 && node.textContent?.trim() === wanted) leaves.push(node);
+    }
+  }
+  const shows = (node: Element) => { const r = node.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  return leaves.find((node) => node.closest(CONTROL) && shows(node)) ?? leaves.find(shows) ?? leaves[0] ?? null;
+}
+
 export async function locateElement(
   by: { selector?: string; text?: string },
   options: MeasureOptions = {}
@@ -136,14 +156,7 @@ export async function locateElement(
     }
   } else if (by.text) {
     const wanted = by.text.trim();
-    // Prefer a leaf whose whole text matches, the way a person points at a label.
-    outer: for (const doc of docs) {
-      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
-      while (walker.nextNode()) {
-        const node = walker.currentNode as Element;
-        if (node.children.length === 0 && node.textContent?.trim() === wanted) { el = node; break outer; }
-      }
-    }
+    el = elementByText(wanted, docs);
     if (!el) {
       for (const doc of docs) {
         el = [...doc.querySelectorAll('button,a,input[type="submit"],input[type="button"],[role="button"]')]

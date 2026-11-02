@@ -196,3 +196,25 @@ test('a box styled away behind a separate <label for> is checked through that la
   // The id is generated: the label by its text instead.
   assert.match(render(step('3e100fe7-d4c2-11f1-941e-2bb1b8b86cc4')), /await page\.locator\('label', \{ hasText: 'J\\'accepte les CGU' \}\)\.check\(\);/);
 });
+
+test('a click by its text alone: the role and name recorded with it, or that text — never page.click(\'\')', () => {
+  const signIn = { command: 'click', params: { text: 'Sign in' } };
+  assert.match(render({ ...signIn, locators: [{ type: 'role', value: 'button', name: 'Sign in' }] }),
+    /await page\.getByRole\('button', \{ name: 'Sign in', exact: true \}\)\.click\(\);/);
+  assert.match(render(signIn), /await page\.getByText\('Sign in', \{ exact: true \}\)\.click\(\);/);
+  assert.doesNotMatch(render(signIn), /page\.click\(''\)/);
+});
+
+test('Gherkin: a click by its text alone has its phrase, and the Cucumber export its stable target', async () => {
+  const { serializeTestToFeatureWith } = await import('../../lib/gherkin/serialize.js');
+  const { parseFeatureToStepsWith } = await import('../../lib/gherkin/parse.js');
+  const { generatePlaywrightCucumber } = await import('../../lib/codegen/playwright-cucumber.js');
+  const { DEFAULT_STEP_DEFINITIONS } = await import('../../lib/gherkin/default-step-definitions.js');
+  const defaults = DEFAULT_STEP_DEFINITIONS.map((d, i) => ({ id: i + 1, ...d, steps_template: null, is_default: 1 }));
+  const step = { command: 'click', params: { text: 'Sign in' }, locators: [{ type: 'role', value: 'button', name: 'Sign in' }], intent: 'Se connecter' };
+  const feature = serializeTestToFeatureWith({ name: 't', steps: [step] }, defaults);
+  assert.match(feature, /When I click on the text "Sign in"/);
+  assert.deepEqual(parseFeatureToStepsWith(feature, defaults)[0].params, { text: 'Sign in' });
+  const exported = generatePlaywrightCucumber({ name: 't', project_id: 1, steps: [step] }, defaults).files.find((f) => f.path.endsWith('t.feature')).content;
+  assert.match(exported, /When I click on 'role=button\[name="Sign in"s\]'/);
+});

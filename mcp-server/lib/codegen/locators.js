@@ -108,7 +108,9 @@ const quoted = (value) => JSON.stringify(String(value));
 export function chooseTarget(step, literal, page = 'page') {
   const selector = step.params?.selector ?? '';
   const sound = (css) => !isFragileSelector(css) && !isPositionalSelector(css);
-  if (!selector || sound(selector)) return { css: selector };
+  // A click by its text alone has no selector: what was recorded with it decides below — it
+  // came out as page.click(''), which Playwright refuses.
+  if (selector && sound(selector)) return { css: selector };
 
   const locators = Array.isArray(step.locators) ? step.locators : [];
   const valueOf = (type) => locators.find(l => l.type === type)?.value;
@@ -168,6 +170,12 @@ export function chooseTarget(step, literal, page = 'page') {
   const text = valueOf('text');
   if (name && text && text === name) {
     return { locator: `${page}.getByText(${literal(text)}, { exact: true })`, selector: `text=${quoted(text)}` };
+  }
+
+  // Clicked by its text, with nothing else recorded: that text.
+  const byText = step.params?.text;
+  if (!selector && byText) {
+    return { locator: `${page}.getByText(${literal(byText)}, { exact: true })`, selector: `text=${quoted(byText)}` };
   }
 
   // Nothing better recorded: a position holds from one page load to the next, a generated

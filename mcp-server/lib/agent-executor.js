@@ -30,6 +30,7 @@ import { classifyWithLLM, detectListContext } from './classify.js';
 import { uniqueVarName, listVariable, variabilizeInput } from './variable-detection.js';
 import { linkAssertionToVariables } from './test-variable.js';
 import { loadTest, saveTest } from './test-store.js';
+import { linkRecorded } from './requirements.js';
 import { evaluateAssertion } from './test-execute.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
@@ -514,7 +515,8 @@ function buildTools(sendCommand) {
           return `Already recording "${recording.name}". Stop it first.`;
         }
         const viewport = (viewport_width && viewport_height) ? { width: viewport_width, height: viewport_height } : null;
-        setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport });
+        // A run of the dashboard's "Create Test with AI" links its test to the request it was given.
+        setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link: sess().requirementLink ?? null });
         log(`[Agent] Recording started: ${name}`);
 
         try {
@@ -611,6 +613,7 @@ function buildTools(sendCommand) {
         setRecording(null);
 
         let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
+        summary += linkRecorded(recording);
         if (varCount > 0) {
           summary += `\n\n${varCount} variable(s) detected:\n`;
           for (const [name, info] of Object.entries(variables)) {
@@ -699,8 +702,13 @@ RULES:
 
 // ─── Agent executor ────────────────────────────────────────────────
 
-export async function runAgent(config, prompt, sendCommand, onProgress, signal) {
+/**
+ * Run the dashboard's agent on `prompt`. `options.requirementLink` ({ requirement, caseId,
+ * criterion }): the test it records is linked to that requirement.
+ */
+export async function runAgent(config, prompt, sendCommand, onProgress, signal, options = {}) {
   const session = createAdHocSession('dashboard-agent');
+  session.requirementLink = options.requirementLink ?? null;
   try {
     return await runInSession(session, {}, () =>
       runAgentInSession(config, prompt, sendCommand, onProgress, signal, session));
