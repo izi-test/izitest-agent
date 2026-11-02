@@ -201,6 +201,39 @@ export function initDatabase() {
     log(`Migration warning (cli_session_id): ${err.message}`);
   }
 
+  // Why a run failed, and the repairs proposed for it (lib/triage.js, lib/repairs.js).
+  try {
+    const execCols = db.prepare("PRAGMA table_info(test_executions)").all().map(c => c.name);
+    if (!execCols.includes('triage')) {
+      db.exec(`ALTER TABLE test_executions ADD COLUMN triage TEXT DEFAULT NULL`);
+      log('Migration applied: added triage column to test_executions table');
+    }
+  } catch (err) {
+    log(`Migration warning (triage): ${err.message}`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS test_repairs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+      test_name TEXT NOT NULL,
+      execution_id INTEGER REFERENCES test_executions(id) ON DELETE SET NULL,
+      step_order INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      cause TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      needs_review INTEGER NOT NULL DEFAULT 0,
+      change TEXT NOT NULL,
+      before TEXT,
+      run_options TEXT DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'proposed',
+      verify_execution_id INTEGER,
+      verify_error TEXT,
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      decided_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_test_repairs_test ON test_repairs(test_id);
+  `);
+
   log('SQLite database initialized');
 }
 

@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
-import type { AssertionResult } from '../../types';
+import type { AssertionResult, Triage } from '../../types';
 import { executionsApi } from '../services/executionsApi';
 
 // Module-level reference — non-serializable, kept outside Redux state
@@ -28,6 +28,8 @@ interface ExecutionSummary {
   assertionsFailed?: number;
   failedStep?: number | null;
   message?: string | null;
+  /** Why it failed, and the repairs proposed (see TriagePanel). */
+  triage?: Triage | null;
 }
 
 interface ExecutionState {
@@ -368,6 +370,7 @@ const executionSlice = createSlice({
             assertionsFailed: data.assertionsFailed ?? undefined,
             failedStep: data.failedStep ?? null,
             message: data.error,
+            triage: data.triage ?? null,
           };
           state.refreshTrigger += 1;
           break;

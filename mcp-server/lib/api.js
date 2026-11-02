@@ -19,7 +19,8 @@ import {
 } from './gherkin/step-definition-store.js';
 import { serializeTestToFeature } from './gherkin/serialize.js';
 import { stepsForEditedFeature } from './gherkin/reconcile.js';
-import { loadTest, saveTest } from './test-store.js';
+import { loadTest, saveTest, insertTestStep } from './test-store.js';
+import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { generateTestCode } from './codegen/index.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
@@ -84,6 +85,11 @@ function parseRow(row, ...jsonCols) {
 /** Parse JSON TEXT columns in an array of rows. */
 function parseRows(rows, ...jsonCols) {
   return rows.map(r => parseRow(r, ...jsonCols));
+}
+
+/** A repair with what it changes, line by line, for the dashboard. */
+function withDiff(repair) {
+  return repair && { ...repair, diff: repairDiff(repair) };
 }
 
 // ─── Router ────────────────────────────────────────────────────────
@@ -302,6 +308,7 @@ export async function apiRouter(req, res, url) {
           assertionsTotal: err.assertionsTotal ?? null,
           assertionsPassed: err.assertionsPassed ?? null,
           assertionsFailed: err.assertionsFailed ?? null,
+          triage: err.triage ?? null,
         })}\n\n`);
       } finally {
         res.end();
@@ -363,7 +370,8 @@ export async function apiRouter(req, res, url) {
 
       const rows = db.prepare(
         `SELECT id, status, started_at, finished_at, duration_ms, total_steps, completed_steps,
-                failed_step, error, new_window, trigger, assertions_total, assertions_passed, assertions_failed
+                failed_step, error, new_window, trigger, assertions_total, assertions_passed, assertions_failed,
+                json_extract(triage, '$.cause') AS triage_cause
          FROM test_executions
          WHERE test_id = ?
          ORDER BY started_at DESC
@@ -388,9 +396,37 @@ export async function apiRouter(req, res, url) {
         'SELECT * FROM execution_steps WHERE execution_id = ? ORDER BY step_order'
       ).all(execId);
 
+      const execution = parseRow(exec, 'variables', 'triage');
+      // The repairs its diagnosis proposed: one may have been proposed by an earlier run first.
+      const repairIds = (execution.triage?.proposals ?? []).map((proposal) => proposal.id).filter(Boolean);
       return json(res, 200, {
-        execution: { ...parseRow(exec, 'variables'), steps: parseRows(steps, 'assertion_result') }
+        execution: { ...execution, steps: parseRows(steps, 'assertion_result'), repairs: repairsById(repairIds).map(withDiff) }
       });
+    }
+
+    // ── Repairs: proposed when a run fails (lib/triage.js), accepted or not by the user ──
+
+    // GET /api/tests/:name/repairs — the test's repairs, newest first (?open=1: not decided yet)
+    params = matchRoute(path, '/api/tests/:name/repairs');
+    if (method === 'GET' && params) {
+      return json(res, 200, { repairs: listRepairs({ testName: params.name, open: url.searchParams.get('open') === '1' }).map(withDiff) });
+    }
+
+    // POST /api/repairs/:id/verify | apply | reject
+    params = matchRoute(path, '/api/repairs/:id/:action');
+    if (method === 'POST' && params && ['verify', 'apply', 'reject'].includes(params.action)) {
+      const id = parseInt(params.id);
+      if (!getRepair(id)) return json(res, 404, { error: 'Repair not found' });
+      try {
+        if (params.action === 'verify') {
+          const { repair, passed, error } = await verifyRepair(id, sendCommand);
+          return json(res, 200, { repair: withDiff(repair), passed, error: error ?? null });
+        }
+        const repair = params.action === 'apply' ? applyRepair(id) : rejectRepair(id);
+        return json(res, 200, { repair: withDiff(repair) });
+      } catch (err) {
+        return json(res, 409, { error: err.message, repair: withDiff(getRepair(id)) });
+      }
     }
 
     // ── Steps routes: /api/tests/:name/steps ──
@@ -408,27 +444,10 @@ export async function apiRouter(req, res, url) {
       const maxRes = db.prepare(
         'SELECT COALESCE(MAX(step_order), 0) AS max_order FROM test_steps WHERE test_id = ?'
       ).get(testId);
-      const nextOrder = body.step_order || (maxRes.max_order + 1);
+      const nextOrder = Math.min(body.step_order || (maxRes.max_order + 1), maxRes.max_order + 1);
 
-      // Shift existing steps if inserting in the middle
-      db.prepare(
-        'UPDATE test_steps SET step_order = step_order + 1 WHERE test_id = ? AND step_order >= ?'
-      ).run(testId, nextOrder);
-
-      const result = db.prepare(
-        `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
-      ).get(
-        testId, nextOrder,
-        body.command || '',
-        JSON.stringify(body.params || {}),
-        body.locators ? JSON.stringify(body.locators) : null,
-        body.intent || null,
-        body.variable ? JSON.stringify(body.variable) : null,
-        body.assertion ? JSON.stringify(body.assertion) : null
-      );
-
-      db.prepare("UPDATE tests SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(testId);
+      // Inserted in the middle, the steps after it move down (see insertTestStep).
+      const result = insertTestStep(testId, nextOrder, body);
       return json(res, 201, result);
     }
 

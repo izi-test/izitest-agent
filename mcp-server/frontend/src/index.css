@@ -3112,3 +3112,70 @@ body {
   .sidebar { display: none; }
   .app-layout { flex-direction: column; }
 }
+
+/* ─── Triage of a failed run, and its repairs (TriagePanel) ─── */
+.triage-panel {
+  margin: 0 16px 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.triage-panel.triage-test_drift,
+.triage-panel.triage-timing { border-left-color: var(--blue); }
+.triage-panel.triage-changed_value,
+.triage-panel.triage-disabled { border-left-color: var(--orange); }
+.triage-panel.triage-app_regression,
+.triage-panel.triage-environment { border-left-color: var(--red); }
+.triage-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+.triage-confidence { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+.triage-summary { font-size: 12px; color: var(--text); line-height: 1.5; }
+.triage-evidence { display: flex; flex-direction: column; gap: 2px; font-family: var(--mono); font-size: 10px; color: var(--text-muted); word-break: break-all; }
+.triage-badge.triage-test_drift,
+.triage-badge.triage-timing { background: var(--blue-bg); color: var(--blue); }
+.triage-badge.triage-changed_value,
+.triage-badge.triage-disabled { background: var(--orange-bg); color: var(--orange); }
+.triage-badge.triage-app_regression,
+.triage-badge.triage-environment { background: var(--red-bg); color: var(--red); }
+
+.repair-card {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.repair-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text); }
+.repair-status { margin-left: auto; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: var(--radius-full); background: var(--bg-tertiary); color: var(--text-muted); }
+.repair-verified .repair-status,
+.repair-applied .repair-status { background: var(--green-bg); color: var(--green); }
+.repair-failed .repair-status { background: var(--red-bg); color: var(--red); }
+.repair-summary { font-size: 12px; color: var(--text-muted); }
+.repair-warning { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--orange); }
+.repair-diff { margin: 0; padding: 6px 10px; list-style: none; font-family: var(--mono); font-size: 10px; color: var(--accent-bright); background: var(--bg-void); border-radius: var(--radius-sm); word-break: break-all; }
+.repair-error { font-family: var(--mono); font-size: 10px; color: var(--red); white-space: pre-wrap; word-break: break-word; }
+.repair-actions { display: flex; gap: 8px; }
+.live-summary-triage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--text-muted);
+  background: var(--bg-tertiary);
+  font-size: 12px;
+  color: var(--text);
+}
+.live-summary-triage.triage-test_drift,
+.live-summary-triage.triage-timing { border-left-color: var(--blue); }
+.live-summary-triage.triage-changed_value,
+.live-summary-triage.triage-disabled { border-left-color: var(--orange); }
+.live-summary-triage.triage-app_regression,
+.live-summary-triage.triage-environment { border-left-color: var(--red); }

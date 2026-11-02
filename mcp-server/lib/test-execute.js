@@ -4,6 +4,8 @@ import { log } from './logger.js';
 import { db } from './db.js';
 import { loadTest } from './test-store.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
+import { diagnoseFailure } from './triage.js';
+import { saveRepairs } from './repairs.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -236,13 +238,30 @@ async function executeStepsInDebugMode(
   };
 }
 
-export async function executeTest(name, variables, substitutions, start_step, new_window, sendCommand, trigger = 'manual', onProgress = null, debugController = null) {
-  const test = loadTest(name);
+/**
+ * The steps the extension plays — every one but the assertions, checked here afterwards —
+ * each with its number in the test, and where to start among them. The extension numbers
+ * the steps it is given: an assertion in the middle of a test shifted every step after it,
+ * and a failure was reported (and repaired) one step off.
+ */
+export function actionPlan(steps, startStep) {
+  const actions = [];
+  steps.forEach((step, i) => { if (step.command !== 'assert') actions.push({ ...step, _originalStepNumber: i + 1 }); });
+  const first = startStep > 0 ? startStep - 1 : 0;
+  const startIndex = actions.findIndex((step) => step._originalStepNumber - 1 >= first);
+  return { actions, startIndex: startIndex < 0 ? actions.length : startIndex };
+}
+
+/**
+ * Run a saved test. `options.test` runs that test instead of the saved one under `name` —
+ * a repair being checked (lib/repairs.js) — and a failure is diagnosed (lib/triage.js)
+ * except in such a check or in debug mode.
+ */
+export async function executeTest(name, variables, substitutions, start_step, new_window, sendCommand, trigger = 'manual', onProgress = null, debugController = null, options = {}) {
+  const test = options.test ?? loadTest(name);
   if (!test) {
     throw new Error(`Test "${name}" not found.`);
   }
-
-  const startIndex = (start_step && start_step > 0) ? start_step - 1 : 0;
 
   // Extract viewport dimensions from test metadata
   const viewportWidth = test.viewport?.width || null;
@@ -349,15 +368,13 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   // ─── Send to extension and process results ────────────────────
   // Filter out assertion steps — the extension only handles browser actions
-  const actionSteps = [];
-  const assertionIndexes = new Set();
-  for (let i = 0; i < hydratedSteps.length; i++) {
-    if (hydratedSteps[i].command === 'assert') {
-      assertionIndexes.add(i);
-    } else {
-      actionSteps.push(hydratedSteps[i]);
-    }
-  }
+  const { actions: actionSteps, startIndex } = actionPlan(hydratedSteps, start_step);
+  const testOrder = (n) => actionSteps[n - 1]?._originalStepNumber ?? n;
+  const numbered = (msg) => {
+    if (msg?.type === 'step_start') return { ...msg, step: testOrder(msg.step) };
+    if (msg?.type === 'step_complete' && msg.stepResult) return { ...msg, stepResult: { ...msg.stepResult, step: testOrder(msg.stepResult.step) } };
+    return msg;
+  };
 
   let extensionResult;
   let executionFailed = false;
@@ -381,7 +398,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       extensionResult = await sendCommand(undefined, 'replay_sequence', {
         steps: actionSteps, startIndex, newWindow: new_window,
         ...(viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {})
-      }, 120000, async (msg) => {
+      }, 120000, async (raw) => {
+        const msg = numbered(raw);
         if (onProgress) onProgress(msg);
 
         if (msg.type === 'step_complete' && msg.stepResult) {
@@ -402,6 +420,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
         durationMs: err.durationMs || 0
       };
     }
+    extensionResult.results = (extensionResult.results ?? []).map((result) => ({ ...result, step: testOrder(result.step) }));
   }
 
   // ─── Evaluate assertion steps ─────────────────────────────────
@@ -548,9 +567,19 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     }, assertionTabId);
   }).catch(() => {});
 
+  // Why it failed, on the page it failed on, and what would repair it: kept with the run.
+  let triage = null;
+  if (finalStatus === 'failed' && failedStepOrder && !isDebugMode && trigger !== 'repair') {
+    triage = await triageRun({
+      name, test, executionId, failedStepOrder, globalError, stepResults, assertionStepResults,
+      hydratedSteps, tabId: assertionTabId, sendCommand, values: mergedVariables, runOptions: { variables, substitutions },
+    });
+  }
+
   if (finalStatus === 'failed') {
     const error = new Error(globalError || 'Test execution failed');
     error.executionId = executionId;
+    if (triage) error.triage = triage;
     error.status = finalStatus;
     error.durationMs = extensionResult.durationMs || null;
     error.failedStep = failedStepOrder;
@@ -581,6 +610,36 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   }
 
   return { ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables };
+}
+
+/**
+ * Diagnose a failed run (lib/triage.js), keep the diagnosis with the execution and its
+ * repairs as proposals (lib/repairs.js). The diagnosis, with each proposal's id.
+ */
+async function triageRun({ name, test, executionId, failedStepOrder, globalError, stepResults, assertionStepResults, hydratedSteps, tabId, sendCommand, values, runOptions }) {
+  const assertion = assertionStepResults.find((result) => result.step === failedStepOrder && result.status === 'failed');
+  const action = stepResults.find((result) => result.step === failedStepOrder);
+  const hydrated = hydratedSteps[failedStepOrder - 1];
+  const failed = assertion
+    ? {
+      step: failedStepOrder, error: assertion.error, assertionResult: assertion.assertionResult,
+      hydratedExpected: hydrated?.assertion?.expected,
+      recheck: () => evaluateAssertion(sendCommand, hydrated.assertion, tabId),
+    }
+    : { step: failedStepOrder, error: action?.error ?? globalError ?? '' };
+  const testRow = db.prepare('SELECT id FROM tests WHERE name = ?').get(name);
+  const passes = testRow ? db.prepare(
+    `SELECT COUNT(*) AS passes, MAX(started_at) AS lastPass FROM test_executions WHERE test_id = ? AND status = 'success' AND trigger != 'repair' AND id < ?`
+  ).get(testRow.id, executionId) : { passes: 0, lastPass: null };
+  const failedTab = action?.tabId ?? tabId;
+
+  const startedAt = Date.now();
+  const diagnosis = await diagnoseFailure({ stored: test, failed, tabId: failedTab, sendCommand, values, history: passes });
+  const ids = saveRepairs(name, executionId, diagnosis, runOptions, test);
+  const triage = { ...diagnosis, proposals: diagnosis.proposals.map((proposal, i) => ({ id: ids[i], ...proposal, change: undefined })) };
+  db.prepare('UPDATE test_executions SET triage = ? WHERE id = ?').run(JSON.stringify(triage), executionId);
+  log(`Execution #${executionId} triaged in ${Date.now() - startedAt}ms: ${triage.cause} (${triage.confidence}), ${ids.length} repair(s) proposed`);
+  return triage;
 }
 
 /**

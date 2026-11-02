@@ -98,6 +98,34 @@ export interface ExecutionStep {
   assertion_result: AssertionResult | null;
 }
 
+/** Why a run failed, worked out on the page it failed on (mcp-server/lib/triage.js). */
+export interface Triage {
+  cause: 'test_drift' | 'timing' | 'changed_value' | 'disabled' | 'app_regression' | 'environment' | 'unknown';
+  confidence: 'high' | 'medium' | 'low';
+  summary: string;
+  evidence?: {
+    page?: { url: string | null; title: string | null; alerts: string[]; failedRequests: Array<{ method: string; url: string; status: number }> };
+    history?: { passes: number; lastPass: string | null };
+  };
+  proposals: Array<{ id: number; kind: string; step_order: number; summary: string; needs_review?: boolean }>;
+}
+
+/** A change to one step proposed by the triage, and where it stands. */
+export interface Repair {
+  id: number;
+  test_name: string;
+  execution_id: number | null;
+  step_order: number;
+  kind: 'relocate' | 'wait' | 'expect';
+  cause: Triage['cause'];
+  summary: string;
+  needs_review: boolean;
+  status: 'proposed' | 'verified' | 'failed' | 'applied' | 'rejected' | 'superseded' | 'stale';
+  verify_execution_id: number | null;
+  verify_error: string | null;
+  diff: string[];
+}
+
 export interface Execution {
   id: number;
   test_name: string;
@@ -115,4 +143,7 @@ export interface Execution {
   assertions_passed: number;
   assertions_failed: number;
   steps?: ExecutionStep[];
+  triage_cause?: Triage['cause'] | null;
+  triage?: Triage | null;
+  repairs?: Repair[];
 }

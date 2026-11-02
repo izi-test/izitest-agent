@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { LiveStep } from "../store/slices/executionSlice";
+import type { Triage } from "../types";
+import { CAUSE_LABELS } from "../triage-labels";
 import {
   Loader2, CheckCircle2, XCircle, SkipForward, X, Bot,
   ShieldCheck, Square, Play, SkipForward as StepForwardIcon,
@@ -27,6 +29,7 @@ export interface LiveExecutionModalProps {
     assertionsFailed?: number;
     failedStep?: number | null;
     message?: string | null;
+    triage?: Triage | null;
   } | null;
   isDebugMode?: boolean;
   isPaused?: boolean;
@@ -211,6 +214,17 @@ export function LiveExecutionModal({
                 </div>
                 {executionSummary.message && executionSummary.status === 'error' && (
                   <div className="live-summary-message">{executionSummary.message}</div>
+                )}
+                {executionSummary.triage && (
+                  <div className={`live-summary-triage triage-${executionSummary.triage.cause}`}>
+                    <strong>{CAUSE_LABELS[executionSummary.triage.cause] ?? executionSummary.triage.cause}</strong>
+                    <span>{executionSummary.triage.summary}</span>
+                    {executionSummary.triage.proposals.length > 0 && (
+                      <span>
+                        Repair #{executionSummary.triage.proposals[0].id} proposed: {executionSummary.triage.proposals[0].summary} — verify or apply it in Execution History.
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             )}

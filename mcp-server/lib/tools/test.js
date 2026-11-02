@@ -12,6 +12,8 @@ import {
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
 import { uniqueVarName, listVariable, variabilizeInput } from '../variable-detection.js';
 import { linkAssertionToVariables } from '../test-variable.js';
+import { formatTriage } from '../triage.js';
+import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair } from '../repairs.js';
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -405,7 +407,21 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
           text += `Passed: ${err.assertionsPassed}, Failed: ${err.assertionsFailed}\n\n`;
         }
 
+        // Why it failed, worked out on the page it failed on (lib/triage.js).
+        const triage = err.triage;
+        const repair = triage?.proposals?.[0];
+        if (triage) text += `=== TRIAGE ===\n${formatTriage(triage)}\n\n`;
+
         text += `=== ACTION REQUIRED ===\n`;
+        if (repair) {
+          text += `A repair is proposed (#${repair.id}). Check it: verify_repair(repair_id=${repair.id}) replays the test with it, without saving it. `;
+          text += repair.needs_review
+            ? `It accepts what the page shows now: ask the user whether that change is intended before resolve_repair(repair_id=${repair.id}, decision="apply").\n`
+            : `If the test passes, tell the user what it changes, and on their word save it: resolve_repair(repair_id=${repair.id}, decision="apply").\n`;
+          text += `If it does not fix the test, fix the step by hand:\n`;
+        } else if (['app_regression', 'environment', 'changed_value', 'disabled'].includes(triage?.cause)) {
+          text += `This does not look like a broken test (${triage.cause}): do NOT change the test to make it pass — report it to the user first. To fix the step by hand once they agree:\n`;
+        }
         text += `1. Use 'snapshot' to see the current page state.\n`;
         text += `2. Perform ONLY the failed step ${failedStep} manually. The failed step was a "${failedCmd}" command${failedIntent ? ' ("' + failedIntent + '")' : ''}. Use the matching browser tool.\n`;
         text += `3. Call fix_test_step(test_name="${name}", step_order=${failedStep}, action_id=<the_action_id>).\n`;
@@ -659,6 +675,60 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         return { content: [{ type: 'text', text: `Step ${step_order} of "${test_name}" updated successfully.\n  Command: ${action.command}\n  Locators: ${action.locators ? action.locators.length + ' locator(s)' : 'none'}\nThe test is now permanently fixed for future runs.` }] };
       } catch (err) {
         return { content: [{ type: 'text', text: `Failed to update step: ${err.message}` }] };
+      }
+    }
+  );
+
+  // --- Tool: list_repairs ---
+  server.tool(
+    'list_repairs',
+    'List the repairs proposed when runs of a test failed (run_test diagnoses every failure): what each changes, why, and where it stands — proposed, verified (the test passes with it), failed (it does not), applied, rejected, stale (the step was edited since).',
+    {
+      test_name: z.string().optional().describe('Only this test\'s repairs. Default: every test.'),
+      open_only: z.boolean().optional().describe('Only the repairs not applied or rejected yet (default true)')
+    },
+    async ({ test_name, open_only }) => {
+      const repairs = listRepairs({ testName: test_name, open: open_only ?? true });
+      if (!repairs.length) return { content: [{ type: 'text', text: `No ${open_only === false ? '' : 'open '}repair${test_name ? ` for "${test_name}"` : ''}.` }] };
+      return { content: [{ type: 'text', text: repairs.map(describeRepair).join('\n\n') }] };
+    }
+  );
+
+  // --- Tool: verify_repair ---
+  server.tool(
+    'verify_repair',
+    'Replay a test with a proposed repair made, without saving it, as the failed run was played (same variables and substitutions). Verified when the whole test passes — assertions included. The window it ran in stays open.',
+    {
+      repair_id: z.number().describe('Id of the repair, from run_test\'s TRIAGE section or list_repairs')
+    },
+    async ({ repair_id }) => {
+      try {
+        const { repair, passed, error, tabId } = await verifyRepair(repair_id, sendCommand);
+        const verdict = passed
+          ? `Verified: the test passes with repair #${repair_id}. Nothing is saved yet: resolve_repair(repair_id=${repair_id}, decision="apply") once the user agrees.`
+          : `Not verified: the test still fails with repair #${repair_id}.\n${error}`;
+        return { content: [{ type: 'text', text: `${verdict}${tabId ? `\n(tab ${tabId})` : ''}\n\n${describeRepair(repair)}` }] };
+      } catch (err) {
+        return { isError: true, content: [{ type: 'text', text: err.message }] };
+      }
+    }
+  );
+
+  // --- Tool: resolve_repair ---
+  server.tool(
+    'resolve_repair',
+    'Apply a proposed repair to the saved test, or reject it. Apply only on the user\'s word: a repair of kind "expect" makes the test accept what the page shows now, which may be the very regression the test exists to catch.',
+    {
+      repair_id: z.number().describe('Id of the repair'),
+      decision: z.enum(['apply', 'reject'])
+    },
+    async ({ repair_id, decision }) => {
+      try {
+        const repair = decision === 'apply' ? applyRepair(repair_id) : rejectRepair(repair_id);
+        const done = decision === 'apply' ? `Applied: step ${repair.step_order} of "${repair.test_name}" is repaired.` : `Rejected: repair #${repair_id} will not be applied.`;
+        return { content: [{ type: 'text', text: `${done}\n\n${describeRepair(repair)}` }] };
+      } catch (err) {
+        return { isError: true, content: [{ type: 'text', text: err.message }] };
       }
     }
   );

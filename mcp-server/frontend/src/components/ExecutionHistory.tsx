@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useGetExecutionsQuery, useLazyGetExecutionQuery } from '../store/services/executionsApi';
-import type { ExecutionStep } from '../types';
+import type { Execution, ExecutionStep } from '../types';
+import { TriagePanel } from './TriagePanel';
+import { CAUSE_LABELS } from '../triage-labels';
 import {
   ChevronDown,
   ChevronRight,
@@ -52,11 +54,14 @@ function StatusBadge({ status }: { status: string }) {
 interface ExecutionHistoryProps {
   testName: string;
   refreshTrigger: number;
+  /** A repair was applied: the test's steps changed. */
+  onTestChanged?: () => void;
 }
 
-export function ExecutionHistory({ testName, refreshTrigger }: ExecutionHistoryProps) {
+export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: ExecutionHistoryProps) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedSteps, setExpandedSteps] = useState<ExecutionStep[]>([]);
+  const [expanded, setExpanded] = useState<Execution | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const { data: executions = [], isLoading } = useGetExecutionsQuery(
@@ -70,14 +75,21 @@ export function ExecutionHistory({ testName, refreshTrigger }: ExecutionHistoryP
     if (expandedId === executionId) {
       setExpandedId(null);
       setExpandedSteps([]);
+      setExpanded(null);
       return;
     }
+    await loadExecution(executionId);
+  };
+
+  const loadExecution = async (executionId: number) => {
     try {
       const execution = await triggerGetExecution(executionId).unwrap();
       setExpandedSteps(execution?.steps || []);
+      setExpanded(execution ?? null);
       setExpandedId(executionId);
     } catch {
       setExpandedSteps([]);
+      setExpanded(null);
       setExpandedId(executionId);
     }
   };
@@ -104,6 +116,7 @@ export function ExecutionHistory({ testName, refreshTrigger }: ExecutionHistoryP
               )}
             </div>
             <div className="exec-meta">
+              {exec.triage_cause && <span className={`exec-trigger triage-badge triage-${exec.triage_cause}`}>{CAUSE_LABELS[exec.triage_cause].split(' — ')[0]}</span>}
               {exec.trigger !== 'manual' && <span className="exec-trigger">{exec.trigger}</span>}
               {exec.new_window && <span className="exec-trigger">new window</span>}
               <span className="exec-expand-icon">
@@ -114,6 +127,15 @@ export function ExecutionHistory({ testName, refreshTrigger }: ExecutionHistoryP
 
           {exec.error && (
             <div className="exec-error">{exec.error}</div>
+          )}
+
+          {expandedId === exec.id && expanded?.triage && (
+            <TriagePanel
+              triage={expanded.triage}
+              repairs={expanded.repairs ?? []}
+              onChanged={() => loadExecution(exec.id)}
+              onApplied={onTestChanged}
+            />
           )}
 
           {expandedId === exec.id && (

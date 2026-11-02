@@ -585,7 +585,7 @@ CRITICAL RULES:
         <CodePanel testName={test.name} />
       ) : (
         <div className="exec-history-section">
-          <ExecutionHistory testName={test.name} refreshTrigger={refreshTrigger} />
+          <ExecutionHistory testName={test.name} refreshTrigger={refreshTrigger} onTestChanged={refetch} />
         </div>
       )}
 

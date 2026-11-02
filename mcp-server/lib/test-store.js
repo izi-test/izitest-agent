@@ -154,6 +154,28 @@ export function updateTestStep(testName, stepOrder, stepData) {
   return result;
 }
 
+/**
+ * Insert `step` at `order` (1-indexed) in test `testId`, the steps from there moved one down
+ * — through negative orders: shifted in place, UNIQUE(test_id, step_order) refused the first
+ * row moved onto the next. The variables' step numbers move with them. The new row.
+ */
+export function insertTestStep(testId, order, step) {
+  return db.transaction(() => {
+    db.prepare('UPDATE test_steps SET step_order = -step_order - 1 WHERE test_id = ? AND step_order >= ?').run(testId, order);
+    db.prepare('UPDATE test_steps SET step_order = -step_order WHERE test_id = ? AND step_order < 0').run(testId);
+    const row = db.prepare(
+      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
+    ).get(testId, order, step.command || '', JSON.stringify(step.params ?? {}), step.locators ? JSON.stringify(step.locators) : null,
+      step.intent || null, step.variable ? JSON.stringify(step.variable) : null, step.assertion ? JSON.stringify(step.assertion) : null);
+    const test = db.prepare('SELECT variables FROM tests WHERE id = ?').get(testId);
+    const variables = parseJson(test?.variables) ?? {};
+    for (const variable of Object.values(variables)) if (variable?.step >= order) variable.step += 1;
+    db.prepare(`UPDATE tests SET variables = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`).run(JSON.stringify(variables), testId);
+    return row;
+  })();
+}
+
 export function deleteTest(name) {
   const result = db.prepare('DELETE FROM tests WHERE name = ?').run(name);
   return result.changes > 0;

@@ -94,7 +94,10 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. |
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. |
 | `list_tests` | Lists all saved tests and their variables. |
-| `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. |
+| `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
+| `list_repairs` | Lists the repairs proposed for failed runs, and where each stands. |
+| `verify_repair` | Replays the test with a proposed repair made, without saving it. |
+| `resolve_repair` | Applies a repair to the saved test, or rejects it — on the user's word. |
 | `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
@@ -395,6 +398,39 @@ enregistré.
 | `substitutions` | object | Remplacement textuel brut dans tous les paramètres (clé → valeur) |
 | `start_step` | number | Reprendre l'exécution à une étape spécifique (1-indexed) |
 | `new_window` | boolean | Si `true`, exécute dans une nouvelle fenêtre au lieu d'un nouvel onglet |
+
+### Triage et réparation d'un test qui échoue
+
+Un échec est diagnostiqué au moment où il arrive, sur la page où il s'est produit (la fenêtre du
+rejeu y reste), que le test soit lancé par `run_test` ou depuis le tableau de bord — pas en debug pas
+à pas. Le diagnostic est déterministe — il n'appelle aucun modèle : l'agent connecté reste celui qui
+raisonne sur les cas ambigus, avec les preuves qu'on lui donne. Il est gardé avec l'exécution, montré
+dans la sortie de `run_test` (section `=== TRIAGE ===`), dans la fenêtre d'exécution et dans
+l'historique du tableau de bord.
+
+| Cause | Ce que ça veut dire | Réparation proposée |
+| :--- | :--- | :--- |
+| `test_drift` | Le test a cassé, pas forcément l'appli : aucun localisateur ne trouve plus l'élément, mais la page a un élément qui lui ressemble clairement (même nom ou nom proche, même rôle, même placeholder, même test ID), ou le texte qu'une assertion lit est ailleurs | `relocate` : l'étape pointe vers cet élément (sélecteur, localisateurs, rôle et nom) |
+| `timing` | L'élément est là maintenant, sous un sélecteur de l'étape ; ou l'assertion passe 1,5 s plus tard | `wait` : une attente insérée avant l'étape |
+| `changed_value` | Une assertion lit une autre valeur : régression, ou changement voulu (nouveau libellé) | `expect`, **à juger par une personne** : attendre la nouvelle valeur. Jamais pour la valeur d'une variable, ni pour un long texte lu par « contient » |
+| `disabled` | L'élément est là mais désactivé | — |
+| `app_regression` | L'élément a disparu, ou la valeur a changé, et la page signale une erreur (`role="alert"`, requête en 4xx/5xx) ; ou elle n'affiche pas la valeur que le test a saisie | — : à signaler, pas à « réparer » |
+| `environment` | La page ne s'est pas chargée (erreur réseau, page servie en 5xx) | — |
+| `unknown` | Rien de tout ça, ou plusieurs éléments ressemblent autant à celui cherché | — |
+
+Les preuves accompagnent le diagnostic : l'adresse de la page, ses alertes, les requêtes en échec,
+les meilleurs candidats avec leur score, et combien de fois le test est passé avant.
+
+Une réparation n'est jamais appliquée toute seule. `verify_repair` (ou **Verify** dans l'historique)
+rejoue le test avec elle, sans l'enregistrer, avec les variables et substitutions de l'exécution qui
+a échoué : vérifiée si tout le test passe, assertions comprises. `resolve_repair` (**Apply** /
+**Reject**) l'enregistre ou l'écarte ; une autre réparation encore ouverte pour la même étape est
+alors remplacée (`superseded`). Une étape modifiée depuis la proposition n'est pas réparée à
+l'aveugle (`stale`). Le même échec revu propose la même réparation : elle est réutilisée, pas
+dupliquée. Les rejeux de vérification apparaissent dans l'historique avec le déclencheur `repair`.
+
+Les étapes du rejeu sont numérotées comme dans le test : une assertion placée au milieu décalait
+d'un cran toutes les étapes suivantes, et l'échec était signalé (et réparé) sur la mauvaise.
 
 ### Visual Regression Testing (VRT)
 
