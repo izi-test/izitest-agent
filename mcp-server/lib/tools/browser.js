@@ -40,6 +40,8 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
     // {{…}} in an action done now — a value kept, a date — as the session knows it; the step
     // recorded keeps it as written.
     const scoped = session.scope(LIVE_ACTIONS.has(command) || command === 'wait' ? session.live(params ?? {}) : params);
+    // A capture of the answer to a request of the page looks from the last action on.
+    if (LIVE_ACTIONS.has(command)) session.lastActionAt = Date.now();
     // An action says the page it was done on: the step recording it keeps it.
     if (!LIVE_ACTIONS.has(command)) {
       const result = await dispatch(profile, command, scoped, ...rest);
@@ -643,40 +645,48 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       'Keep a value as a variable the next steps use as {{name}}: the text, value or an attribute of an element, the URL or',
       'the title of the page, or a value of the last call_api answer (what: "response", path: "data.id"). Recorded as a',
       'step that keeps it again at each run — an order number shown after a purchase, the id of a user created by an API.',
+      'Or a value of the answer to a request the page made (what: "request", url: a part of its URL, path: "id"): the',
+      'id a click on "Buy" got back, not shown on the page — waited for when the page has not had it yet.',
       'A pattern (regular expression) keeps only part of it: its first group ("#(\\d+)" keeps 12345 of "Order #12345").',
       'Then use {{name}} in fill, navigate, add_assertion…: the action gets the value now, the step keeps {{name}}.',
     ].join(' '),
     {
       name: z.string().describe('Variable name: letters, digits and _, e.g. "order"'),
-      what: z.enum(['text', 'value', 'attribute', 'url', 'title', 'response']).optional().describe('What to keep (default: text)'),
+      what: z.enum(['text', 'value', 'attribute', 'url', 'title', 'response', 'request']).optional().describe('What to keep (default: text)'),
       ref: z.string().optional().describe('The element, from a snapshot (@e5)'),
       selector: z.string().optional().describe('Or its CSS selector'),
       attribute: z.string().optional().describe('For what: "attribute", its name'),
-      path: z.string().optional().describe('For what: "response", where in the JSON answer: "id", "data.items[0].id"'),
+      path: z.string().optional().describe('For what: "response" or "request", where in the JSON answer: "id", "data.items[0].id"'),
+      url: z.string().optional().describe('For what: "request", a part of the URL of the request the page made, e.g. "/api/orders"'),
+      method: z.string().optional().describe('For what: "request", its method when several requests share the URL (POST)'),
       pattern: z.string().optional().describe('A regular expression: keeps its first group, or what it matched'),
       intent: z.string().optional().describe('Functional description of this step'),
       profile: z.string().optional(),
       tabId: z.number().optional(),
     },
-    async ({ name, what = 'text', ref, selector, attribute, path, pattern, intent, profile, tabId }) => {
+    async ({ name, what = 'text', ref, selector, attribute, path, url, method, pattern, intent, profile, tabId }) => {
       if (!/^[A-Za-z_]\w*$/.test(name)) return { content: [{ type: 'text', text: `"${name}" is not a usable variable name: letters, digits and _` }] };
       const session = sess();
       const element = ref ? session.refMap?.[String(ref).replace('@', '')]?.selector : selector;
       if (['text', 'value', 'attribute'].includes(what) && !element) {
         return { content: [{ type: 'text', text: `Capturing the ${what} of an element needs its ref or selector${ref ? ` (no element ${ref}: take a snapshot)` : ''}.` }] };
       }
-      const params = { what, name, ...(element ? { selector: element } : {}), ...(attribute ? { attribute } : {}), ...(path ? { path } : {}), ...(pattern ? { pattern } : {}) };
+      if (what === 'request' && !url) return { content: [{ type: 'text', text: 'Capturing the answer to a request of the page needs a part of its URL (url): network_requests lists them.' }] };
+      const params = {
+        what, name, ...(element ? { selector: element } : {}), ...(attribute ? { attribute } : {}), ...(path ? { path } : {}),
+        ...(url ? { url } : {}), ...(method ? { method: method.toUpperCase() } : {}), ...(pattern ? { pattern } : {}),
+      };
       // Through the session's window, with the profile it was given.
       const run = (_profile, command, commandParams) => sendCommand(profile, command, commandParams);
       try {
-        const { kept } = await runServerStep({ command: 'capture', params }, { sendCommand: run, tabId: tabId ?? session.lastTabId, state: { lastResponse: session.lastResponse } });
+        const { kept } = await runServerStep({ command: 'capture', params }, { sendCommand: run, tabId: tabId ?? session.lastTabId, state: { lastResponse: session.lastResponse, since: session.lastActionAt } });
         session.kept[name] = kept.value;
         // The page it was read on: the element it reads is known by it (lib/elements.js).
         if (element) {
           const where = await run(profile, 'execute_js', { code: 'location.href', ...(tabId ? { tabId } : {}) }).catch(() => null);
           session.notePage({ pageUrl: typeof where === 'string' ? where : where?.result });
         }
-        const actionId = saveActionToHistory('capture', params, ref, null, intent ?? `Keep ${what === 'response' ? path : what} as {{${name}}}`);
+        const actionId = saveActionToHistory('capture', params, ref, null, intent ?? `Keep ${what === 'response' || what === 'request' ? path ?? 'the answer' : what} as {{${name}}}`);
         return { content: [{ type: 'text', text: `Kept {{${name}}} = "${kept.value}" (${actionId}). Use {{${name}}} in the next steps.` }] };
       } catch (err) {
         return { content: [{ type: 'text', text: `Nothing kept: ${err.message}` }] };

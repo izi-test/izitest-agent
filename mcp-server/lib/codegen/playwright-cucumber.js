@@ -258,6 +258,10 @@ When('I store {string} of the response as {string}', async function (path, name)
   this.vars[name] = this.responseValue(path);
 });
 
+When('I store {string} of the request to {string} as {string}', async function (path, url, name) {
+  this.vars[name] = await this.requestValue(url, path);
+});
+
 Given('I call {word} {string}', async function (method, url) {
   await this.call(method, url);
 });
@@ -376,10 +380,29 @@ class PlaywrightWorld extends World {
 
   // A value of the last answer, at a path: "id", "data.items[0].id".
   responseValue(path) {
-    let at = this.response;
-    for (const part of String(path).replace(/^\\$\\.?/, '').match(/[^.[\\]]+/g) ?? []) at = at?.[part];
-    return at !== null && typeof at === 'object' ? JSON.stringify(at) : String(at ?? '');
+    return valueAt(this.response, path);
   }
+
+  // A value of the answer to the last request of the page whose URL holds \`url\` (the id a
+  // click on "Buy" got back): waited for, up to 10 s, when the page has not had it yet.
+  async requestValue(url, path, method) {
+    for (const deadline = Date.now() + 10000; ;) {
+      const answer = this.responses.findLast((r) => r.url().includes(url) && (!method || r.request().method() === method));
+      if (answer) {
+        const text = await answer.text();
+        if (!path) return text;
+        try { return valueAt(JSON.parse(text), path); } catch { throw new Error(\`The answer to \${answer.url()} is no JSON\`); }
+      }
+      if (Date.now() > deadline) throw new Error(\`The page made no request to "\${url}"\`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+}
+
+function valueAt(data, path) {
+  let at = data;
+  for (const part of String(path).replace(/^\\$\\.?/, '').match(/[^.[\\]]+/g) ?? []) at = at?.[part];
+  return at !== null && typeof at === 'object' ? JSON.stringify(at) : String(at ?? '');
 }
 
 setWorldConstructor(PlaywrightWorld);
@@ -388,6 +411,9 @@ Before(async function () {
   this.browser = await chromium.launch();
   this.context = await this.browser.newContext();
   this.page = await this.context.newPage();
+  // The answers the page gets, for a step that keeps a value of one (I store … of the request to …).
+  this.responses = [];
+  this.page.on('response', (response) => this.responses.push(response));
   ${collectorLines('this.page', 'this.consoleErrors', 'this.failedRequests').join('\n  ')}
 });
 
@@ -511,6 +537,7 @@ function commandToPlaywright(tpl, argNames) {
         case 'url': return `${into} = this.page.url();`;
         case 'title': return `${into} = await this.page.title();`;
         case 'response': return `${into} = this.responseValue(${resolve(params.path)});`;
+        case 'request': return `${into} = await this.requestValue(${resolve(params.url)}, ${resolve(params.path ?? '')}${params.method ? `, ${resolve(params.method)}` : ''});`;
         case 'value': return `${into} = await this.page.locator(${resolve(params.selector)}).first().inputValue();`;
         default: return `${into} = ((await this.page.locator(${resolve(params.selector)}).first().textContent()) ?? '').trim();`;
       }

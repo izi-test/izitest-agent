@@ -37,7 +37,9 @@ const SEARCH_SNIPPET_RADIUS = 100;
 const capturesByTab = new Map<number, CapturedEntry[]>();
 // Sent with the requests IziTest makes from a page (check_links), lowercase as Chrome reports it.
 export const CHECK_HEADER = 'x-izitest-check';
-const attachedTabs = new Set<number>();
+// The pages listened to: a tab gets a new one when its connection is made again (detachBrowser),
+// and that one is listened to as well; what the tab's pages saw stays in capturesByTab.
+const attachedPages = new WeakSet<Page>();
 let idCounter = 0;
 
 function pushEntry(tabId: number, entry: CapturedEntry): void {
@@ -66,8 +68,8 @@ function extractOperationName(body: string | undefined): string | null {
 // ─── Capture attachment (idempotent per tab) ────────────────────────
 
 export function attachNetworkCapture(tabId: number, page: Page): void {
-  if (attachedTabs.has(tabId)) return;
-  attachedTabs.add(tabId);
+  if (attachedPages.has(page)) return;
+  attachedPages.add(page);
 
   page.on('response', (response: HTTPResponse) => {
     const request = response.request();
@@ -111,7 +113,6 @@ export function attachNetworkCapture(tabId: number, page: Page): void {
   });
 
   page.once('close', () => {
-    attachedTabs.delete(tabId);
     capturesByTab.delete(tabId);
   });
 }

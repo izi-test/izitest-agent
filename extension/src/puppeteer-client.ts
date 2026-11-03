@@ -128,6 +128,11 @@ export async function getPage(tabId: number): Promise<Page> {
 
   connectedPages.set(tabId, page);
   await emulateForeground(page);
+  // What the page asks of the network, kept from now on: a test step may read the answer to a
+  // request a click made (the server's capture, what: "request"). Loaded here, not on import:
+  // the network module sets up Chrome's listeners as it loads.
+  const { attachNetworkCapture } = await import('./commands/network');
+  attachNetworkCapture(tabId, page);
   return page;
 }
 

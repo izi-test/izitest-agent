@@ -403,3 +403,23 @@ export function pick(text, pattern) {
   if (!match) throw new Error(`"${pattern}" is not in "${String(text).slice(0, 120)}"`);
   return match[1] ?? match[0];
 }
+
+/**
+ * In exported Playwright code: the value at `path` of the answer to the last request of the page
+ * whose URL holds `url` (`answers`: the page's responses, as page.on('response') gives them), or
+ * its whole body without a path; waited for, up to 10 s, when the page has not had it yet.
+ */
+export async function answerTo(answers, url, path = null, method = null) {
+  for (const deadline = Date.now() + 10_000; ;) {
+    const answer = answers.findLast((r) => r.url().includes(url) && (!method || r.request().method() === method));
+    if (answer) {
+      const body = await answer.text();
+      if (!path) return body;
+      const found = pathValue(JSON.parse(body), path);
+      if (found === undefined) throw new Error(`The answer to ${answer.url()} has nothing at "${path}"`);
+      return found;
+    }
+    if (Date.now() > deadline) throw new Error(`The page made no request to "${url}"`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+}

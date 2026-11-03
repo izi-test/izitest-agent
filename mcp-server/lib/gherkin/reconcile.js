@@ -16,7 +16,7 @@ import { scenarioPhrases } from './serialize.js';
 import { featurePhrases, compileDefinitions, effectiveKeyword, stepsForPhrase, unresolved, unresolvedError } from './parse.js';
 
 // Parameters a phrase cannot say, set by recording: kept on an edited step with the same target.
-const RECORDING_ONLY_PARAMS = ['viaLabel', 'baselinePath'];
+const RECORDING_ONLY_PARAMS = ['viaLabel', 'baselinePath', 'method'];
 
 /**
  * The steps of `test` once its feature reads `featureText`; throws like the parser on a

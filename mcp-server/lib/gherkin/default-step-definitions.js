@@ -37,6 +37,7 @@ export const DEFAULT_STEP_DEFINITIONS = [
   { keyword: 'When',  pattern: 'I store the value of {string} as {string}', command: 'capture', params_template: { selector: '{0}', what: 'value', name: '{1}' } },
   { keyword: 'When',  pattern: 'I store the URL as {string}',               command: 'capture', params_template: { what: 'url', name: '{0}' } },
   { keyword: 'When',  pattern: 'I store {string} of the response as {string}', command: 'capture', params_template: { what: 'response', path: '{0}', name: '{1}' } },
+  { keyword: 'When',  pattern: 'I store {string} of the request to {string} as {string}', command: 'capture', params_template: { what: 'request', path: '{0}', url: '{1}', name: '{2}' } },
   { keyword: 'Given', pattern: 'I call {word} {string}',                    command: 'http',    params_template: { method: '{0}', url: '{1}' } },
   { keyword: 'Given', pattern: 'I call {word} {string} with {string}',      command: 'http',    params_template: { method: '{0}', url: '{1}', body: '{2}' } },
 
@@ -93,6 +94,7 @@ const FRENCH_PATTERNS = {
   'I store the value of {string} as {string}': 'je retiens la valeur de {string} dans {string}',
   'I store the URL as {string}': "je retiens l'URL dans {string}",
   'I store {string} of the response as {string}': 'je retiens {string} de la réponse dans {string}',
+  'I store {string} of the request to {string} as {string}': 'je retiens {string} de la requête vers {string} dans {string}',
   'I call {word} {string}': "j'appelle {word} {string}",
   'I call {word} {string} with {string}': "j'appelle {word} {string} avec {string}",
   'I wait {int} seconds': "j'attends {int} secondes",

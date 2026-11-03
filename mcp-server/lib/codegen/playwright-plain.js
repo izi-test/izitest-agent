@@ -36,7 +36,7 @@ export function generatePlaywrightPlain(test) {
   const computed = usesComputedValues(test);
   lines.push(`import { test, expect } from '@playwright/test';`);
   if (needsAxe(steps)) lines.push(AXE_IMPORT);
-  if (computed) lines.push(`import { computeVariables, resolveValues, pathValue, pick } from './izitest-values.js';`);
+  if (computed) lines.push(`import { computeVariables, resolveValues, pathValue, pick, answerTo } from './izitest-values.js';`);
   lines.push('');
 
   const vars = test.variables || {};
@@ -99,6 +99,11 @@ export function generatePlaywrightPlain(test) {
   push(head);
   if (bound) for (const line of computing('{ ...DEFAULTS, ...ROW }')) push(`  ${line}`);
   if (calls) push('  let RESPONSE = null;');
+  // The answers the page gets, for a step that keeps a value of one.
+  if (steps.some((step) => step.command === 'capture' && step.params?.what === 'request')) {
+    push('  const ANSWERS = [];');
+    push("  page.on('response', (response) => ANSWERS.push(response));");
+  }
   for (const requirement of test.requirements ?? []) {
     const criteria = requirement.criteria?.length ? `: criterion ${requirement.criteria.map((c) => c.number).join(', ')}` : '';
     push(`  // Checks ${requirement.key} — ${requirement.title}${criteria}`);
@@ -210,6 +215,7 @@ function renderCapture(step) {
       case 'url': return 'page.url()';
       case 'title': return 'await page.title()';
       case 'response': return `pathValue(RESPONSE, ${jsLiteral(p.path ?? '')})`;
+      case 'request': return `await answerTo(ANSWERS, ${jsLiteral(p.url ?? '')}, ${p.path ? jsLiteral(p.path) : 'null'}${p.method ? `, ${jsStringLiteral(p.method)}` : ''})`;
       case 'value': return `await ${locatorOf(chooseTarget(step, jsLiteral))}.first().inputValue()`;
       case 'attribute': return `await ${locatorOf(chooseTarget(step, jsLiteral))}.first().getAttribute(${jsLiteral(p.attribute ?? '')})`;
       default: return `((await ${locatorOf(chooseTarget(step, jsLiteral))}.first().textContent()) ?? '').trim()`;

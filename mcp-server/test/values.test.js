@@ -147,7 +147,7 @@ test('the exported code computes the values with the very same file', () => {
   };
   const plain = generateTestCode(t, 'playwright-plain').files;
   assert.deepEqual(plain.map((f) => f.path), ['tests/delivery.spec.js', 'tests/izitest-values.js']);
-  assert.match(plain[0].content, /import \{ computeVariables, resolveValues, pathValue, pick \} from '\.\/izitest-values\.js';/);
+  assert.match(plain[0].content, /import \{ computeVariables, resolveValues, pathValue, pick, answerTo \} from '\.\/izitest-values\.js';/);
   assert.match(plain[0].content, /computeVariables\(\{\n {2}date: '\{\{today \+ 3 days \| dd\/MM\/yyyy\}\}',\n\}, \{ language: 'fr' \}\)/);
   assert.match(plain[0].content, /toContainText\(value\('Le \{\{today \| d MMMM\}\}'\)\)/);
   assert.match(plain[1].content, /export function computeVariables/);

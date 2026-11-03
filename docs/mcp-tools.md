@@ -615,9 +615,16 @@ Deux sortes d'étapes s'exécutent sur le serveur, entre celles que joue le navi
 (`lib/server-steps.js`) :
 
 - **`capture`** garde une valeur comme variable pour les étapes suivantes, écrite `{{nom}}` : le texte,
-  la valeur ou un attribut d'un élément, l'URL ou le titre de la page, ou une valeur de la dernière
-  réponse d'API (`what: "response"`, `path: "data.items[0].id"`). Un motif (expression régulière) n'en
-  garde qu'une partie, son premier groupe : `#(\d+)` garde `4521` de « Commande #4521 ».
+  la valeur ou un attribut d'un élément, l'URL ou le titre de la page, une valeur de la dernière
+  réponse d'API (`what: "response"`, `path: "data.items[0].id"`), ou une valeur de la réponse à une
+  requête que la page a faite (`what: "request"`, `url: "/api/orders"`, `method`, `path: "id"`) — l'id
+  qu'un clic sur « Acheter » a reçu sans l'afficher. Un motif (expression régulière) n'en garde qu'une
+  partie, son premier groupe : `#(\d+)` garde `4521` de « Commande #4521 ».
+
+  Pour une requête de la page, la capture prend la dernière dont l'URL contient `url`, faite depuis
+  l'étape d'avant ; si la page ne l'a pas encore reçue, elle l'attend jusqu'à 10 s, sinon elle prend la
+  dernière d'avant. L'extension écoute le réseau de chaque onglet qu'elle pilote dès qu'elle le prend
+  en main.
 - **`http`** appelle une API pour préparer les données (créer un utilisateur, une commande), avec les
   valeurs du test dans l'URL, les en-têtes et le corps. L'étape échoue sur un statut autre que 2xx, ou
   que `expect_status`. Sa réponse est lue par les captures qui suivent.
@@ -630,7 +637,7 @@ comme avant, en un seul envoi.
 
 | Outil | Rôle |
 | :--- | :--- |
-| `capture_value` | Garde une valeur de la page ou de la dernière réponse (`name`, `what`, `ref`/`selector`, `attribute`, `path`, `pattern`), enregistrée comme étape |
+| `capture_value` | Garde une valeur de la page, de la dernière réponse ou d'une requête de la page (`name`, `what`, `ref`/`selector`, `attribute`, `url`, `method`, `path`, `pattern`), enregistrée comme étape |
 | `call_api` | Appelle une API depuis le serveur (`method`, `url`, `headers`, `body`, `expect_status`), enregistrée comme étape ; renvoie la réponse |
 
 Pendant une session, `{{nom}}` dans une action (`fill`, `navigate`, `select`, `add_assertion`…) reçoit
@@ -638,13 +645,15 @@ tout de suite la valeur gardée, ou calculée, et l'étape enregistrée garde `{
 
 Les phrases Gherkin : `I store the text of {string} as {string}`, `I store the text of {string}
 matching {string} as {string}`, `I store the value of {string} as {string}`, `I store the URL as
-{string}`, `I store {string} of the response as {string}`, `I call {word} {string}`, `I call {word}
-{string} with {string}`. En français : `je retiens le texte de {string} dans {string}`,
-`j'appelle {word} {string} avec {string}`…
+{string}`, `I store {string} of the response as {string}`, `I store {string} of the request to
+{string} as {string}`, `I call {word} {string}`, `I call {word} {string} with {string}`. En français :
+`je retiens le texte de {string} dans {string}`, `je retiens {string} de la requête vers {string} dans
+{string}`, `j'appelle {word} {string} avec {string}`…
 
-L'export suit : en Playwright, les valeurs gardées vont dans `VARS` et l'API passe par la fixture
-`request` ; en Cucumber, par le World (`this.vars`, `this.call()`), et les valeurs gardées ne sont pas des
-colonnes de l'Outline.
+L'export suit : en Playwright, les valeurs gardées vont dans `VARS`, l'API passe par la fixture
+`request`, et les réponses de la page sont gardées depuis le début du test (`ANSWERS`, lues par
+`answerTo`) ; en Cucumber, par le World (`this.vars`, `this.call()`, `this.requestValue()`), et les
+valeurs gardées ne sont pas des colonnes de l'Outline.
 
 ### Paramètres de `run_test`
 

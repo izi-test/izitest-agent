@@ -153,3 +153,53 @@ test('the exported code keeps the values as it runs: Playwright through VARS, Cu
   assert.match(feature, /Examples:\n {6}\| email \|\n/, 'a column for the variable only, none for the values kept');
   assert.match(files.find((f) => f.path.endsWith('world.js')).content, /lookup: \(name\) => this\.vars\[name\]/);
 });
+
+/** The page's network, stood in for: the requests it made (most recent last) and their answers. */
+function network(requests) {
+  const asked = [];
+  const sendCommand = async (_profile, command, params) => {
+    asked.push(command);
+    if (command === 'network_requests') {
+      const now = Date.now();
+      const made = requests.filter((r) => (r.at ?? 0) <= now && r.url.includes(params.textFilter) && (!params.method || r.method === params.method));
+      return { total: made.length, requests: made.slice().reverse().map(({ id, method, url, status, timestamp }) => ({ id, method, url, status, timestamp })) };
+    }
+    if (command === 'network_response') return { id: params.id, body: requests.find((r) => r.id === params.id).body };
+    return {};
+  };
+  return { sendCommand, asked };
+}
+
+test('a value of the answer to a request the page made: the one since the step before, waited for, else the last before', async () => {
+  const start = Date.now();
+  const older = { id: 'net-1', method: 'POST', url: 'https://shop.test/api/orders', status: 201, timestamp: start - 5000, body: '{"id": 11}' };
+  const listing = { id: 'net-2', method: 'GET', url: 'https://shop.test/api/orders?page=1', status: 200, timestamp: start - 4000, body: '[]' };
+  const fresh = { id: 'net-3', method: 'POST', url: 'https://shop.test/api/orders', status: 201, timestamp: start + 600, at: start + 600, body: '{"id": 4521, "lines": [{"sku": "A-1"}]}' };
+  const capture = (params, requests, since) => runServerStep({ command: 'capture', params: { what: 'request', name: 'order', ...params } }, { sendCommand: network(requests).sendCommand, tabId: 3, state: { since, waitMs: 1500 } });
+
+  assert.equal((await capture({ url: '/api/orders', method: 'POST', path: 'id' }, [older, listing, fresh], start)).kept.value, '4521', 'waited for: it came after the click');
+  assert.equal((await capture({ url: '/api/orders', path: 'lines[0].sku' }, [older, listing, { ...fresh, at: 0 }], start)).kept.value, 'A-1');
+  assert.equal((await capture({ url: '/api/orders', method: 'POST', path: 'id' }, [older, listing], 0)).kept.value, '11', 'none since: the last before');
+  await assert.rejects(capture({ url: '/api/payments', path: 'id' }, [older], 0), /The page made no request to "\/api\/payments"/);
+  await assert.rejects(capture({ url: '/api/orders', method: 'POST', path: 'total' }, [{ ...fresh, at: 0 }], 0), /has nothing at "total"/);
+  assert.equal((await capture({ url: '/api/orders', method: 'POST', pattern: '"id": (\\d+)' }, [{ ...fresh, at: 0 }], 0)).kept.value, '4521', 'no path: the body, a pattern picking in it');
+});
+
+test('the exported code keeps the answers the page gets, and reads the one asked', () => {
+  const t = {
+    name: 'buy', project_id: 1, variables: {},
+    steps: [
+      { command: 'click', params: { selector: '#buy' } },
+      { command: 'capture', params: { what: 'request', url: '/api/orders', method: 'POST', path: 'id', name: 'order' } },
+      { command: 'navigate', params: { url: 'https://shop.test/orders/{{order}}' } },
+    ],
+  };
+  const [spec] = generateTestCode(t, 'playwright-plain').files;
+  assert.match(spec.content, /const ANSWERS = \[\];\n {2}page\.on\('response', \(response\) => ANSWERS\.push\(response\)\);/);
+  assert.match(spec.content, /VARS\['order'\] = await answerTo\(ANSWERS, '\/api\/orders', 'id', 'POST'\);/);
+
+  const definitions = defaultStepDefinitions('en').map((d, i) => ({ id: i + 1, ...d, steps_template: null, is_default: 1 }));
+  const files = generateTestCode(t, 'playwright-cucumber', () => definitions).files;
+  assert.match(files.find((f) => f.path.endsWith('.feature')).content, /And I store "id" of the request to "\/api\/orders" as "order"/);
+  assert.match(files.find((f) => f.path.endsWith('world.js')).content, /this\.page\.on\('response', \(response\) => this\.responses\.push\(response\)\);/);
+});

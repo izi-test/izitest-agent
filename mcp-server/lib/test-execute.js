@@ -184,6 +184,7 @@ async function executeStepsInDebugMode(
     }
 
     // Execute single step via replay_sequence with one element
+    if (server) server.state.since = Date.now();
     const singleStepParams = {
       steps: [server ? server.rehydrate(step) : step],
       startIndex: 0,
@@ -316,6 +317,8 @@ async function executeInSegments(
     const segment = [];
     while (i < actionSteps.length && !isServerStep(actionSteps[i])) segment.push(actionSteps[i++]);
     const numberOf = (n) => segment[n - 1]?._originalStepNumber ?? n;
+    // A capture after it reads the requests the page made from now on (lib/server-steps.js).
+    server.state.since = Date.now();
     let steps;
     try {
       steps = segment.map((step) => server.rehydrate(step));
