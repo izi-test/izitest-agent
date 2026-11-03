@@ -3,6 +3,7 @@
 import { log } from './logger.js';
 import { db, parseJson } from './db.js';
 import { deriveVarNameFromLocators } from './variable-detection.js';
+import { pageOf, actsOnElement } from './elements.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -28,6 +29,7 @@ export function loadTest(name) {
       ...(row.intent && { intent: row.intent }),
       ...(row.variable && { variable: parseJson(row.variable) }),
       ...(row.assertion && { assertion: parseJson(row.assertion) }),
+      ...(row.page && { page: row.page }),
     }))
   };
 }
@@ -87,8 +89,8 @@ export function saveTest(test) {
     db.prepare('DELETE FROM test_steps WHERE test_id = ?').run(testId);
 
     const insertStep = db.prepare(
-      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (let i = 0; i < test.steps.length; i++) {
       const step = test.steps[i];
@@ -111,7 +113,8 @@ export function saveTest(test) {
         step.locators ? JSON.stringify(step.locators) : null,
         step.intent || null,
         step.variable ? JSON.stringify(step.variable) : null,
-        step.assertion ? JSON.stringify(step.assertion) : null
+        step.assertion ? JSON.stringify(step.assertion) : null,
+        step.page || null
       );
     }
 
@@ -138,7 +141,8 @@ export function updateTestStep(testName, stepOrder, stepData) {
        params = ?,
        locators = ?,
        intent = COALESCE(?, intent),
-       assertion = ?
+       assertion = ?,
+       page = COALESCE(?, page)
      WHERE test_id = ? AND step_order = ?
      RETURNING *`
   ).get(
@@ -147,6 +151,7 @@ export function updateTestStep(testName, stepOrder, stepData) {
     stepData.locators ? JSON.stringify(stepData.locators) : null,
     stepData.intent || null,
     stepData.assertion ? JSON.stringify(stepData.assertion) : null,
+    stepData.page || null,
     test.id,
     stepOrder
   );
@@ -168,16 +173,33 @@ export function insertTestStep(testId, order, step) {
     db.prepare('UPDATE test_steps SET step_order = -step_order - 1 WHERE test_id = ? AND step_order >= ?').run(testId, order);
     db.prepare('UPDATE test_steps SET step_order = -step_order WHERE test_id = ? AND step_order < 0').run(testId);
     const row = db.prepare(
-      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
+      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
     ).get(testId, order, step.command || '', JSON.stringify(step.params ?? {}), step.locators ? JSON.stringify(step.locators) : null,
-      step.intent || null, step.variable ? JSON.stringify(step.variable) : null, step.assertion ? JSON.stringify(step.assertion) : null);
+      step.intent || null, step.variable ? JSON.stringify(step.variable) : null, step.assertion ? JSON.stringify(step.assertion) : null,
+      step.page || null);
     const test = db.prepare('SELECT variables FROM tests WHERE id = ?').get(testId);
     const variables = parseJson(test?.variables) ?? {};
     for (const variable of Object.values(variables)) if (variable?.step >= order) variable.step += 1;
     db.prepare(`UPDATE tests SET variables = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`).run(JSON.stringify(variables), testId);
     return row;
   })();
+}
+
+/**
+ * Gives the steps of a test that have no page yet the one they ran on (`pageUrl` of a step
+ * result, as replayed): those recorded before steps kept their page. Only steps that act on
+ * an element, and passed.
+ */
+export function fillStepPages(testId, stepResults) {
+  const update = db.prepare('UPDATE test_steps SET page = ? WHERE test_id = ? AND step_order = ? AND page IS NULL AND command = ?');
+  let filled = 0;
+  for (const result of stepResults ?? []) {
+    const page = result?.status === 'success' && actsOnElement(result.command) ? pageOf(result.pageUrl) : null;
+    if (page) filled += update.run(page, testId, result.step, result.command).changes;
+  }
+  if (filled) log(`Pages kept for ${filled} step(s) of test #${testId}`);
+  return filled;
 }
 
 export function deleteTest(name) {
@@ -187,7 +209,7 @@ export function deleteTest(name) {
 
 export function listTests() {
   const rows = db.prepare(
-    `SELECT t.*, s.step_order, s.command, s.params, s.locators, s.intent, s.variable, s.assertion
+    `SELECT t.*, s.step_order, s.command, s.params, s.locators, s.intent, s.variable, s.assertion, s.page
      FROM tests t
      LEFT JOIN test_steps s ON s.test_id = t.id
      ORDER BY t.updated_at DESC, s.step_order ASC`
@@ -214,6 +236,7 @@ export function listTests() {
         ...(row.intent && { intent: row.intent }),
         ...(row.variable && { variable: parseJson(row.variable) }),
         ...(row.assertion && { assertion: parseJson(row.assertion) }),
+        ...(row.page && { page: row.page }),
       });
     }
   }

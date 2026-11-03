@@ -1,5 +1,6 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Project } from '../../types';
+import type { PageElement, Project } from '../../types';
+import { testsApi } from './testsApi';
 
 interface ProjectsResponse {
   projects: Project[];
@@ -8,7 +9,7 @@ interface ProjectsResponse {
 export const projectsApi = createApi({
   reducerPath: 'projectsApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
-  tagTypes: ['ProjectList'],
+  tagTypes: ['ProjectList', 'Elements'],
   endpoints: (builder) => ({
 
     getProjects: builder.query<Project[], void>({
@@ -35,6 +36,28 @@ export const projectsApi = createApi({
       query: (id) => ({ url: `api/projects/${id}`, method: 'DELETE' }),
       invalidatesTags: [{ type: 'ProjectList', id: 'LIST' }],
     }),
+
+    // The elements its steps act on (mcp-server/lib/element-store.js).
+    getElements: builder.query<PageElement[], number>({
+      query: (projectId) => `api/projects/${projectId}/elements`,
+      transformResponse: (response: { elements: PageElement[] }) => response.elements ?? [],
+      providesTags: ['Elements'],
+    }),
+
+    // Renamed, an element reads under its new name in the Gherkin of every test using it.
+    renameElement: builder.mutation<{ name: string }, { id: number; name: string }>({
+      query: ({ id, name }) => ({ url: `api/elements/${id}`, method: 'PATCH', body: { name } }),
+      invalidatesTags: ['Elements'],
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        await queryFulfilled.catch(() => null);
+        dispatch(testsApi.util.invalidateTags(['Test']));
+      },
+    }),
+
+    deleteElement: builder.mutation<void, number>({
+      query: (id) => ({ url: `api/elements/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['Elements'],
+    }),
   }),
 });
 
@@ -43,4 +66,7 @@ export const {
   useCreateProjectMutation,
   useUpdateProjectMutation,
   useDeleteProjectMutation,
+  useGetElementsQuery,
+  useRenameElementMutation,
+  useDeleteElementMutation,
 } = projectsApi;

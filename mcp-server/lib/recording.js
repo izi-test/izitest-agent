@@ -4,6 +4,7 @@
 // different tests at the same time, and each must only ever see its own steps and refs.
 
 import { log } from './logger.js';
+import { pageOf } from './elements.js';
 
 // ─── Action History ────────────────────────────────────────────────
 
@@ -112,8 +113,10 @@ export function recordAction(session, command, params, refKey, screenshotBase64,
   }
   // Locators the action itself learned (the role and name Chrome gives a clicked element).
   if (extraLocators.length) locators = [...(locators ?? []), ...extraLocators];
+  // The page it was done on, as its result said (Session.notePage): its element is known by it.
+  const page = pageOf(session.takePage?.()) ?? undefined;
 
-  const id = session.putAction({ command, params: recordParams, locators });
+  const id = session.putAction({ command, params: recordParams, locators, ...(page && { page }) });
 
   // Auto-record step when recording is active
   const recording = session.recording;
@@ -123,6 +126,7 @@ export function recordAction(session, command, params, refKey, screenshotBase64,
       command,
       params: { ...recordParams },
       ...(locators && { locators }),
+      ...(page && { page }),
       ...(intent && { intent }),
       ...(screenshotBase64 && { _screenshotBase64: screenshotBase64 }),
     };

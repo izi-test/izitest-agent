@@ -201,8 +201,51 @@ And I fill 'internal:label="E-mail"i' with "bob@corp"
 And I select "Pro — 25 members ($29/mo)" in "#ws-plan"
 ```
 
-L'onglet Gherkin du tableau de bord, lui, garde les sélecteurs enregistrés, dont le rejeu d'IziTest a
-besoin. Un argument qui contient des guillemets doubles s'écrit entre guillemets simples.
+L'onglet Gherkin du tableau de bord, lui, nomme les éléments (ci-dessous) au lieu de donner leur
+sélecteur ; une étape sans élément garde le sélecteur enregistré. Un argument qui contient des
+guillemets doubles s'écrit entre guillemets simples.
+
+### Les éléments d'un projet
+
+Chaque étape qui agit sur un élément de la page (`click`, `fill`, `select`, `upload`, `drag`) garde la
+page où elle a été faite : l'hôte et le chemin, sans la requête ni le fragment, chaque partie du chemin
+qui contient un chiffre (un identifiant, un slug avec un identifiant) remplacée par `*` —
+`notes.test/notes/*` pour la note 42 comme pour la 43. L'extension renvoie l'URL de la page avec le
+résultat de chaque action (`pageUrl`). Une étape enregistrée avant n'a pas de page : elle la reçoit à la
+prochaine exécution réussie de son test.
+
+L'élément sur lequel agit une étape est connu par une **clé exacte**, jamais par ressemblance : sa page,
+puis son rôle et son nom accessible (avec le conteneur qui le distingue quand la page en a plusieurs,
+`button "Delete" in testid "note-3"`), à défaut son `data-testid`, le libellé d'un champ
+(`field "E-mail"`), ou un sélecteur CSS stable. Le bouton « Save » de la page des notes et celui de la
+page du profil sont deux éléments, même avec le même sélecteur ; le même « Save » enregistré par deux
+tests n'en est qu'un. Une étape qui n'a que sa position pour se distinguer, ou dont un élément de liste
+est choisi par une variable, n'a pas d'élément.
+
+Chaque élément a un nom, unique dans son projet, pris de ce qu'une personne lit dessus (« Save
+profile », « E-mail ») ; déjà pris, il reçoit sa page (« Save (profile) »). L'onglet Gherkin dit ce nom
+à la place du sélecteur :
+
+```gherkin
+When I fill "E-mail" with "{{email}}"
+And I click on "Sign in"
+```
+
+et le relit comme l'élément : une phrase qui nomme un élément du projet, là où va un sélecteur, agit
+sur lui, avec le sélecteur, les locators et la page du dernier enregistrement qui l'a touché. C'est vrai
+aussi d'un scénario écrit à la main (`create_test_from_gherkin`). Un nom qu'aucun élément ne porte reste
+un sélecteur.
+
+La page **Elements** du tableau de bord liste les éléments du projet, page par page, avec les tests qui
+les utilisent. Un élément s'y renomme (son nouveau nom se lit dans le Gherkin de tous ses tests) ; un
+élément qu'aucune étape n'utilise plus s'y supprime. Les étapes d'un test montrent le nom de leur
+élément.
+
+| Route | Rôle |
+| :--- | :--- |
+| `GET /api/projects/:id/elements` | Les éléments du projet, avec leur page, ce qu'ils sont, et les étapes qui les utilisent |
+| `PATCH /api/elements/:id` | Renomme un élément (`{ name }`) ; 409 si un autre élément du projet a ce nom |
+| `DELETE /api/elements/:id` | Supprime un élément qu'aucune étape n'utilise ; 409 sinon |
 
 ### Étapes métier : `create_business_step`
 
@@ -248,8 +291,13 @@ create_business_step({
 par défaut (`I am on {string}`). Rejouée depuis Gherkin (`create_test_from_gherkin`), une étape
 métier redonne ses étapes avec leurs locators.
 
-Une étape métier se reconnaît aussi dans un autre enregistrement des mêmes étapes, même si un
-sélecteur y diffère parce qu'il est faible : un identifiant généré à chaque chargement (deux
+Les sous-étapes d'une étape métier gardent leur page. Quand l'enregistrement comparé a aussi la sienne,
+chaque sous-étape doit agir sur le même élément (même clé, voir « Les éléments d'un projet »), quels que
+soient les sélecteurs : les mêmes clics sur une autre page ne sont pas l'étape métier, même avec les
+mêmes sélecteurs.
+
+Sans page d'un côté, une étape métier se reconnaît aussi dans un autre enregistrement des mêmes étapes,
+même si un sélecteur y diffère parce qu'il est faible : un identifiant généré à chaque chargement (deux
 enregistrements de Bien'ici donnent deux `label[for="<uuid>"]` différents) ou une position. L'élément
 est alors reconnu à ce que les deux enregistrements ont en commun : le même `data-testid`, un même
 locator CSS stable, ou la même balise avec le même nom accessible (`label` « Jardin »). Deux sélecteurs

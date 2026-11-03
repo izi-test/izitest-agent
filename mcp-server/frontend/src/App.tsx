@@ -6,6 +6,7 @@ import { RequirementsPage } from './components/Requirements';
 import { CampaignsPage } from './components/Campaigns';
 import { TestDetailRoute, RequirementRoute, CampaignRoute, ProjectRedirect } from './components/Routes';
 import { BugsPage } from './components/BugsPage';
+import { ElementsPage } from './components/ElementsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { Settings } from './components/Settings';
 import { ChatPanel } from './components/ChatPanel';
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
       { path: 'campaigns', element: <CampaignsPage /> },
       { path: 'campaigns/:id', element: <CampaignRoute /> },
       { path: 'bugs', element: <BugsPage /> },
+      { path: 'elements', element: <ElementsPage /> },
       { path: 'projects', element: <ProjectsPage /> },
       // A project's tests used to be at /projects/:id.
       { path: 'projects/:projectId', element: <ProjectRedirect /> },

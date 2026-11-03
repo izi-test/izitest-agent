@@ -75,6 +75,21 @@ export interface Step {
   variable: Variable | null;
   locators: any | null;
   assertion: Assertion | null;
+  /** The page it was done on (host and path, ids starred), when known. */
+  page?: string | null;
+  /** The name of the element it acts on, when known (mcp-server/lib/elements.js). */
+  element?: string;
+}
+
+/** What the steps of a project act on, known by its page, role and name (mcp-server/lib/elements.js). */
+export interface PageElement {
+  id: number;
+  name: string;
+  page: string;
+  /** What it is on its page: button "Save" in testid "note-3", field "E-mail"… */
+  target: string;
+  created_at: string;
+  used_by: { test: string; steps: number[] }[];
 }
 
 export interface Test {

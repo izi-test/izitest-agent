@@ -728,8 +728,12 @@ export async function runAgent(config, prompt, sendCommand, onProgress, signal, 
 async function runAgentInSession(config, prompt, rawSendCommand, onProgress, signal, session) {
   const { model: modelName, apiKey } = config;
   // Pin every command to this run's own window, exactly like the MCP tools do.
-  const sendCommand = (profile, command, params, ...rest) =>
-    rawSendCommand(profile, command, session.scope(params), ...rest);
+  // An action says the page it was done on: the step recording it keeps it.
+  const sendCommand = async (profile, command, params, ...rest) => {
+    const result = await rawSendCommand(profile, command, session.scope(params), ...rest);
+    session.notePage(result);
+    return result;
+  };
 
   log(`[Agent] Starting: ${modelName}`);
   onProgress({ type: 'chunk', text: `Using ${modelName}\n\n` });

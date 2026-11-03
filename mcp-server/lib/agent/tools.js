@@ -10,6 +10,7 @@ import { db, parseJson } from '../db.js';
 import { loadTest, saveTest, listTests } from '../test-store.js';
 import { parseFeatureToStepsWith } from '../gherkin/parse.js';
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
+import { withElementNames, elementTargets } from '../element-store.js';
 import {
   listStepDefinitions,
   createStepDefinition,
@@ -133,7 +134,8 @@ export const AGENT_TOOLS = [
 
       let steps;
       try {
-        steps = parseFeatureToStepsWith(gherkin, definitions);
+        // A name of an element of the project, where a selector goes, acts on that element.
+        steps = parseFeatureToStepsWith(gherkin, definitions, { targets: elementTargets(project_id) });
       } catch (err) {
         if (err.code === 'GHERKIN_UNRESOLVED') {
           return { error: err.message, unresolved: err.errors };
@@ -282,7 +284,7 @@ export const AGENT_TOOLS = [
           data: {
             step_definition_id: def.id,
             steps_grouped: built.steps_template.length,
-            feature: serializeTestToFeatureWith(test, projectDefinitions(project_id)),
+            feature: serializeTestToFeatureWith(withElementNames({ ...test, project_id }), projectDefinitions(project_id)),
           },
         };
       } catch (err) {
@@ -354,7 +356,7 @@ export const AGENT_TOOLS = [
       const test = loadTest(test_name);
       if (!test) return { error: `Test "${test_name}" not found` };
 
-      const feature = serializeTestToFeatureWith(test, projectDefinitions(project_id));
+      const feature = serializeTestToFeatureWith(withElementNames(test), projectDefinitions(project_id));
       return { data: { feature } };
     },
   },

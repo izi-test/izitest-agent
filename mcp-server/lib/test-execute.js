@@ -2,7 +2,7 @@
 
 import { log } from './logger.js';
 import { db } from './db.js';
-import { loadTest } from './test-store.js';
+import { loadTest, fillStepPages } from './test-store.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
@@ -539,6 +539,12 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       globalError = stepResult.error;
     }
     persistStepResult(executionId, stepResult);
+  }
+  // The page each step ran on: a step recorded before steps kept theirs gets it now.
+  try {
+    fillStepPages(testId, stepResults);
+  } catch (err) {
+    log(`Could not keep the pages of the steps of "${name}": ${err.message}`);
   }
 
   if (!failedStepOrder && firstFailedAssertion) {

@@ -56,6 +56,8 @@ export function buildBusinessStep(test, { from_step, to_step, pattern, args = []
       command: step.command,
       params,
       ...(step.locators?.length && { locators: structuredClone(step.locators) }),
+      // The page it was recorded on: with it, the sub-step is known by its element (elements.js).
+      ...(step.page && { page: step.page }),
     };
   });
 

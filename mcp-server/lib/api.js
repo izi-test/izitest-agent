@@ -19,6 +19,7 @@ import {
 } from './gherkin/step-definition-store.js';
 import { serializeTestToFeature } from './gherkin/serialize.js';
 import { stepsForEditedFeature } from './gherkin/reconcile.js';
+import { withElementNames, elementTargets, listElements, renameElement, deleteElement } from './element-store.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
@@ -173,10 +174,12 @@ export async function apiRouter(req, res, url) {
       const steps = db.prepare(
         'SELECT * FROM test_steps WHERE test_id = ? ORDER BY step_order'
       ).all(test.id);
+      // Each step with the element it acts on (`element`, its name), when it is known.
+      const { steps: named } = withElementNames({ project_id: test.project_id, steps: parseRows(steps, 'params', 'locators', 'variable', 'assertion') });
       return json(res, 200, {
         test: {
           ...parseRow(test, 'variables', 'viewport'),
-          steps: parseRows(steps, 'params', 'locators', 'variable', 'assertion')
+          steps: named
         }
       });
     }
@@ -222,7 +225,8 @@ export async function apiRouter(req, res, url) {
       if (!test) return json(res, 404, { error: 'Test not found' });
       const projectId = test.project_id;
       if (!projectId) return json(res, 400, { error: 'Test is not assigned to a project; assign it first to use Gherkin' });
-      const feature = serializeTestToFeature(test, projectId);
+      // Its elements by their names, not their selectors: When I click on "Save profile".
+      const feature = serializeTestToFeature(withElementNames(test), projectId);
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(feature);
     }
@@ -241,7 +245,8 @@ export async function apiRouter(req, res, url) {
       let steps;
       try {
         // Unchanged phrases keep their steps whole: list variables, intents, locators.
-        steps = stepsForEditedFeature(featureText, projectDefinitions(projectId), existing);
+        // A name of an element reads back as that element.
+        steps = stepsForEditedFeature(featureText, projectDefinitions(projectId), withElementNames(existing), { targets: elementTargets(projectId) });
       } catch (err) {
         if (err.code === 'GHERKIN_UNRESOLVED') {
           return json(res, 422, { error: err.message, errors: err.errors });
@@ -1048,6 +1053,26 @@ export async function apiRouter(req, res, url) {
       const result = db.prepare('DELETE FROM projects WHERE id = ?').run(params.id);
       if (result.changes === 0) return json(res, 404, { error: 'Project not found' });
       return json(res, 200, { success: true });
+    }
+
+    // ── GET /api/projects/:id/elements — what its steps act on, page by page, with their uses ──
+    params = matchRoute(path, '/api/projects/:id/elements');
+    if (method === 'GET' && params) {
+      const projectId = parseInt(params.id, 10);
+      if (!db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)) return json(res, 404, { error: 'Project not found' });
+      return json(res, 200, { elements: listElements(projectId) });
+    }
+
+    // ── PATCH /api/elements/:id — rename; DELETE — one no step acts on any more ──
+    params = matchRoute(path, '/api/elements/:id');
+    if (method === 'PATCH' && params) {
+      const body = await readBody(req);
+      const result = renameElement(parseInt(params.id, 10), body.name);
+      return result.error ? json(res, result.status, { error: result.error }) : json(res, 200, result);
+    }
+    if (method === 'DELETE' && params) {
+      const result = deleteElement(parseInt(params.id, 10));
+      return result.error ? json(res, result.status, { error: result.error }) : json(res, 200, result);
     }
 
     // ── GET /api/projects/:id/step-definitions ──

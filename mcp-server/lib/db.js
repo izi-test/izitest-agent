@@ -365,6 +365,27 @@ export function initDatabase() {
     log(`Migration warning (Xray, Jira comments): ${err.message}`);
   }
 
+  // The elements of a project (lib/elements.js): what its steps act on, known by their page and
+  // their role and name. A step keeps the page it was recorded on (host and path, ids starred).
+  try {
+    const stepCols = db.prepare('PRAGMA table_info(test_steps)').all().map(c => c.name);
+    if (!stepCols.includes('page')) db.exec('ALTER TABLE test_steps ADD COLUMN page TEXT DEFAULT NULL');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS elements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        name TEXT NOT NULL,
+        page TEXT NOT NULL,
+        created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        UNIQUE(project_id, key),
+        UNIQUE(project_id, name)
+      );
+    `);
+  } catch (err) {
+    log(`Migration warning (elements): ${err.message}`);
+  }
+
   log('SQLite database initialized');
 }
 

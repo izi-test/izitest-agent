@@ -45,6 +45,9 @@ export class Session {
 
     this.refMap = {};        // ref (@eX) → { selector, text, role, name }
     this.recording = null;   // { name, steps: [], startedAt }
+    // The URL of the page the last action was done on, as the extension reported it: the
+    // page the step recording that action keeps (lib/elements.js). Taken once.
+    this.actionPageUrl = undefined;
     this.actionHistory = new Map();
   }
 
@@ -87,6 +90,18 @@ export class Session {
   adoptTab(tabId, windowId) {
     if (tabId !== undefined && tabId !== null) this.lastTabId = tabId;
     if (windowId !== undefined && windowId !== null) this.windowId = windowId;
+  }
+
+  /** Keeps the page an action was done on, from its result (`pageUrl`). */
+  notePage(result) {
+    if (typeof result?.pageUrl === 'string') this.actionPageUrl = result.pageUrl;
+  }
+
+  /** The page the last action was done on, once: the next action reports its own. */
+  takePage() {
+    const url = this.actionPageUrl;
+    this.actionPageUrl = undefined;
+    return url;
   }
 
   forgetTabs(tabIds) {

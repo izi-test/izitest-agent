@@ -18,8 +18,12 @@ import { featurePhrases, compileDefinitions, effectiveKeyword, stepsForPhrase, u
 // Parameters a phrase cannot say, set by recording: kept on an edited step with the same target.
 const RECORDING_ONLY_PARAMS = ['viaLabel', 'baselinePath'];
 
-/** The steps of `test` once its feature reads `featureText`; throws like the parser on a phrase nothing matches. */
-export function stepsForEditedFeature(featureText, definitions, test) {
+/**
+ * The steps of `test` once its feature reads `featureText`; throws like the parser on a
+ * phrase nothing matches. `test` as its feature was shown, its elements named; `targets`,
+ * the elements of its project by name (parse.js).
+ */
+export function stepsForEditedFeature(featureText, definitions, test, { targets } = {}) {
   const before = scenarioPhrases(test, definitions);
   const after = featurePhrases(featureText);
   const matched = commonPhrases(before.map(p => p.phrase), after.map(p => p.text));
@@ -40,7 +44,7 @@ export function stepsForEditedFeature(featureText, definitions, test) {
       continue;
     }
 
-    const parsed = stepsForPhrase(text, effectiveKeyword(keyword, lastKeyword), compiled, steps.length);
+    const parsed = stepsForPhrase(text, effectiveKeyword(keyword, lastKeyword), compiled, steps.length, targets);
     if (!parsed) {
       errors.push(unresolved(line, keyword, text));
       continue;
@@ -105,6 +109,7 @@ function carryOver(oldSteps, newSteps) {
       ...step,
       params,
       ...(old.locators && { locators: structuredClone(old.locators) }),
+      ...(old.page && { page: old.page }),
       ...(old.intent && { intent: old.intent }),
       ...(keepsVariable && { variable: structuredClone(old.variable) }),
     };

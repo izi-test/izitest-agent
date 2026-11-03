@@ -682,7 +682,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         command: action.command,
         params: { ...action.params },
         locators: action.locators || null,
-        intent: intent || null
+        intent: intent || null,
+        ...(action.page && { page: action.page }),
       };
 
       // Purge null/undefined from params

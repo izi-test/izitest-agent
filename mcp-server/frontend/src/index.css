@@ -3064,3 +3064,18 @@ textarea { resize: vertical; line-height: 1.5; }
 /* Run history, Gherkin, code: inside a card */
 .exec-history-section { margin: 0; padding: 0; border: none; }
 .card .gherkin-editor, .card .code-panel { border: none; padding: 0; background: none; }
+
+/* Elements (ElementsPage.tsx): what a project's steps act on, and the chip a step shows. */
+.elements-page { margin-top: 16px; }
+.element-name { display: flex; align-items: center; gap: 4px; }
+.element-name .icon-button { opacity: 0; }
+tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { opacity: 1; }
+.element-name-edit { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.element-name-edit input { height: 30px; min-width: 180px; }
+.element-chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px;
+  border: 1px solid var(--primary-tint-border); border-radius: 999px; background: var(--primary-tint);
+  color: var(--primary-hover); font-size: 11px; font-weight: 500; cursor: pointer;
+}
+.element-chip:hover { background: var(--primary-tint-strong); }
+.field__error { color: var(--red); font-size: 12px; }

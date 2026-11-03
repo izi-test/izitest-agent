@@ -14,6 +14,7 @@ import { cmdConsoleMessages, cmdCheckLinks, cmdRunAxe } from './commands/checks'
 
 import { restoreOwnedWindows } from './owned-windows';
 import { HEADLESS_PROFILE, isHeadless } from './headless';
+import { actsOnPage, withPageUrl } from './page-url';
 import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecordStart, cmdLiveRecordStop, cmdLiveRecordList, setLiveSink } from './live';
 
 // Importing puppeteer-client to register its lifecycle listeners
@@ -102,6 +103,17 @@ function isAboutBlankError(error: unknown): boolean {
   return msg.includes('about:blank') && msg.includes('Cannot access contents');
 }
 
+/** The URL of the tab an action is about to act in, for an action on an element of the page. */
+async function pageUrlBefore(command: string, params: Record<string, unknown>): Promise<string | undefined> {
+  if (!actsOnPage(command)) return undefined;
+  try {
+    const tabId = await resolveTabId(params.tabId as number | undefined, params.sessionId as string | undefined);
+    return (await chrome.tabs.get(tabId)).url || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function executeCommand(command: string, params: Record<string, unknown>, onProgress?: (data: any) => void): Promise<unknown> {
   const handler = COMMAND_HANDLERS[command];
   if (!handler) throw new Error(`Unknown command: ${command}`);
@@ -115,8 +127,10 @@ async function executeCommand(command: string, params: Record<string, unknown>, 
     });
   }
 
+  // The page the action is done on: the step recording it keeps it.
+  const pageUrl = await pageUrlBefore(command, params);
   try {
-    return await handler(params, onProgress);
+    return withPageUrl(await handler(params, onProgress), pageUrl);
   } catch (error) {
     if (!isAboutBlankError(error)) throw error;
 
@@ -142,7 +156,7 @@ async function executeCommand(command: string, params: Record<string, unknown>, 
         // Tab might have been removed — let the retry fail naturally
       }
 
-      return handler(params, onProgress);
+      return withPageUrl(await handler(params, onProgress), pageUrl);
     }
 
     throw error;

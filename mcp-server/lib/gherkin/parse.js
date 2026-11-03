@@ -23,14 +23,16 @@ const withVariableArgs = (pattern) => pattern.replace(/\{(int|float)\}/g, '{izit
 
 // Takes the definitions loaded by the caller. A test's own feature, edited, goes through
 // reconcile.js instead, which keeps the steps of the phrases left as they were.
-export function parseFeatureToStepsWith(featureText, definitions) {
+// `targets`: the elements of the project by name (element-store.js's elementTargets) — a
+// phrase naming one where a selector goes acts on it.
+export function parseFeatureToStepsWith(featureText, definitions, { targets } = {}) {
   const compiled = compileDefinitions(definitions);
   const testSteps = [];
   const errors = [];
   let lastResolvedKeyword = null;
 
   for (const { text: phrase, keyword: rawKeyword, line } of featurePhrases(featureText)) {
-    const parsed = stepsForPhrase(phrase, effectiveKeyword(rawKeyword, lastResolvedKeyword), compiled, testSteps.length);
+    const parsed = stepsForPhrase(phrase, effectiveKeyword(rawKeyword, lastResolvedKeyword), compiled, testSteps.length, targets);
     if (!parsed) {
       errors.push(unresolved(line, rawKeyword, phrase));
       continue;
@@ -74,10 +76,10 @@ export function effectiveKeyword(rawKeyword, lastResolvedKeyword) {
  * The test steps one phrase stands for, and the keyword of the definition it matched;
  * null when no definition matches it.
  */
-export function stepsForPhrase(phrase, keyword, compiled, startIndex = 0) {
+export function stepsForPhrase(phrase, keyword, compiled, startIndex = 0, targets = null) {
   const match = findMatchingDefinition(phrase, compiled, keyword);
   if (!match) return null;
-  return { steps: buildTestSteps(match.def, match.args, phrase, startIndex), keyword: match.def.keyword };
+  return { steps: buildTestSteps(match.def, match.args, phrase, startIndex, targets), keyword: match.def.keyword };
 }
 
 export function unresolved(line, rawKeyword, phrase) {
@@ -108,7 +110,7 @@ function findMatchingDefinition(phrase, compiled, effectiveKeyword) {
   return fallback;
 }
 
-function buildTestSteps(def, args, phrase, startIndex) {
+function buildTestSteps(def, args, phrase, startIndex, targets) {
   // Composite definition — expand into multiple test_steps
   if (def.steps_template) {
     return def.steps_template.map((tpl, j) => {
@@ -123,9 +125,11 @@ function buildTestSteps(def, args, phrase, startIndex) {
       if (tpl.command === 'assert') {
         step.assertion = params;
       }
-      // Built from a recording, the sub-step keeps its locators: replay falls back on them.
+      // Built from a recording, the sub-step keeps its locators (replay falls back on them)
+      // and its page (its element is known by it).
       if (tpl.locators) step.locators = tpl.locators;
-      return step;
+      if (tpl.page) step.page = tpl.page;
+      return onElement(step, tpl.params, params, targets);
     });
   }
 
@@ -141,7 +145,23 @@ function buildTestSteps(def, args, phrase, startIndex) {
   if (def.command === 'assert') {
     step.assertion = params;
   }
-  return [step];
+  return [onElement(step, def.params_template, params, targets)];
+}
+
+/**
+ * A step whose selector, given by the phrase, is the name of an element of the project: the
+ * step acts on that element, as the latest step recorded on it found it — its selector, its
+ * locators, its page.
+ */
+function onElement(step, template, params, targets) {
+  const target = targets && /^\{\d+\}$/.test(template?.selector ?? '') ? targets.get(params.selector) : null;
+  if (!target) return step;
+  params.selector = target.selector;
+  return {
+    ...step,
+    ...(target.locators?.length && { locators: structuredClone(target.locators) }),
+    page: target.page,
+  };
 }
 
 function hydrateTemplate(tpl, args) {

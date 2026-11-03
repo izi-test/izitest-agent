@@ -40,7 +40,7 @@ import { Card, EmptyState, KeyChip, Menu, ProjectChip, ResultBar, StatusPill } f
 import { dateTime, formatDuration, relativeTime } from '../format';
 import {
   ArrowLeft, Play, Save, Trash2, List, History, ChevronUp, ChevronDown, Pencil, Plus, Database, ShieldCheck, Monitor, FileCode, Code,
-  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight,
+  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight, MousePointerClick,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -560,6 +560,11 @@ CRITICAL RULES:
                             </span>
                             {step.intent && <span className="step__intent">{step.intent}</span>}
                             {variable && variable.name && <span className="var-badge">{'{{' + variable.name + '}}'}</span>}
+                            {step.element && (
+                              <button className="element-chip" title={`The element it acts on, on ${step.page}`} onClick={() => go(`/elements?q=${encodeURIComponent(step.element ?? '')}`, { from: testName })}>
+                                <MousePointerClick size={11} />{step.element}
+                              </button>
+                            )}
                           </div>
                           {paramsPreview && <div className="step__params" title={paramsPreview}>{paramsPreview}</div>}
                           {isAssertion && assertion?.type === 'visual_match' && (

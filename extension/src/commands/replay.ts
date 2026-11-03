@@ -8,6 +8,7 @@ import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdUpload, cmdDrag, cmdKeybo
 import { dragElements } from './drag';
 import { cmdExecuteJs, cmdWait } from './queries';
 import { setPickedValue } from '../dom/picked-input';
+import { actsOnPage } from '../page-url';
 import { fileInputOf, putFiles } from '../dom/file-input';
 import type { ReplaySequenceParams, Locator } from '../types';
 import type { ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
@@ -92,6 +93,11 @@ export async function cmdReplaySequence(
     const step = steps[i] as ReplayStep;
     const baseParams = { ...step.params };
     const stepStartedAt = Date.now();
+    // The page the step runs on: a step recorded before steps kept theirs gets it (server's
+    // fillStepPages).
+    const pageUrl = currentTabId && actsOnPage(step.command)
+      ? await chrome.tabs.get(currentTabId).then((tab) => tab.url, () => undefined)
+      : undefined;
 
     if (isAbortRequested) {
       executionError = 'Sequence aborted artificially by user via Stop button.';
@@ -353,6 +359,9 @@ export async function cmdReplaySequence(
       }
       break;
     }
+
+    const done = results[results.length - 1];
+    if (pageUrl && done?.step === i + 1 && done.status === 'success') done.pageUrl = pageUrl;
 
     const delayMs = STEP_DELAY_MS[step.command] ?? DEFAULT_STEP_DELAY_MS;
     console.log(`  ⏳ Waiting ${delayMs}ms...`);

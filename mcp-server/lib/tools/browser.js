@@ -36,7 +36,12 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
     const session = sess();
     if (profile) session.profile = profile;
     const scoped = session.scope(params);
-    if (!LIVE_ACTIONS.has(command)) return dispatch(profile, command, scoped, ...rest);
+    // An action says the page it was done on: the step recording it keeps it.
+    if (!LIVE_ACTIONS.has(command)) {
+      const result = await dispatch(profile, command, scoped, ...rest);
+      session.notePage(result);
+      return result;
+    }
     const frameOf = (tabId) => captureActionFrame({ profile, tabId: tabId ?? scoped.tabId ?? session.lastTabId, action: command, session, dispatch });
     let result;
     try {
@@ -46,6 +51,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       if (frameId && err instanceof Error) err.message += ` (frameId: ${frameId})`;
       throw err;
     }
+    session.notePage(result);
     const frameId = await frameOf(result?.tabId);
     return frameId && result && typeof result === 'object' && !Array.isArray(result) ? { ...result, frameId } : result;
   };

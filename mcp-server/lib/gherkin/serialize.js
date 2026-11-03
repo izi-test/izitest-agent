@@ -3,6 +3,7 @@
 
 import { db, parseJson } from '../db.js';
 import { isFragileSelector, isPositionalSelector, lastTag } from '../codegen/locators.js';
+import { elementKey } from '../elements.js';
 
 export function serializeTestToFeature(test, projectId) {
   const definitions = db.prepare(
@@ -123,21 +124,30 @@ function extractCompositeArgs(steps, startIndex, tpls) {
 }
 
 /**
- * A sub-step of a business step against a recorded step: same command, same parameters,
- * the selector aside when it is weak — an ID the page generates at each load, or a
- * position. Two recordings of the same click on Bien'ici's "Jardin" hold two different
- * label[for="<uuid>"]: the element is then known by what both recordings agree on.
+ * A sub-step of a business step against a recorded step: same command, same parameters, on
+ * the same element. Both recorded with their page, the element is the one of their keys
+ * (lib/elements.js), whatever the selectors say: the "Save" of another page is another
+ * element, even with the same selector. Otherwise, the selector aside when it is weak — an
+ * ID the page generates at each load, or a position: two recordings of the same click on
+ * Bien'ici's "Jardin" hold two different label[for="<uuid>"], and the element is known by
+ * what both recordings agree on.
  */
 function matchSubStep(tpl, step, args) {
   if (step.command !== tpl.command) return false;
   const actual = normalizeParams(step);
   const expected = tpl.params ?? {};
   const selector = expected.selector;
-  if (typeof selector !== 'string' || /\{\d+\}/.test(selector) || selector === actual.selector) {
-    return walk(expected, actual, args);
-  }
+  const parameterised = typeof selector === 'string' && /\{\d+\}/.test(selector);
   const { selector: _expected, ...expectedRest } = expected;
   const { selector: _actual, ...actualRest } = actual;
+
+  const ours = parameterised ? null : elementKey(tpl);
+  const theirs = ours && elementKey(step);
+  if (ours && theirs) return ours === theirs && walk(expectedRest, actualRest, args);
+
+  if (typeof selector !== 'string' || parameterised || selector === actual.selector) {
+    return walk(expected, actual, args);
+  }
   return walk(expectedRest, actualRest, args) && sameElement(tpl, step, selector, actual.selector);
 }
 
@@ -178,7 +188,7 @@ function renderStepPhrase(step, definitions) {
     const def = definitions.find(d => d.id === step.step_definition_id);
     if (def) {
       const args = extractArgs(def.params_template, normalizeParams(step));
-      if (args) return { keyword: def.keyword, phrase: renderPattern(def.pattern, args) };
+      if (args) return { keyword: def.keyword, phrase: renderPattern(def.pattern, namingElement(def.params_template, args, step)) };
     }
   }
 
@@ -186,7 +196,7 @@ function renderStepPhrase(step, definitions) {
   for (const def of definitions) {
     if (def.command !== step.command) continue;
     const args = extractArgs(def.params_template, normalizeParams(step));
-    if (args) return { keyword: def.keyword, phrase: renderPattern(def.pattern, args) };
+    if (args) return { keyword: def.keyword, phrase: renderPattern(def.pattern, namingElement(def.params_template, args, step)) };
   }
 
   // Case 3 — fallback: use intent or raw command
@@ -195,6 +205,19 @@ function renderStepPhrase(step, definitions) {
     ? `"${String(step.intent).replace(/"/g, '\\"')}"`
     : `${step.command} ${JSON.stringify(step.params || {})}`;
   return { keyword, phrase };
+}
+
+/**
+ * The arguments of a phrase, its element named instead of its selector when the step has one
+ * (`element`, given by element-store.js's withElementNames): I click on "Save profile". The
+ * name reads back as the element (parse.js).
+ */
+function namingElement(template, args, step) {
+  const slot = step.element ? /^\{(\d+)\}$/.exec(template?.selector ?? '')?.[1] : undefined;
+  if (slot === undefined) return args;
+  const named = [...args];
+  named[Number(slot)] = step.element;
+  return named;
 }
 
 function normalizeParams(step) {
