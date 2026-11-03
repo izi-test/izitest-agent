@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { log } from '../logger.js';
 import { currentSession } from '../session.js';
 import { recordAction } from '../recording.js';
+import { pageOf } from '../elements.js';
 import {
   classifyWithLLM, detectListContext,
   loadTest, saveTest, deleteTest as deleteTestDb, listTests as listTestsDb, executeTest,
@@ -628,11 +629,14 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       const { assertion: saved, linked, ambiguous } = linkAssertionToVariables(
         assertion, test.variables, replay?.test === test_name ? replay.values : undefined);
       const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
+      // The page it was checked on: what it checks is an element of that page (lib/elements.js).
+      const page = pageOf(result.pageUrl);
       const newStep = {
         command: 'assert',
         params: {},
         intent: intentText,
-        assertion: saved
+        assertion: saved,
+        ...(page && { page }),
       };
 
       if (step_order && step_order > 0 && step_order <= test.steps.length + 1) {

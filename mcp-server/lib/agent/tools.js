@@ -10,7 +10,7 @@ import { db, parseJson } from '../db.js';
 import { loadTest, saveTest, listTests } from '../test-store.js';
 import { parseFeatureToStepsWith } from '../gherkin/parse.js';
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
-import { withElementNames, elementTargets } from '../element-store.js';
+import { withElementNames, elementTargets, listElements } from '../element-store.js';
 import {
   listStepDefinitions,
   createStepDefinition,
@@ -36,7 +36,7 @@ function projectDefinitions(projectId) {
 export const AGENT_TOOLS = [
   {
     name: 'get_project_context',
-    description: 'Get the full context of the current project: name, description, base URL, type, specs/context text, and existing step definitions.',
+    description: 'Get the full context of the current project: name, description, base URL, type, specs/context text, existing step definitions, and the elements its tests act on — in a Gherkin phrase, the name of one of them goes where a CSS selector goes.',
     parameters: {
       type: 'object',
       properties: {
@@ -70,6 +70,8 @@ export const AGENT_TOOLS = [
             steps_template: d.steps_template,
           })),
           existing_tests: tests.map(t => t.name),
+          // By name: where a phrase takes a CSS selector, the name acts on that element.
+          elements: listElements(project_id).filter(e => e.used_by.length).map(({ name, page, target }) => ({ name, page, target })),
         },
       };
     },
@@ -109,7 +111,7 @@ export const AGENT_TOOLS = [
 
   {
     name: 'create_test_from_gherkin',
-    description: 'Create a new test by parsing a Gherkin feature document. The Gherkin is resolved against the project step definitions to produce executable test steps.',
+    description: 'Create a new test by parsing a Gherkin feature document. The Gherkin is resolved against the project step definitions to produce executable test steps. Where a phrase takes a CSS selector, the name of an element of the project (get_project_context lists them, e.g. When I click on "Save profile") acts on that element as its tests recorded it.',
     parameters: {
       type: 'object',
       properties: {

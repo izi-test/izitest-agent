@@ -4,7 +4,8 @@
 // even with the same selector; the same "Save" recorded by two tests is one. The dashboard's
 // Gherkin names an element instead of giving its selector, and reads the name back; a business
 // step built on one page is not taken for the same clicks on another. A run gives their page
-// to the steps recorded before steps kept it. On a database of their own, thrown away after.
+// to the steps recorded before steps kept it. An assertion checks an element too. The agent
+// writing Gherkin is told the names. On a database of their own, thrown away after.
 // Run with: node --test test/elements.test.js
 
 import { test } from 'node:test';
@@ -17,7 +18,10 @@ process.env.IZITEST_DB_PATH = join(await mkdtemp(join(tmpdir(), 'elements-')), '
 const { db, initDatabase } = await import('../lib/db.js');
 initDatabase();
 const { pageOf, elementKey } = await import('../lib/elements.js');
-const { withElementNames, elementTargets, listElements, renameElement, deleteElement } = await import('../lib/element-store.js');
+const { withElementNames, elementTargets, listElements, renameElement, deleteElement, elementLines } = await import('../lib/element-store.js');
+const { evaluateAssertion } = await import('../lib/test-execute.js');
+const { designBrief } = await import('../lib/requirement-design.js');
+const { seedProjectStepDefinitions } = await import('../lib/gherkin/step-definition-store.js');
 const { saveTest, loadTest, fillStepPages } = await import('../lib/test-store.js');
 const { recordAction } = await import('../lib/recording.js');
 const { Session } = await import('../lib/session.js');
@@ -198,4 +202,78 @@ test('an element is renamed under a name no other has, and deleted once no step 
   saved('one', project, [clickOn('OK', '#ok', 'r.test/b')]);
   assert.deepEqual(deleteElement(a.id), { deleted: true });
   assert.deepEqual(listElements(project).map((e) => e.name), ['OK (b)']);
+});
+
+/** An assertion that `selector` contains `expected`, checked on `page`. */
+const containsCheck = (selector, expected, page) => ({
+  command: 'assert', params: {}, assertion: { type: 'text_contains', selector, expected }, ...(page && { page }),
+});
+
+test('an assertion checks an element of its page: named in the Gherkin, read back as it', () => {
+  const project = projectNamed('Checks');
+  const t = saved('profile saved', project, [
+    clickOn('Save profile', '#save', 'shop.test/profile'),
+    containsCheck('#result-profile', 'Saved', 'shop.test/profile'),
+    { command: 'assert', params: {}, assertion: { type: 'text_contains', expected: 'Saved' }, page: 'shop.test/profile' },
+    { command: 'assert', params: {}, assertion: { type: 'no_console_errors', expected: 'TypeError' }, page: 'shop.test/profile' },
+  ]);
+  assert.equal(elementKey(t.steps[1]), 'shop.test/profile css #result-profile');
+  assert.equal(elementKey(t.steps[2]), null, 'the whole page is no element');
+  assert.equal(elementKey(t.steps[3]), null, 'nor what the page logs');
+  assert.equal(elementKey(containsCheck('#result-profile', 'x', 'shop.test/notes')) === elementKey(t.steps[1]), false, 'another page, another element');
+
+  const shown = withElementNames(t);
+  assert.equal(shown.steps[1].element, '#result-profile');
+  renameElement(listElements(project).find((e) => e.name === '#result-profile').id, 'Profile result');
+  const feature = serializeTestToFeatureWith(withElementNames(t), DEFAULTS);
+  assert.match(feature, /Then "Profile result" should contain "Saved"\n/);
+
+  const targets = elementTargets(project);
+  const [, check] = parseFeatureToStepsWith(
+    'Feature: x\n  Scenario: x\n    Given I am on "https://shop.test/profile"\n    Then "Profile result" should contain "Done"\n', DEFAULTS, { targets });
+  assert.deepEqual(check.assertion, { type: 'text_contains', selector: '#result-profile', expected: 'Done' });
+  assert.equal(check.page, 'shop.test/profile');
+});
+
+test('an assertion says the page it was checked on; a run gives it to one that has none', async () => {
+  const page = async (_profile, command, params) => {
+    assert.equal(command, 'execute_js');
+    assert.match(params.code, /pageUrl: location\.href/);
+    return { result: { value: 'Saved!', pageUrl: 'https://shop.test/profile?tab=1' } };
+  };
+  const checked = await evaluateAssertion(page, { type: 'text_contains', selector: '#result', expected: 'Saved' });
+  assert.deepEqual([checked.passed, pageOf(checked.pageUrl)], [true, 'shop.test/profile']);
+
+  const project = projectNamed('Old checks');
+  saved('old checks', project, [containsCheck('#result', 'Saved'), containsCheck('#other', 'Nope')]);
+  const testId = db.prepare("SELECT id FROM tests WHERE name = 'old checks'").get().id;
+  fillStepPages(testId, [
+    { step: 1, command: 'assert', status: 'success', pageUrl: 'https://shop.test/profile' },
+    { step: 2, command: 'assert', status: 'failed', pageUrl: 'https://shop.test/profile' },
+  ]);
+  assert.deepEqual(loadTest('old checks').steps.map((s) => s.page), ['shop.test/profile', undefined]);
+});
+
+test('the agent writing Gherkin is told the elements of the app, page by page, by name', () => {
+  const project = projectNamed('Told');
+  seedProjectStepDefinitions(project);
+  saved('sign in again', project, [
+    fillIn('E-mail', '#login-email', 'bob@corp', 'told.test/login'),
+    clickOn('Sign in', '#login-form button', 'told.test/login'),
+    containsCheck('#welcome', 'Hello', 'told.test/home'),
+  ]);
+  assert.deepEqual(elementLines(project), [
+    '- told.test/home: "#welcome" (css #welcome)',
+    '- told.test/login: "E-mail" (field), "Sign in" (button)',
+  ]);
+  const brief = designBrief({ key: 'REQ-1', title: 'Sign in', description: '', criteria: [], cases: [], project_id: project });
+  assert.match(brief, /## The elements of the app/);
+  assert.match(brief, /- told\.test\/login: "E-mail" \(field\), "Sign in" \(button\)/);
+  assert.match(brief, /When I click on \{string\} — the 1st \{string\} is a CSS selector \(or the name of an element of the app\)/);
+
+  const empty = projectNamed('Empty');
+  seedProjectStepDefinitions(empty);
+  const none = designBrief({ key: 'REQ-2', title: 'x', description: '', criteria: [], cases: [], project_id: empty });
+  assert.match(none, /When I click on \{string\} — the 1st \{string\} is a CSS selector\n/);
+  assert.doesNotMatch(none, /## The elements of the app|or the name of an element/, 'no element, no list');
 });

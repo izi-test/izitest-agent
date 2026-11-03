@@ -12,6 +12,7 @@ import { db, parseJson } from '../db.js';
 import { log } from '../logger.js';
 import { AGENT_TOOLS, getToolMap } from './tools.js';
 import { listStepDefinitions } from '../gherkin/step-definition-store.js';
+import { elementLines } from '../element-store.js';
 
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 
@@ -27,6 +28,9 @@ function buildSystemPrompt(project) {
     const composite = d.steps_template ? ' [composite]' : '';
     return `  - ${d.keyword} ${d.pattern} → ${d.command}${composite}`;
   }).join('\n');
+
+  // What the tests of the project act on, by name: usable where a phrase takes a selector.
+  const elements = elementLines(project.id, 80);
 
   const testList = tests.length > 0
     ? tests.map(t => `  - ${t.name}${t.description ? ': ' + t.description : ''}`).join('\n')
@@ -52,6 +56,9 @@ ${project.context || '(aucun contexte fourni — demande à l\'utilisateur de d�
 
 ## Step definitions disponibles
 ${defList || '  (uniquement les step definitions par défaut)'}
+
+## Éléments de l'application
+${elements.length ? `Là où une phrase prend un sélecteur CSS, le nom d'un de ces éléments, mot pour mot, agit sur lui :\n${elements.join('\n')}` : '  (aucun élément enregistré)'}
 
 ## Tests existants
 ${testList}

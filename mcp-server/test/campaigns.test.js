@@ -45,7 +45,7 @@ function extension({ gate } = {}) {
       const tabId = nextTab++;
       return { results: params.steps.map((s, i) => ({ step: i + 1, command: s.command, status: 'success', tabId })), durationMs: 5 };
     }
-    if (command === 'execute_js') return { result: params.code.includes('#ok') ? 'Welcome' : 'Oops' };
+    if (command === 'execute_js') return { result: { value: params.code.includes('#ok') ? 'Welcome' : 'Oops', pageUrl: 'https://shop.test/' } };
     return {};
   };
   return { sendCommand, calls };

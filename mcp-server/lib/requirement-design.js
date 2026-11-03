@@ -12,6 +12,7 @@ import { db } from './db.js';
 import { log } from './logger.js';
 import { CASE_KINDS, PRIORITIES, TECHNIQUES, getRequirement, planCases, saveDesign, scenarioFeature } from './requirements.js';
 import { listStepDefinitions } from './gherkin/step-definition-store.js';
+import { elementLines } from './element-store.js';
 import { DEFAULT_STEP_DEFINITIONS } from './gherkin/default-step-definitions.js';
 import { featurePhrases, compileDefinitions, effectiveKeyword, stepsForPhrase } from './gherkin/parse.js';
 
@@ -42,11 +43,13 @@ function selectorArguments(definition) {
 
 const ORDINALS = ['1st', '2nd', '3rd', '4th'];
 
-function phraseLine(definition) {
+/** A phrase as the agent reads it; `withElements`: the app has elements, named where a selector goes. */
+function phraseLine(definition, withElements = false) {
   const selectors = selectorArguments(definition);
   const actions = definition.steps_template?.length;
+  const orName = withElements ? ` (or the name of an element of the app)` : '';
   const note = actions ? ` — business step (${actions} action${actions === 1 ? '' : 's'} of this app)`
-    : selectors.length ? ` — the ${selectors.map((n) => ORDINALS[n] ?? `#${n + 1}`).join(' and ')} {string} ${selectors.length > 1 ? 'are CSS selectors' : 'is a CSS selector'}` : '';
+    : selectors.length ? ` — the ${selectors.map((n) => ORDINALS[n] ?? `#${n + 1}`).join(' and ')} {string} ${selectors.length > 1 ? 'are CSS selectors' : 'is a CSS selector'}${orName}` : '';
   return `- ${definition.keyword} ${definition.pattern}${note}`;
 }
 
@@ -80,8 +83,14 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
     lines.push('No project: no address nor notes. Where the scenario needs the address, write it as the requirement gives it.');
   }
 
+  // What the tests of the project act on, by name: a scenario can name them where a selector goes.
+  const elements = requirement.project_id ? elementLines(requirement.project_id) : [];
   lines.push('', '## The Gherkin phrases of the project — write the steps with these, word for word',
-    ...definitionsFor(requirement).map(phraseLine));
+    ...definitionsFor(requirement).map((definition) => phraseLine(definition, elements.length > 0)));
+  if (elements.length) {
+    lines.push('', '## The elements of the app — where a phrase takes a CSS selector, the name of one of these, word for word, acts on it',
+      'Recorded by the tests of the project, page by page:', ...elements);
+  }
 
   lines.push('', '## Method',
     '1. Review each criterion: can a test tell pass from fail? It can when the criterion says what is done and what is then',
@@ -99,7 +108,8 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
     '5. Write each scenario\'s steps in Gherkin with the phrases above, word for word, values in quotes. Start from the',
     '   address of the app. Fill in a CSS selector only when the project notes or a business step give it — never a',
     '   guessed one: prefer the phrases that need none (I am on, I click on the text, I should see, the URL should',
-    '   contain) and the business steps. A step no phrase covers is written in plain words (When I type "wrong" as the',
+    '   contain), the business steps, and the names of the elements of the app where it lists them (When I click on',
+    '   "Save profile"). A step no phrase covers is written in plain words (When I type "wrong" as the',
     '   password): an agent records it later, browsing the app.',
     '6. Priority: high for the expected path and for what loses data, money or access; medium for the alternatives and',
     '   the errors users will meet; low for the rest.',

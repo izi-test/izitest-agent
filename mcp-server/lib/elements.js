@@ -12,13 +12,23 @@
 
 import { isFragileSelector, isPositionalSelector, lastTag } from './codegen/locators.js';
 
-// The commands that act on an element of the page; drag, on the one it moves.
-const TARGET_COMMANDS = new Set(['click', 'fill', 'select', 'upload', 'drag']);
+// The commands that act on an element of the page; drag, on the one it moves; an assertion,
+// on the one it checks (ELEMENT_ASSERTIONS).
+const TARGET_COMMANDS = new Set(['click', 'fill', 'select', 'upload', 'drag', 'assert']);
 const FIELD_COMMANDS = new Set(['fill', 'select', 'upload']);
 const NAME_LOCATORS = ['label', 'aria'];
+// The assertions that check an element, named by their selector. text_contains without one
+// reads the whole page.
+const ELEMENT_ASSERTIONS = new Set([
+  'element_exists', 'element_not_exists', 'element_visible', 'element_hidden',
+  'text_equals', 'text_contains', 'text_not_contains', 'attribute_equals', 'element_count',
+]);
 
 /** Whether a command acts on an element of the page. */
 export const actsOnElement = (command) => TARGET_COMMANDS.has(command);
+
+// An assertion keeps what it checks in `assertion` (in `params` inside a business step).
+const dataOf = (step) => (step.command === 'assert' ? step.assertion ?? step.params : step.params) ?? {};
 
 /**
  * The page of a URL as a step keeps it: host and path, without query or fragment. A part of
@@ -50,7 +60,8 @@ const scopeOf = ({ testid, css } = {}) => (testid ? `testid ${quoted(testid)}` :
  */
 function targetOf(step) {
   if (!TARGET_COMMANDS.has(step.command) || step.variable?.listContext) return null;
-  const selector = step.params?.selector;
+  if (step.command === 'assert' && !(ELEMENT_ASSERTIONS.has(dataOf(step).type) && dataOf(step).selector)) return null;
+  const selector = dataOf(step).selector;
   if (typeof selector === 'string' && /\{\{|\{\d+\}/.test(selector)) return null;
   const locators = step.locators ?? [];
 
@@ -68,6 +79,9 @@ function targetOf(step) {
   return null;
 }
 
+/** The selector a step was recorded with: of its element, or of the one its assertion checks. */
+export const selectorOf = (step) => dataOf(step).selector;
+
 /** The key of the element a step acts on: its page, then what it is. Null without a page. */
 export function elementKey(step) {
   if (!step?.page) return null;
@@ -82,7 +96,7 @@ export function baseName(step) {
     ?? locators.find((l) => NAME_LOCATORS.includes(l.type) && l.value)?.value
     ?? locators.find((l) => l.type === 'placeholder' && l.value)?.value
     ?? locators.find((l) => l.type === 'testid' && l.value)?.value
-    ?? step.params?.selector
+    ?? dataOf(step).selector
     ?? 'element';
   return String(named).replace(/\s+/g, ' ').trim().slice(0, 60) || 'element';
 }

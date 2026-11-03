@@ -540,9 +540,11 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     }
     persistStepResult(executionId, stepResult);
   }
-  // The page each step ran on: a step recorded before steps kept theirs gets it now.
+  // The page each step ran on, and each assertion was checked on: one recorded before steps
+  // kept theirs gets it now.
   try {
-    fillStepPages(testId, stepResults);
+    const assertionPages = assertionStepResults.map((result) => ({ ...result, pageUrl: result.assertionResult?.pageUrl }));
+    fillStepPages(testId, [...stepResults, ...assertionPages]);
   } catch (err) {
     log(`Could not keep the pages of the steps of "${name}": ${err.message}`);
   }
@@ -828,10 +830,17 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
       return { passed: false, expected: '', actual: `Unknown assertion type: ${type}`, type };
   }
 
-  const params = { code: js };
+  // With the URL of the page it is checked on: the assertion keeps its page (lib/elements.js).
+  const params = { code: `({ value: ${js}, pageUrl: location.href })` };
   if (tabId) params.tabId = tabId;
   const result = await sendCommand(undefined, 'execute_js', params);
-  const value = result?.result !== undefined ? result.result : result;
+  const answer = result?.result !== undefined ? result.result : result;
+  const checked = judgeAssertion(assertion, answer?.value);
+  return typeof answer?.pageUrl === 'string' ? { ...checked, pageUrl: answer.pageUrl } : checked;
+}
+
+/** Whether `value`, read from the page, is what `assertion` expects. */
+function judgeAssertion({ type, selector, expected }, value) {
   // The whole page's text, checked for a phrase: told in a line, not page after page.
   const wholePage = !selector && (type === 'text_contains' || type === 'text_not_contains') && typeof value === 'string';
   const actual = wholePage ? pageExcerpt(value, expected) : value;

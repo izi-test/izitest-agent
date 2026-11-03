@@ -207,17 +207,18 @@ guillemets doubles s'écrit entre guillemets simples.
 
 ### Les éléments d'un projet
 
-Chaque étape qui agit sur un élément de la page (`click`, `fill`, `select`, `upload`, `drag`) garde la
-page où elle a été faite : l'hôte et le chemin, sans la requête ni le fragment, chaque partie du chemin
+Chaque étape qui agit sur un élément de la page (`click`, `fill`, `select`, `upload`, `drag`), et
+chaque assertion qui vérifie un élément par son sélecteur, garde la page où elle a été faite : l'hôte et le chemin, sans la requête ni le fragment, chaque partie du chemin
 qui contient un chiffre (un identifiant, un slug avec un identifiant) remplacée par `*` —
 `notes.test/notes/*` pour la note 42 comme pour la 43. L'extension renvoie l'URL de la page avec le
-résultat de chaque action (`pageUrl`). Une étape enregistrée avant n'a pas de page : elle la reçoit à la
-prochaine exécution réussie de son test.
+résultat de chaque action (`pageUrl`), et une assertion lit celle de la page où elle est vérifiée
+(`add_assertion`). Une étape enregistrée avant n'a pas de page : elle la reçoit à la prochaine exécution
+de son test où elle réussit.
 
 L'élément sur lequel agit une étape est connu par une **clé exacte**, jamais par ressemblance : sa page,
 puis son rôle et son nom accessible (avec le conteneur qui le distingue quand la page en a plusieurs,
 `button "Delete" in testid "note-3"`), à défaut son `data-testid`, le libellé d'un champ
-(`field "E-mail"`), ou un sélecteur CSS stable. Le bouton « Save » de la page des notes et celui de la
+(`field "E-mail"`), ou un sélecteur CSS stable — celui d'une assertion (`css #result-profile`). Le bouton « Save » de la page des notes et celui de la
 page du profil sont deux éléments, même avec le même sélecteur ; le même « Save » enregistré par deux
 tests n'en est qu'un. Une étape qui n'a que sa position pour se distinguer, ou dont un élément de liste
 est choisi par une variable, n'a pas d'élément.
@@ -233,8 +234,13 @@ And I click on "Sign in"
 
 et le relit comme l'élément : une phrase qui nomme un élément du projet, là où va un sélecteur, agit
 sur lui, avec le sélecteur, les locators et la page du dernier enregistrement qui l'a touché. C'est vrai
-aussi d'un scénario écrit à la main (`create_test_from_gherkin`). Un nom qu'aucun élément ne porte reste
-un sélecteur.
+aussi d'un scénario écrit à la main (`create_test_from_gherkin`) et d'une assertion
+(`Then "Profile result" should contain "Saved"`). Un nom qu'aucun élément ne porte reste un sélecteur.
+
+L'agent qui écrit du Gherkin connaît ces noms : `get_project_context` liste les éléments du projet
+(`elements` : nom, page, ce qu'ils sont), la méthode de `design_tests` les donne page par page avec les
+phrases, et le chat du tableau de bord aussi. Un scénario conçu pour une exigence peut donc nommer les
+éléments déjà enregistrés au lieu de deviner un sélecteur.
 
 La page **Elements** du tableau de bord liste les éléments du projet, page par page, avec les tests qui
 les utilisent. Un élément s'y renomme (son nouveau nom se lit dans le Gherkin de tous ses tests) ; un

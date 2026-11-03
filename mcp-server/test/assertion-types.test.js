@@ -62,7 +62,7 @@ test('a composite step generates them too', () => {
 
 test("a field's value is what it holds now, not its value attribute", async () => {
   let code = '';
-  const page = async (_profile, _command, params) => { code = params.code; return { result: 'France' }; };
+  const page = async (_profile, _command, params) => { code = params.code; return { result: { value: 'France', pageUrl: 'https://shop.test/' } }; };
   const result = await evaluateAssertion(page, { type: 'attribute_equals', selector: '#country-input', attribute: 'value', expected: 'France' });
   assert.equal(result.passed, true);
   assert.match(code, /el\.value/);

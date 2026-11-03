@@ -13,7 +13,7 @@ import { DEFAULT_STEP_DEFINITIONS } from '../lib/gherkin/default-step-definition
 const NO_DARK_MODE = { type: 'text_not_contains', selector: '#result-profile', expected: 'darkMode' };
 const pageText = (text) => async (_profile, command, params) => {
   assert.equal(command, 'execute_js');
-  return { result: text, tabId: params.tabId };
+  return { result: { value: text, pageUrl: 'https://shop.test/profile' }, tabId: params.tabId };
 };
 
 test('passes when the element is there without the text, fails when the text is in it', async () => {
@@ -41,12 +41,12 @@ test('generated as not.toContainText, phrased "should not contain", read back th
 
 test('with no selector ("I should see …"), the whole page is checked — in body, as the exported code does', async () => {
   let code = null;
-  const page = async (_profile, _command, params) => { code = params.code; return { result: 'Sign in — Invalid credentials' }; };
+  const page = async (_profile, _command, params) => { code = params.code; return { result: { value: 'Sign in — Invalid credentials', pageUrl: 'https://shop.test/login' } }; };
   const seen = await evaluateAssertion(page, { type: 'text_contains', expected: 'Invalid credentials' });
   assert.equal(seen.passed, true);
   assert.match(code, /document\.querySelector\("body"\)/);
   // Failing, what the page shows is told in a line.
-  const long = async () => ({ result: `Sign in\n\n   ✓ Submitted ${'filler '.repeat(100)}` });
+  const long = async () => ({ result: { value: `Sign in\n\n   ✓ Submitted ${'filler '.repeat(100)}`, pageUrl: 'https://shop.test/login' } });
   const missed = await evaluateAssertion(long, { type: 'text_contains', expected: 'Invalid credentials' });
   assert.equal(missed.passed, false);
   assert.match(missed.actual, /^the page: Sign in ✓ Submitted filler/);

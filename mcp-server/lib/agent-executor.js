@@ -32,6 +32,7 @@ import { linkAssertionToVariables } from './test-variable.js';
 import { loadTest, saveTest } from './test-store.js';
 import { linkRecorded, nonConformityOf } from './requirements.js';
 import { evaluateAssertion } from './test-execute.js';
+import { pageOf } from './elements.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
 
@@ -671,7 +672,9 @@ function buildTools(sendCommand) {
         // Checked against what the test typed: replayed with other values, it checks those.
         const { assertion: saved, linked, ambiguous } = linkAssertionToVariables(assertion, test.variables);
         const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
-        const newStep = { command: 'assert', params: {}, intent: intentText, assertion: saved };
+        // The page it was checked on: what it checks is an element of that page (lib/elements.js).
+        const page = pageOf(result.pageUrl);
+        const newStep = { command: 'assert', params: {}, intent: intentText, assertion: saved, ...(page && { page }) };
 
         if (step_order && step_order > 0 && step_order <= test.steps.length + 1) {
           test.steps.splice(step_order - 1, 0, newStep);
