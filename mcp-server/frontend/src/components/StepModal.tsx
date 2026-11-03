@@ -6,6 +6,13 @@ import { useAddStepMutation, useUpdateStepMutation } from '../store/services/tes
 import { Button } from './Button';
 import { X, Save } from 'lucide-react';
 
+// The parameters a server step starts from (mcp-server/lib/server-steps.js): a value kept for
+// the steps after, written {{order}} there; an API called to prepare data.
+const PARAMS_EXAMPLES: Record<string, object> = {
+  capture: { what: 'text', selector: '#order-number', pattern: '#(\\d+)', name: 'order' },
+  http: { method: 'POST', url: 'https://staging.example.com/api/users', body: '{"email": "user-{{unique}}@example.com"}' },
+};
+
 interface StepModalProps {
   isOpen: boolean;
   testName: string;
@@ -83,7 +90,11 @@ export function StepModal({ isOpen, testName, step, onClose, onSaved }: StepModa
         <div className="modal-body">
           <div className="field-group">
             <label>Command</label>
-            <select value={command} onChange={e => setCommand(e.target.value)}>
+            <select value={command} onChange={e => {
+              setCommand(e.target.value);
+              const example = PARAMS_EXAMPLES[e.target.value];
+              if (example && !params.replace(/[\s{}]/g, '')) setParams(JSON.stringify(example, null, 2));
+            }}>
               <option value="navigate">navigate</option>
               <option value="click">click</option>
               <option value="fill">fill</option>
@@ -94,6 +105,8 @@ export function StepModal({ isOpen, testName, step, onClose, onSaved }: StepModa
               <option value="press_key">press_key</option>
               <option value="snapshot">snapshot</option>
               <option value="screenshot">screenshot</option>
+              <option value="capture">capture — keep a value as {'{{name}}'}</option>
+              <option value="http">http — call an API</option>
             </select>
           </div>
           <div className="field-group">

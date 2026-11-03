@@ -579,6 +579,44 @@ l'exécution avant le navigateur, en disant laquelle et pourquoi. Une valeur pas
   Playwright, `features/support/values.js` pour Cucumber, où chaque step résout ses arguments
   (`this.values(...)`) et les colonnes de l'Outline gardent l'expression.
 
+
+### Étapes serveur : garder une valeur, appeler une API
+
+Deux sortes d'étapes s'exécutent sur le serveur, entre celles que joue le navigateur
+(`lib/server-steps.js`) :
+
+- **`capture`** garde une valeur comme variable pour les étapes suivantes, écrite `{{nom}}` : le texte,
+  la valeur ou un attribut d'un élément, l'URL ou le titre de la page, ou une valeur de la dernière
+  réponse d'API (`what: "response"`, `path: "data.items[0].id"`). Un motif (expression régulière) n'en
+  garde qu'une partie, son premier groupe : `#(\d+)` garde `4521` de « Commande #4521 ».
+- **`http`** appelle une API pour préparer les données (créer un utilisateur, une commande), avec les
+  valeurs du test dans l'URL, les en-têtes et le corps. L'étape échoue sur un statut autre que 2xx, ou
+  que `expect_status`. Sa réponse est lue par les captures qui suivent.
+
+Un test qui en contient est joué par segments : le navigateur joue les étapes jusqu'à la prochaine
+étape serveur, le serveur l'exécute, puis le segment suivant part dans le même onglet avec les valeurs
+gardées. Les assertions, vérifiées à la fin, voient ces valeurs. Une étape serveur qui échoue arrête
+l'exécution là. Le mode debug les exécute aussi, pas à pas. Les tests sans étape serveur sont joués
+comme avant, en un seul envoi.
+
+| Outil | Rôle |
+| :--- | :--- |
+| `capture_value` | Garde une valeur de la page ou de la dernière réponse (`name`, `what`, `ref`/`selector`, `attribute`, `path`, `pattern`), enregistrée comme étape |
+| `call_api` | Appelle une API depuis le serveur (`method`, `url`, `headers`, `body`, `expect_status`), enregistrée comme étape ; renvoie la réponse |
+
+Pendant une session, `{{nom}}` dans une action (`fill`, `navigate`, `select`, `add_assertion`…) reçoit
+tout de suite la valeur gardée, ou calculée, et l'étape enregistrée garde `{{nom}}`.
+
+Les phrases Gherkin : `I store the text of {string} as {string}`, `I store the text of {string}
+matching {string} as {string}`, `I store the value of {string} as {string}`, `I store the URL as
+{string}`, `I store {string} of the response as {string}`, `I call {word} {string}`, `I call {word}
+{string} with {string}`. En français : `je retiens le texte de {string} dans {string}`,
+`j'appelle {word} {string} avec {string}`…
+
+L'export suit : en Playwright, les valeurs gardées vont dans `VARS` et l'API passe par la fixture
+`request` ; en Cucumber, par le World (`this.vars`, `this.call()`), et les valeurs gardées ne sont pas des
+colonnes de l'Outline.
+
 ### Paramètres de `run_test`
 
 | Paramètre | Type | Description |

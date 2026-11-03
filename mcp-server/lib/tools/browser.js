@@ -8,6 +8,8 @@ import { currentSession, listSessions, closeNamedSession, forgetTabsEverywhere }
 /** Session ids the extension should treat as still working (see CloseWindowParams). */
 const liveSessionIds = () => listSessions().map((s) => s.id);
 import { recordAction, selectParams } from '../recording.js';
+import { runServerStep } from '../server-steps.js';
+import { resolveValues } from '../values.js';
 import { absolutePaths, readUploadFiles } from '../upload-files.js';
 import { captureActionFrame, LIVE_ACTIONS } from '../live.js';
 import { isHeadlessProfile } from '../websocket.js';
@@ -35,7 +37,9 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
   const sendCommand = async (profile, command, params, ...rest) => {
     const session = sess();
     if (profile) session.profile = profile;
-    const scoped = session.scope(params);
+    // {{…}} in an action done now — a value kept, a date — as the session knows it; the step
+    // recorded keeps it as written.
+    const scoped = session.scope(LIVE_ACTIONS.has(command) || command === 'wait' ? session.live(params ?? {}) : params);
     // An action says the page it was done on: the step recording it keeps it.
     if (!LIVE_ACTIONS.has(command)) {
       const result = await dispatch(profile, command, scoped, ...rest);
@@ -629,6 +633,92 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       const actionId = saveActionToHistory('execute_js', { code, tabId, ...(frame ? { frame } : {}) });
       const textResponse = result !== undefined ? JSON.stringify(result, null, 2) : "Execution successful (no return value)";
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + textResponse }] };
+    }
+  );
+
+  // --- Tool: capture_value ---
+  server.tool(
+    'capture_value',
+    [
+      'Keep a value as a variable the next steps use as {{name}}: the text, value or an attribute of an element, the URL or',
+      'the title of the page, or a value of the last call_api answer (what: "response", path: "data.id"). Recorded as a',
+      'step that keeps it again at each run — an order number shown after a purchase, the id of a user created by an API.',
+      'A pattern (regular expression) keeps only part of it: its first group ("#(\\d+)" keeps 12345 of "Order #12345").',
+      'Then use {{name}} in fill, navigate, add_assertion…: the action gets the value now, the step keeps {{name}}.',
+    ].join(' '),
+    {
+      name: z.string().describe('Variable name: letters, digits and _, e.g. "order"'),
+      what: z.enum(['text', 'value', 'attribute', 'url', 'title', 'response']).optional().describe('What to keep (default: text)'),
+      ref: z.string().optional().describe('The element, from a snapshot (@e5)'),
+      selector: z.string().optional().describe('Or its CSS selector'),
+      attribute: z.string().optional().describe('For what: "attribute", its name'),
+      path: z.string().optional().describe('For what: "response", where in the JSON answer: "id", "data.items[0].id"'),
+      pattern: z.string().optional().describe('A regular expression: keeps its first group, or what it matched'),
+      intent: z.string().optional().describe('Functional description of this step'),
+      profile: z.string().optional(),
+      tabId: z.number().optional(),
+    },
+    async ({ name, what = 'text', ref, selector, attribute, path, pattern, intent, profile, tabId }) => {
+      if (!/^[A-Za-z_]\w*$/.test(name)) return { content: [{ type: 'text', text: `"${name}" is not a usable variable name: letters, digits and _` }] };
+      const session = sess();
+      const element = ref ? session.refMap?.[String(ref).replace('@', '')]?.selector : selector;
+      if (['text', 'value', 'attribute'].includes(what) && !element) {
+        return { content: [{ type: 'text', text: `Capturing the ${what} of an element needs its ref or selector${ref ? ` (no element ${ref}: take a snapshot)` : ''}.` }] };
+      }
+      const params = { what, name, ...(element ? { selector: element } : {}), ...(attribute ? { attribute } : {}), ...(path ? { path } : {}), ...(pattern ? { pattern } : {}) };
+      // Through the session's window, with the profile it was given.
+      const run = (_profile, command, commandParams) => sendCommand(profile, command, commandParams);
+      try {
+        const { kept } = await runServerStep({ command: 'capture', params }, { sendCommand: run, tabId: tabId ?? session.lastTabId, state: { lastResponse: session.lastResponse } });
+        session.kept[name] = kept.value;
+        // The page it was read on: the element it reads is known by it (lib/elements.js).
+        if (element) {
+          const where = await run(profile, 'execute_js', { code: 'location.href', ...(tabId ? { tabId } : {}) }).catch(() => null);
+          session.notePage({ pageUrl: typeof where === 'string' ? where : where?.result });
+        }
+        const actionId = saveActionToHistory('capture', params, ref, null, intent ?? `Keep ${what === 'response' ? path : what} as {{${name}}}`);
+        return { content: [{ type: 'text', text: `Kept {{${name}}} = "${kept.value}" (${actionId}). Use {{${name}}} in the next steps.` }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `Nothing kept: ${err.message}` }] };
+      }
+    }
+  );
+
+  // --- Tool: call_api ---
+  server.tool(
+    'call_api',
+    [
+      'Call an HTTP API from the server, to prepare data for the test: create a user, an order, reset a state. Recorded as a',
+      'step that calls it again at each run. {{…}} in the URL, headers and body are worked out (a variable, {{unique}},',
+      'a value kept). It fails on a status other than 2xx, or than expect_status. Keep a value of its answer for the next',
+      'steps with capture_value (what: "response", path: "id").',
+    ].join(' '),
+    {
+      method: z.string().optional().describe('GET (default), POST, PUT, PATCH, DELETE'),
+      url: z.string().describe('The URL to call'),
+      headers: z.record(z.string()).optional().describe('Headers, e.g. { "Authorization": "Bearer {{token}}" }'),
+      body: z.string().optional().describe('The body, JSON as text: {"email": "user-{{unique}}@example.com"}'),
+      expect_status: z.number().optional().describe('The status expected, when not 2xx'),
+      intent: z.string().optional().describe('Functional description of this step'),
+    },
+    async ({ method = 'GET', url, headers, body, expect_status, intent }) => {
+      const session = sess();
+      const params = { method: method.toUpperCase(), url, ...(headers ? { headers } : {}), ...(body != null ? { body } : {}), ...(expect_status != null ? { expect_status } : {}) };
+      const state = { lastResponse: null };
+      try {
+        const live = JSON.parse(resolveValues(JSON.stringify(params), session.values, { escape: (v) => JSON.stringify(v).slice(1, -1) }).text);
+        const { detail } = await runServerStep({ command: 'http', params: live }, { state });
+        session.lastResponse = state.lastResponse;
+        const actionId = saveActionToHistory('http', params, null, null, intent ?? `${params.method} ${url}`);
+        const answer = state.lastResponse.json !== null ? JSON.stringify(state.lastResponse.json, null, 2) : state.lastResponse.text;
+        return { content: [{ type: 'text', text: `${detail} (${actionId}).
+
+Answer:
+${answer.slice(0, 4000)}` }] };
+      } catch (err) {
+        if (state.lastResponse) session.lastResponse = state.lastResponse;
+        return { content: [{ type: 'text', text: `The call failed: ${err.message}` }] };
+      }
     }
   );
 

@@ -12,6 +12,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { log } from './logger.js';
+import { resolveValues, valueContext } from './values.js';
 
 const sessions = new Map();      // session id → Session
 const connectionDefaults = new Map(); // connection id → session id
@@ -24,6 +25,10 @@ let sessionCounter = 0;
 let actionCounter = 0;
 
 const MAX_HISTORY = 100;
+
+// The parameters of an action that may hold {{…}}: a URL, a value typed, a text, a selector, a key,
+// what an assertion expects.
+const LIVE_PARAMS = ['url', 'value', 'text', 'selector', 'key', 'label', 'target', 'expected'];
 
 export class Session {
   constructor({ id, label, connectionId }) {
@@ -48,6 +53,9 @@ export class Session {
     // The URL of the page the last action was done on, as the extension reported it: the
     // page the step recording that action keeps (lib/elements.js). Taken once.
     this.actionPageUrl = undefined;
+    // The values kept so far (capture_value), the last API answer (call_api), and the computed
+    // values ({{today}}, {{unique}}) of the session: what {{…}} in an action means live.
+    this.resetValues();
     this.actionHistory = new Map();
   }
 
@@ -90,6 +98,30 @@ export class Session {
   adoptTab(tabId, windowId) {
     if (tabId !== undefined && tabId !== null) this.lastTabId = tabId;
     if (windowId !== undefined && windowId !== null) this.windowId = windowId;
+  }
+
+  /** Starts the session's values afresh: a new recording keeps its own. */
+  resetValues() {
+    this.kept = {};
+    this.lastResponse = null;
+    this.values = valueContext({ lookup: (name) => this.kept[name] });
+  }
+
+  /**
+   * `params` with their {{…}} worked out as the session knows them, for an action done now —
+   * the step recorded keeps them as written. Throws with what does not work out.
+   */
+  live(params) {
+    const problems = [];
+    const out = { ...params };
+    for (const key of LIVE_PARAMS) {
+      if (typeof out[key] !== 'string' || !out[key].includes('{{')) continue;
+      const resolved = resolveValues(out[key], this.values);
+      problems.push(...resolved.problems);
+      out[key] = resolved.text;
+    }
+    if (problems.length) throw new Error(`Values that do not work out: ${problems.join('; ')}`);
+    return out;
   }
 
   /** Keeps the page an action was done on, from its result (`pageUrl`). */

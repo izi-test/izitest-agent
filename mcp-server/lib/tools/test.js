@@ -116,6 +116,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }
       const link = requirement ? { requirement, caseId: case_id ?? null, criterion: criterion ?? null } : null;
       setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link });
+      // A recording keeps its own values (capture_value, call_api).
+      sess().resetValues();
       log(`Recording started: ${name} (VRT: ${use_vrt ? 'enabled' : 'disabled'}, viewport: ${viewport ? `${viewport.width}x${viewport.height}` : 'default'})`);
       
       let newTabId = null;
@@ -595,9 +597,11 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }
 
       // ─── Evaluate assertion live against the current browser page ───
+      // A value kept by the session ({{order}}) or computed ({{today}}) is checked as it is now;
+      // the step keeps the assertion as written.
       let result;
       try {
-        result = await evaluateAssertion(sendCommand, assertion, tabId);
+        result = await evaluateAssertion(sendCommand, sess().live(assertion), tabId);
       } catch (err) {
         return { content: [{ type: 'text', text: `Assertion evaluation error: ${err.message}\nThe assertion was NOT added. Fix the issue and try again.` }] };
       }

@@ -4,6 +4,7 @@ import { log } from './logger.js';
 import { db } from './db.js';
 import { loadTest, fillStepPages } from './test-store.js';
 import { computeVariables, resolveValues } from './values.js';
+import { isServerStep, keptNames, runServerStep } from './server-steps.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
@@ -128,7 +129,7 @@ async function executeStepsInDebugMode(
   actionSteps, startIndex, newWindow, sendCommand,
   debugController, executionId, hydratedSteps,
   onProgress, streamedStepResults,
-  viewportWidth, viewportHeight
+  viewportWidth, viewportHeight, server = null
 ) {
   const overallStartedAt = Date.now();
   const results = [];
@@ -170,9 +171,20 @@ async function executeStepsInDebugMode(
       });
     }
 
+    // A server step (capture, http) runs here; a browser step gets the values kept so far.
+    if (server && isServerStep(step)) {
+      const stepResult = await playServerStep(step, stepNumber, { sendCommand, tabId: lastTabId, server });
+      results.push(stepResult);
+      streamedStepResults.push(stepResult);
+      try { persistStepResult(executionId, stepResult); } catch (persistErr) { log(`Failed to live-persist step ${stepNumber}: ${persistErr.message}`); }
+      if (onProgress) onProgress({ type: 'step_complete', stepResult });
+      if (stepResult.status === 'failed') { failed = true; break; }
+      continue;
+    }
+
     // Execute single step via replay_sequence with one element
     const singleStepParams = {
-      steps: [step],
+      steps: [server ? server.rehydrate(step) : step],
       startIndex: 0,
       newWindow: actionIndex === startIndex ? newWindow : false,
       ...(actionIndex === startIndex && viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {}),
@@ -248,6 +260,102 @@ async function executeStepsInDebugMode(
   };
 }
 
+/** Runs a server step (lib/server-steps.js) of the run: its result, as the extension gives a step's. */
+async function playServerStep(step, stepNumber, { sendCommand, tabId, server }) {
+  const startedAt = Date.now();
+  const done = (status, extra) => ({
+    step: stepNumber, command: step.command, intent: step.intent ?? null, status,
+    startedAt, finishedAt: Date.now(), durationMs: Date.now() - startedAt, ...(tabId ? { tabId } : {}), ...extra,
+  });
+  try {
+    const { detail, kept } = await runServerStep(server.rehydrate(step), { sendCommand, tabId, state: server.state });
+    if (kept) server.keep(kept.name, kept.value);
+    log(`Server step ${stepNumber} (${step.command}): ${detail}`);
+    return done('success', { detail });
+  } catch (err) {
+    return done('failed', { error: err.message });
+  }
+}
+
+/**
+ * Plays a test holding server steps: the browser's steps sent in segments, each with the
+ * values kept so far, in the window the one before used; the server's steps in between.
+ */
+async function executeInSegments(
+  actionSteps, startIndex, newWindow, sendCommand, executionId,
+  onProgress, streamedStepResults, viewportWidth, viewportHeight, server
+) {
+  const startedAt = Date.now();
+  const results = [];
+  let failed = false;
+  let lastTabId = null;
+  let first = true;
+  const record = (stepResult) => {
+    results.push(stepResult);
+    streamedStepResults.push(stepResult);
+    try { persistStepResult(executionId, stepResult); } catch (err) { log(`Failed to live-persist step ${stepResult.step}: ${err.message}`); }
+  };
+
+  for (let i = 0; i < startIndex; i++) {
+    results.push({ step: actionSteps[i]._originalStepNumber, command: actionSteps[i].command, intent: actionSteps[i].intent, status: 'skipped' });
+  }
+
+  let i = startIndex;
+  while (i < actionSteps.length && !failed) {
+    if (isServerStep(actionSteps[i])) {
+      const step = actionSteps[i++];
+      if (onProgress) onProgress({ type: 'step_start', step: step._originalStepNumber, command: step.command, intent: step.intent || null });
+      const stepResult = await playServerStep(step, step._originalStepNumber, { sendCommand, tabId: lastTabId, server });
+      record(stepResult);
+      if (onProgress) onProgress({ type: 'step_complete', stepResult });
+      failed = stepResult.status === 'failed';
+      continue;
+    }
+
+    const segment = [];
+    while (i < actionSteps.length && !isServerStep(actionSteps[i])) segment.push(actionSteps[i++]);
+    const numberOf = (n) => segment[n - 1]?._originalStepNumber ?? n;
+    let steps;
+    try {
+      steps = segment.map((step) => server.rehydrate(step));
+    } catch (err) {
+      record({ step: segment[0]._originalStepNumber, command: segment[0].command, status: 'failed', error: err.message, startedAt: Date.now(), finishedAt: Date.now(), durationMs: 0 });
+      failed = true;
+      break;
+    }
+    let played;
+    try {
+      played = await sendCommand(undefined, 'replay_sequence', {
+        steps, startIndex: 0, newWindow: first ? newWindow : false,
+        ...(lastTabId ? { tabId: lastTabId } : {}),
+        ...(first && viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {}),
+      }, 120000, async (raw) => {
+        if (raw?.type === 'step_start') { if (onProgress) onProgress({ ...raw, step: numberOf(raw.step) }); return; }
+        if (raw?.type === 'step_complete' && raw.stepResult) {
+          const stepResult = { ...raw.stepResult, step: numberOf(raw.stepResult.step) };
+          streamedStepResults.push(stepResult);
+          try { persistStepResult(executionId, stepResult); } catch (err) { log(`Failed to live-persist step ${stepResult.step}: ${err.message}`); }
+          if (onProgress) onProgress({ ...raw, stepResult });
+          return;
+        }
+        if (onProgress) onProgress(raw);
+      });
+    } catch (err) {
+      played = { results: err.results || [] };
+      failed = true;
+    }
+    first = false;
+    for (const result of played?.results ?? []) {
+      const stepResult = { ...result, step: numberOf(result.step) };
+      results.push(stepResult);
+      if (stepResult.tabId) lastTabId = stepResult.tabId;
+      if (stepResult.status === 'failed') failed = true;
+    }
+  }
+
+  return { results, startedAt, finishedAt: Date.now(), durationMs: Date.now() - startedAt, _failed: failed };
+}
+
 /**
  * The steps the extension plays — every one but the assertions, checked here afterwards —
  * each with its number in the test, and where to start among them. The extension numbers
@@ -296,6 +404,10 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   const computed = computeVariables(rawVariables, { language: test.language });
   const mergedVariables = computed.values;
   const valueProblems = [...computed.problems];
+  // Values kept by steps of the run (capture): known by name now, given to the steps after.
+  const kept = keptNames(test.steps);
+  computed.context.lookup = (key) => mergedVariables[key];
+  const waiting = () => new Set([...kept].filter((key) => !(key in mergedVariables)));
   log(`Merged variables: ${JSON.stringify(mergedVariables)}`);
 
   const applySubstitutions = (str) => {
@@ -311,7 +423,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       }
     }
     // An expression written in the step itself, with the same values as the variables.
-    const resolved = resolveValues(result, computed.context, { escape: (value) => JSON.stringify(value).slice(1, -1) });
+    const resolved = resolveValues(result, computed.context, { escape: (value) => JSON.stringify(value).slice(1, -1), waiting: waiting() });
     valueProblems.push(...resolved.problems);
     return resolved.text;
   };
@@ -339,6 +451,20 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   if (valueProblems.length) {
     throw new Error(`Computed values that do not work out — fix them in the test (Data, or its steps):\n${[...new Set(valueProblems)].join('\n')}`);
   }
+
+  // What the server steps of the run need (lib/server-steps.js): a step given the values kept so
+  // far just before it is played, and where to keep a new one.
+  const server = {
+    state: {},
+    rehydrate(step) {
+      const before = valueProblems.length;
+      const fresh = JSON.parse(applySubstitutions(JSON.stringify(step)));
+      if (valueProblems.length > before) throw new Error(`Computed values that do not work out:\n${valueProblems.slice(before).join('\n')}`);
+      return fresh;
+    },
+    keep(key, value) { mergedVariables[key] = value; },
+  };
+  const withServerSteps = test.steps.some(isServerStep);
 
   // An upload sends the files' content, read here: the extension cannot read the disk.
   for (const step of hydratedSteps) {
@@ -412,7 +538,15 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       actionSteps, startIndex, new_window, sendCommand,
       debugController, executionId, hydratedSteps,
       onProgress, streamedStepResults,
-      viewportWidth, viewportHeight
+      viewportWidth, viewportHeight, server
+    );
+    executionFailed = extensionResult._failed || false;
+    delete extensionResult._failed;
+  } else if (withServerSteps) {
+    // ─── Server steps: the browser's steps in segments, the server's in between ──
+    extensionResult = await executeInSegments(
+      actionSteps, startIndex, new_window, sendCommand, executionId,
+      onProgress, streamedStepResults, viewportWidth, viewportHeight, server
     );
     executionFailed = extensionResult._failed || false;
     delete extensionResult._failed;
@@ -461,8 +595,12 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   if (!executionFailed) {
     for (let i = 0; i < hydratedSteps.length; i++) {
-      const step = hydratedSteps[i];
-      if (step.command !== 'assert' || !step.assertion) continue;
+      if (hydratedSteps[i].command !== 'assert' || !hydratedSteps[i].assertion) continue;
+      // With the values the run kept by then (a captured order number, say).
+      let step = hydratedSteps[i];
+      if (withServerSteps) {
+        try { step = server.rehydrate(step); } catch (err) { log(err.message); }
+      }
 
       const stepOrder = i + 1;
       const startedAt = Date.now();

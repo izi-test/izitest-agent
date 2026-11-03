@@ -13,8 +13,8 @@
 import { isFragileSelector, isPositionalSelector, lastTag } from './codegen/locators.js';
 
 // The commands that act on an element of the page; drag, on the one it moves; an assertion,
-// on the one it checks (ELEMENT_ASSERTIONS).
-const TARGET_COMMANDS = new Set(['click', 'fill', 'select', 'upload', 'drag', 'assert']);
+// on the one it checks (ELEMENT_ASSERTIONS); a capture, on the one it reads.
+const TARGET_COMMANDS = new Set(['click', 'fill', 'select', 'upload', 'drag', 'assert', 'capture']);
 const FIELD_COMMANDS = new Set(['fill', 'select', 'upload']);
 const NAME_LOCATORS = ['label', 'aria'];
 // The assertions that check an element, named by their selector. text_contains without one

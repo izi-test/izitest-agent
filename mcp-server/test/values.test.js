@@ -147,7 +147,7 @@ test('the exported code computes the values with the very same file', () => {
   };
   const plain = generateTestCode(t, 'playwright-plain').files;
   assert.deepEqual(plain.map((f) => f.path), ['tests/delivery.spec.js', 'tests/izitest-values.js']);
-  assert.match(plain[0].content, /import \{ computeVariables, resolveValues \} from '\.\/izitest-values\.js';/);
+  assert.match(plain[0].content, /import \{ computeVariables, resolveValues, pathValue, pick \} from '\.\/izitest-values\.js';/);
   assert.match(plain[0].content, /computeVariables\(\{\n {2}date: '\{\{today \+ 3 days \| dd\/MM\/yyyy\}\}',\n\}, \{ language: 'fr' \}\)/);
   assert.match(plain[0].content, /toContainText\(value\('Le \{\{today \| d MMMM\}\}'\)\)/);
   assert.match(plain[1].content, /export function computeVariables/);
@@ -156,7 +156,7 @@ test('the exported code computes the values with the very same file', () => {
   const cucumber = generateTestCode(t, 'playwright-cucumber', () => definitions).files;
   const file = (path) => cucumber.find((f) => f.path === path)?.content;
   assert.ok(file('features/support/values.js'));
-  assert.match(file('features/support/world.js'), /this\.run = valueContext\(\{ language: 'fr' \}\);/);
+  assert.match(file('features/support/world.js'), /this\.run = valueContext\(\{ language: 'fr', lookup: \(name\) => this\.vars\[name\] \}\);/);
   assert.match(file('features/steps/default.steps.js'), /async function \(selector, value\) \{\n {2}\[selector, value\] = this\.values\(selector, value\);/);
   assert.match(file('features/delivery.feature'), /\| \{\{today \+ 3 days \\\| dd\/MM\/yyyy\}\} \|/, 'the | of the format escaped in its cell');
 

@@ -9,9 +9,14 @@ import { needsCollectors, needsAxe, collectorLines, oracleCode, AXE_IMPORT } fro
 import { requirementTags } from './requirement-tags.js';
 import { hasExpression } from '../values.js';
 
-/** Whether a test holds computed values ({{today}}, {{unique}}…): its code then carries izitest-values.js. */
+/**
+ * Whether a test holds computed values ({{today}}, {{unique}}…) or keeps some as it runs
+ * (capture, http): its code then carries izitest-values.js.
+ */
 export function usesComputedValues(test) {
-  return hasExpression(JSON.stringify(test.steps ?? [])) || Object.values(test.variables ?? {}).some((v) => hasExpression(v?.defaultValue));
+  return hasExpression(JSON.stringify(test.steps ?? []))
+    || Object.values(test.variables ?? {}).some((v) => hasExpression(v?.defaultValue))
+    || (test.steps ?? []).some((step) => step.command === 'capture' || step.command === 'http');
 }
 
 export function generatePlaywrightPlain(test) {
@@ -20,7 +25,7 @@ export function generatePlaywrightPlain(test) {
   const computed = usesComputedValues(test);
   lines.push(`import { test, expect } from '@playwright/test';`);
   if (needsAxe(steps)) lines.push(AXE_IMPORT);
-  if (computed) lines.push(`import { computeVariables, resolveValues } from './izitest-values.js';`);
+  if (computed) lines.push(`import { computeVariables, resolveValues, pathValue, pick } from './izitest-values.js';`);
   lines.push('');
 
   const vars = test.variables || {};
@@ -31,6 +36,8 @@ export function generatePlaywrightPlain(test) {
     lines.push(`const { values: VARS, context: RUN } = computeVariables({`);
     for (const key of varNames) lines.push(`  ${safeKey(key)}: ${jsStringLiteral(String(vars[key]?.defaultValue ?? ''))},`);
     lines.push(`}, { language: '${language}' });`);
+    // The values the test keeps as it runs (capture) are in VARS too.
+    lines.push('RUN.lookup = (name) => VARS[name];');
     lines.push('const value = (text) => resolveValues(text, RUN).text;');
     lines.push('');
   } else if (varNames.length > 0) {
@@ -53,7 +60,10 @@ export function generatePlaywrightPlain(test) {
 
   // The requirements it checks, as tags: `npx playwright test --grep @REQ-12` runs them.
   const tags = requirementTags(test);
-  lines.push(`test(${jsLiteral(test.name || 'untitled')}, ${tags.length ? `{ tag: [${tags.map(jsLiteral).join(', ')}] }, ` : ''}async ({ page }) => {`);
+  // An API called by the test (http) goes through Playwright's request fixture.
+  const calls = steps.some((step) => step.command === 'http');
+  lines.push(`test(${jsLiteral(test.name || 'untitled')}, ${tags.length ? `{ tag: [${tags.map(jsLiteral).join(', ')}] }, ` : ''}async ({ page${calls ? ', request' : ''} }) => {`);
+  if (calls) lines.push('  let RESPONSE = null;');
   for (const requirement of test.requirements ?? []) {
     const criteria = requirement.criteria?.length ? `: criterion ${requirement.criteria.map((c) => c.number).join(', ')}` : '';
     lines.push(`  // Checks ${requirement.key} — ${requirement.title}${criteria}`);
@@ -146,9 +156,43 @@ function renderStep(step) {
       return `// TODO: wait step without ms or selector`;
     case 'assert':
       return renderAssertion(step.assertion || {});
+    case 'capture':
+      return renderCapture(step);
+    case 'http':
+      return renderCall(p);
     default:
       return `// TODO: unsupported command '${step.command}'`;
   }
+}
+
+// A value kept for the steps after (lib/server-steps.js), into VARS.
+function renderCapture(step) {
+  const p = step.params || {};
+  const into = `VARS[${jsStringLiteral(p.name ?? '')}]`;
+  const read = (() => {
+    switch (p.what ?? 'text') {
+      case 'url': return 'page.url()';
+      case 'title': return 'await page.title()';
+      case 'response': return `pathValue(RESPONSE, ${jsLiteral(p.path ?? '')})`;
+      case 'value': return `await ${locatorOf(chooseTarget(step, jsLiteral))}.first().inputValue()`;
+      case 'attribute': return `await ${locatorOf(chooseTarget(step, jsLiteral))}.first().getAttribute(${jsLiteral(p.attribute ?? '')})`;
+      default: return `((await ${locatorOf(chooseTarget(step, jsLiteral))}.first().textContent()) ?? '').trim()`;
+    }
+  })();
+  return `${into} = ${p.pattern ? `pick(${read}, ${jsStringLiteral(p.pattern)})` : read};`;
+}
+
+// An API called to prepare data; its answer read by the captures after it.
+function renderCall(p) {
+  const method = String(p.method ?? 'GET').toUpperCase();
+  const body = p.body != null && p.body !== '' ? `, data: ${jsLiteral(typeof p.body === 'string' ? p.body : JSON.stringify(p.body))}, headers: { 'content-type': 'application/json' }` : '';
+  return [
+    '{',
+    `  const response = await request.fetch(${jsLiteral(p.url ?? '')}, { method: ${jsStringLiteral(method)}${body} });`,
+    `  expect(response.ok(), await response.text()).toBeTruthy();`,
+    `  RESPONSE = await response.json().catch(() => null);`,
+    '}',
+  ].join('\n');
 }
 
 // `page.click(css)` for a CSS selector, as generated so far; `locator.click()` when the step

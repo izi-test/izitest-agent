@@ -229,6 +229,8 @@ function normalizeParams(step) {
   if (step.command === 'assert') {
     return step.assertion || step.params || {};
   }
+  // A capture says what it keeps; without it, the text, as it runs (lib/server-steps.js).
+  if (step.command === 'capture' && !step.params?.what) return { what: 'text', ...step.params };
   return step.params || {};
 }
 

@@ -30,6 +30,16 @@ export const DEFAULT_STEP_DEFINITIONS = [
   { keyword: 'When',  pattern: 'I press {string}',                command: 'keyboard', params_template: { key: '{0}' } },
   { keyword: 'When',  pattern: 'I scroll to {string}',            command: 'scroll',   params_template: { selector: '{0}' } },
 
+  // Kept for the steps after, run on the server (lib/server-steps.js): a value of the page, an
+  // API called to prepare data, a value of its answer. Used further on as {{name}}.
+  { keyword: 'When',  pattern: 'I store the text of {string} as {string}',  command: 'capture', params_template: { selector: '{0}', what: 'text', name: '{1}' } },
+  { keyword: 'When',  pattern: 'I store the text of {string} matching {string} as {string}', command: 'capture', params_template: { selector: '{0}', what: 'text', pattern: '{1}', name: '{2}' } },
+  { keyword: 'When',  pattern: 'I store the value of {string} as {string}', command: 'capture', params_template: { selector: '{0}', what: 'value', name: '{1}' } },
+  { keyword: 'When',  pattern: 'I store the URL as {string}',               command: 'capture', params_template: { what: 'url', name: '{0}' } },
+  { keyword: 'When',  pattern: 'I store {string} of the response as {string}', command: 'capture', params_template: { what: 'response', path: '{0}', name: '{1}' } },
+  { keyword: 'Given', pattern: 'I call {word} {string}',                    command: 'http',    params_template: { method: '{0}', url: '{1}' } },
+  { keyword: 'Given', pattern: 'I call {word} {string} with {string}',      command: 'http',    params_template: { method: '{0}', url: '{1}', body: '{2}' } },
+
   // Waits
   { keyword: 'When',  pattern: 'I wait {int} seconds',   command: 'wait', params_template: { ms: '{0}000' } },
   { keyword: 'When',  pattern: 'I wait for {string}',    command: 'wait', params_template: { selector: '{0}' } },
@@ -78,6 +88,13 @@ const FRENCH_PATTERNS = {
   'I drag {string} to the {word} of {string}': 'je glisse {string} vers le côté {word} de {string}',
   'I press {string}': "j'appuie sur {string}",
   'I scroll to {string}': "je fais défiler jusqu'à {string}",
+  'I store the text of {string} as {string}': 'je retiens le texte de {string} dans {string}',
+  'I store the text of {string} matching {string} as {string}': 'je retiens le texte de {string} qui correspond à {string} dans {string}',
+  'I store the value of {string} as {string}': 'je retiens la valeur de {string} dans {string}',
+  'I store the URL as {string}': "je retiens l'URL dans {string}",
+  'I store {string} of the response as {string}': 'je retiens {string} de la réponse dans {string}',
+  'I call {word} {string}': "j'appelle {word} {string}",
+  'I call {word} {string} with {string}': "j'appelle {word} {string} avec {string}",
   'I wait {int} seconds': "j'attends {int} secondes",
   'I wait for {string}': "j'attends {string}",
   'I should see {string}': 'je vois {string}',

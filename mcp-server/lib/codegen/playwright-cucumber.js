@@ -75,7 +75,10 @@ function withStableTarget(step) {
 export function toScenarioOutline(feature, variables = {}, language = 'en') {
   const words = keywordsOf(language);
   const used = [];
-  const outline = feature.replace(/\{\{\s*([A-Za-z_]\w*)\s*\}\}/g, (_, name) => {
+  // A column per variable of the test; a value the scenario keeps as it runs ({{order}}) is no
+  // column: the step works it out (World#values).
+  const outline = feature.replace(/\{\{\s*([A-Za-z_]\w*)\s*\}\}/g, (whole, name) => {
+    if (!Object.prototype.hasOwnProperty.call(variables ?? {}, name)) return whole;
     if (!used.includes(name)) used.push(name);
     return `<${name}>`;
   });
@@ -111,9 +114,9 @@ function resolvingArgs(code) {
 /** The World of a test with computed values: worked out once per scenario, in its language. */
 function worldWithValues(language) {
   return WORLD_JS
-    .replace(`import { chromium } from 'playwright';\n`, `import { chromium } from 'playwright';\nimport { resolveValues, valueContext } from './values.js';\n`)
-    .replace(`  constructor(options) {\n    super(options);\n  }\n`, `  constructor(options) {\n    super(options);\n  }\n\n  // Computed values in a step's arguments ({{today}}, {{unique}}…), the same all through the scenario.\n  values(...args) {\n    return args.map((arg) => (typeof arg === 'string' ? resolveValues(arg, this.run).text : arg));\n  }\n`)
-    .replace(`Before(async function () {\n`, `Before(async function () {\n  this.run = valueContext({ language: '${language === 'fr' ? 'fr' : 'en'}' });\n`);
+    .replace(`import { chromium, request } from 'playwright';\n`, `import { chromium, request } from 'playwright';\nimport { resolveValues, valueContext } from './values.js';\n`)
+    .replace(`  // A value of the last answer`, `  // Computed values in a step's arguments ({{today}}, {{unique}}, {{order}}…), the same all through the scenario.\n  values(...args) {\n    return args.map((arg) => (typeof arg === 'string' ? resolveValues(arg, this.run).text : arg));\n  }\n\n  // A value of the last answer`)
+    .replace(`Before(async function () {\n`, `Before(async function () {\n  this.run = valueContext({ language: '${language === 'fr' ? 'fr' : 'en'}', lookup: (name) => this.vars[name] });\n`);
 }
 
 // ─── Templates ──────────────────────────────────────────────────────
@@ -225,6 +228,39 @@ When('I wait for {string}', async function (selector) {
   await this.page.waitForSelector(selector);
 });
 
+// ─── Values kept for the steps after, APIs called ──────────────────
+
+When('I store the text of {string} as {string}', async function (selector, name) {
+  this.vars[name] = ((await this.page.locator(selector).first().textContent()) ?? '').trim();
+});
+
+When('I store the text of {string} matching {string} as {string}', async function (selector, pattern, name) {
+  const text = ((await this.page.locator(selector).first().textContent()) ?? '').trim();
+  const match = new RegExp(pattern).exec(text);
+  if (!match) throw new Error(\`"\${pattern}" is not in "\${text}"\`);
+  this.vars[name] = match[1] ?? match[0];
+});
+
+When('I store the value of {string} as {string}', async function (selector, name) {
+  this.vars[name] = await this.page.locator(selector).first().inputValue();
+});
+
+When('I store the URL as {string}', async function (name) {
+  this.vars[name] = this.page.url();
+});
+
+When('I store {string} of the response as {string}', async function (path, name) {
+  this.vars[name] = this.responseValue(path);
+});
+
+Given('I call {word} {string}', async function (method, url) {
+  await this.call(method, url);
+});
+
+Given('I call {word} {string} with {string}', async function (method, url, body) {
+  await this.call(method, url, body);
+});
+
 // ─── Assertions ─────────────────────────────────────────────────────
 Then('I should see {string}', async function (expected) {
   await expect(this.page.locator('body')).toContainText(expected);
@@ -308,11 +344,36 @@ Then('the page should not break the accessibility rule {string}', async function
 `;
 
 const WORLD_JS = `import { Before, After, setWorldConstructor, World } from '@cucumber/cucumber';
-import { chromium } from 'playwright';
+import { chromium, request } from 'playwright';
 
 class PlaywrightWorld extends World {
   constructor(options) {
     super(options);
+    // The values the scenario keeps for its steps after (I store … as "order").
+    this.vars = {};
+  }
+
+  // An API called to prepare data (I call POST "…"): its answer kept for the steps after.
+  async call(method, url, body) {
+    const api = await request.newContext();
+    try {
+      const json = body !== undefined && /^\\s*[[{]/.test(body);
+      const response = await api.fetch(url, {
+        method, ...(body !== undefined ? { data: body, headers: { 'content-type': json ? 'application/json' : 'text/plain' } } : {}),
+      });
+      const text = await response.text();
+      try { this.response = JSON.parse(text); } catch { this.response = text; }
+      if (!response.ok()) throw new Error(\`\${method} \${url} answered \${response.status()}: \${text.slice(0, 200)}\`);
+    } finally {
+      await api.dispose();
+    }
+  }
+
+  // A value of the last answer, at a path: "id", "data.items[0].id".
+  responseValue(path) {
+    let at = this.response;
+    for (const part of String(path).replace(/^\\$\\.?/, '').match(/[^.[\\]]+/g) ?? []) at = at?.[part];
+    return at !== null && typeof at === 'object' ? JSON.stringify(at) : String(at ?? '');
   }
 }
 
@@ -438,6 +499,19 @@ function commandToPlaywright(tpl, argNames) {
       return `await this.page.waitForTimeout(${resolve(params.ms)});`;
     case 'assert':
       return assertionToPlaywright(params, argNames);
+    // Kept for the steps after, and an API called (lib/server-steps.js): the World's.
+    case 'capture': {
+      const into = `this.vars[${resolve(params.name)}]`;
+      switch (params.what ?? 'text') {
+        case 'url': return `${into} = this.page.url();`;
+        case 'title': return `${into} = await this.page.title();`;
+        case 'response': return `${into} = this.responseValue(${resolve(params.path)});`;
+        case 'value': return `${into} = await this.page.locator(${resolve(params.selector)}).first().inputValue();`;
+        default: return `${into} = ((await this.page.locator(${resolve(params.selector)}).first().textContent()) ?? '').trim();`;
+      }
+    }
+    case 'http':
+      return `await this.call(${resolve(params.method ?? 'GET')}, ${resolve(params.url)}${params.body != null ? `, ${resolve(params.body)}` : ''});`;
     default:
       return `// Unsupported command: ${tpl.command}`;
   }

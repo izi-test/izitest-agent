@@ -90,7 +90,7 @@ test('default.steps.js converts "{int} seconds" into waitForTimeout(seconds * 10
 test('world.js launches chromium in Before and cleans up in After', () => {
   const bundle = generatePlaywrightCucumber({ name: 'x', steps: [] }, SEED);
   const world = fileMap(bundle)['features/support/world.js'];
-  assert.match(world, /import \{ chromium \} from 'playwright'/);
+  assert.match(world, /import \{ chromium, request \} from 'playwright'/);
   assert.match(world, /Before\(async function/);
   assert.match(world, /After\(async function/);
   assert.match(world, /this\.browser = await chromium\.launch\(\)/);

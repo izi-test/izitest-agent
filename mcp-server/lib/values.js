@@ -294,14 +294,17 @@ export function valueContext({ now = new Date(), language = 'en', lookup = () =>
  * `text` with its {{expressions}} worked out: { text, problems }. A {{name}} of a variable is
  * its value; one nothing is named after is left as it is. An expression that does not work
  * out is left as it is too, and told in `problems` ("{{todya}}: nothing is named "todya"").
- * `escape` is applied to each value put in (to write it inside JSON, say).
+ * `escape` is applied to each value put in (to write it inside JSON, say). One using a name in
+ * `waiting` is left for later, untold.
  */
-export function resolveValues(textValue, context = valueContext(), { escape = (v) => v } = {}) {
+export function resolveValues(textValue, context = valueContext(), { escape = (v) => v, waiting = new Set() } = {}) {
   const problems = [];
   const out = String(textValue ?? '').replace(TEMPLATE, (whole, inner) => {
     const [source, ...rest] = inner.split('|');
     const pattern = rest.join('|').trim();
     const plain = source.trim();
+    // Using a variable a step keeps later in the run (lib/server-steps.js): worked out then.
+    if ((plain.match(/[A-Za-z_]\w*/g) ?? []).some((name) => waiting.has(name))) return whole;
     if (NAME.test(plain) && !pattern) {
       const variable = context.lookup(plain);
       if (variable !== undefined) return escape(variable);
@@ -349,4 +352,27 @@ export function computeVariables(raw, { now = new Date(), language = 'en' } = {}
 
   for (const name of Object.keys(raw)) valueOf(name);
   return { values, problems, context };
+}
+
+/**
+ * The value at `path` in an answer read as JSON: "id", "data.items[0].id", "$.user.email"; an
+ * object or a list as JSON text. Undefined when the answer has nothing there.
+ */
+export function pathValue(data, path) {
+  const parts = String(path ?? '').replace(/^\$\.?/, '').match(/[^.[\]]+|\[\d+\]/g) ?? [];
+  let at = data;
+  for (const part of parts) {
+    if (at == null) return undefined;
+    at = at[/^\[\d+\]$/.test(part) ? Number(part.slice(1, -1)) : part];
+  }
+  if (at === undefined) return undefined;
+  return at !== null && typeof at === 'object' ? JSON.stringify(at) : String(at);
+}
+
+/** The part of `text` a regular expression picks: its first group, or all it matched; all of it without one. */
+export function pick(text, pattern) {
+  if (!pattern) return text;
+  const match = new RegExp(pattern).exec(text);
+  if (!match) throw new Error(`"${pattern}" is not in "${String(text).slice(0, 120)}"`);
+  return match[1] ?? match[0];
 }
