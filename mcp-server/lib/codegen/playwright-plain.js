@@ -7,17 +7,33 @@ import { recordedPathNote, uploadPathsOf } from '../upload-files.js';
 import { dropTargetOf, dragToCode } from './drag.js';
 import { needsCollectors, needsAxe, collectorLines, oracleCode, AXE_IMPORT } from './oracles.js';
 import { requirementTags } from './requirement-tags.js';
+import { hasExpression } from '../values.js';
+
+/** Whether a test holds computed values ({{today}}, {{unique}}…): its code then carries izitest-values.js. */
+export function usesComputedValues(test) {
+  return hasExpression(JSON.stringify(test.steps ?? [])) || Object.values(test.variables ?? {}).some((v) => hasExpression(v?.defaultValue));
+}
 
 export function generatePlaywrightPlain(test) {
   const lines = [];
   const steps = Array.isArray(test.steps) ? test.steps : [];
+  const computed = usesComputedValues(test);
   lines.push(`import { test, expect } from '@playwright/test';`);
   if (needsAxe(steps)) lines.push(AXE_IMPORT);
+  if (computed) lines.push(`import { computeVariables, resolveValues } from './izitest-values.js';`);
   lines.push('');
 
   const vars = test.variables || {};
   const varNames = Object.keys(vars);
-  if (varNames.length > 0) {
+  if (computed) {
+    // Worked out once per run, as IziTest does: the date typed is the one checked.
+    const language = test.language === 'fr' ? 'fr' : 'en';
+    lines.push(`const { values: VARS, context: RUN } = computeVariables({`);
+    for (const key of varNames) lines.push(`  ${safeKey(key)}: ${jsStringLiteral(String(vars[key]?.defaultValue ?? ''))},`);
+    lines.push(`}, { language: '${language}' });`);
+    lines.push('const value = (text) => resolveValues(text, RUN).text;');
+    lines.push('');
+  } else if (varNames.length > 0) {
     lines.push('const VARS = {');
     for (const key of varNames) {
       const def = vars[key] ?? {};
@@ -199,6 +215,8 @@ function renderAssertion(a) {
 // concatenation.
 function jsLiteral(value) {
   const s = String(value ?? '');
+  // A computed value ({{today + 3 days | dd/MM/yyyy}}) is worked out when the test runs.
+  if (hasExpression(s)) return `value(${jsStringLiteral(s)})`;
   if (/\{\{\s*\w+\s*\}\}/.test(s)) {
     // Escape for template literal, then inject VARS references.
     let out = s

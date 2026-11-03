@@ -22,6 +22,7 @@ import { stepsForEditedFeature } from './gherkin/reconcile.js';
 import { withElementNames, elementTargets, listElements, renameElement, deleteElement } from './element-store.js';
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { languageOf } from './gherkin/language.js';
+import { computeVariables } from './values.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
@@ -258,6 +259,15 @@ export async function apiRouter(req, res, url) {
 
       saveTest({ ...existing, steps });
       return json(res, 200, { success: true, step_count: steps.length });
+    }
+
+    // ── POST /api/values/preview — { values: { name: "{{today | dd/MM/yyyy}}" }, language }: what
+    // a run would compute now (lib/values.js), and what does not work out ──
+    if (method === 'POST' && path === '/api/values/preview') {
+      const body = await readBody(req);
+      const raw = Object.fromEntries(Object.entries(body.values ?? {}).map(([name, value]) => [name, String(value ?? '')]));
+      const { values, problems } = computeVariables(raw, { language: languageOf(body.language) });
+      return json(res, 200, { values, problems });
     }
 
     // ── Business steps the agent proposes for a test (lib/business-steps.js) ──

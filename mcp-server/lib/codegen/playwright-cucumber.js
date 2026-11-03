@@ -11,9 +11,12 @@ import { collectorLines, oracleCode, needsAxe, AXE_IMPORT } from './oracles.js';
 import { requirementTags } from './requirement-tags.js';
 import { keywordsOf, languageOf } from '../gherkin/language.js';
 import { translatedPattern } from '../gherkin/default-step-definitions.js';
+import { usesComputedValues } from './playwright-plain.js';
 
-export function generatePlaywrightCucumber(test, definitions) {
+// `valuesJs`: lib/values.js, carried by a test that holds computed values ({{today}}…).
+export function generatePlaywrightCucumber(test, definitions, { valuesJs = null } = {}) {
   const slug = slugify(test.name || 'test');
+  const computed = !!valuesJs && usesComputedValues(test);
   const tags = requirementTags(test);
   const outline = toScenarioOutline(
     serializeTestToFeatureWith(test, definitions, { singleStep: withStableTarget }),
@@ -25,10 +28,14 @@ export function generatePlaywrightCucumber(test, definitions) {
   const feature = header + (tags.length ? `${tags.join(' ')}\n` : '') + body;
 
   const composites = definitions.filter(d => d.steps_template);
+  // With computed values, each step works out its arguments first (World#values): a cell
+  // of the Examples holds {{today + 3 days | dd/MM/yyyy}}, the page gets the date.
+  const steps = (code) => (computed ? resolvingArgs(code) : code);
   const files = [
     { path: `features/${slug}.feature`, content: feature },
-    { path: 'features/steps/default.steps.js', content: defaultStepsJs(test.language) },
-    { path: 'features/support/world.js', content: WORLD_JS },
+    { path: 'features/steps/default.steps.js', content: steps(defaultStepsJs(test.language)) },
+    { path: 'features/support/world.js', content: computed ? worldWithValues(test.language) : WORLD_JS },
+    ...(computed ? [{ path: 'features/support/values.js', content: valuesJs }] : []),
     { path: 'cucumber.js', content: CUCUMBER_CONFIG_JS },
     { path: 'package.json', content: renderPackageJson(slug) },
   ];
@@ -36,7 +43,7 @@ export function generatePlaywrightCucumber(test, definitions) {
   if (composites.length > 0) {
     files.push({
       path: 'features/steps/composite.steps.js',
-      content: renderCompositeSteps(composites),
+      content: steps(renderCompositeSteps(composites)),
     });
   }
 
@@ -94,6 +101,19 @@ export function toScenarioOutline(feature, variables = {}, language = 'en') {
     `    ${words.examples}:\n` +
     `      | ${used.join(' | ')} |\n` +
     `      | ${used.map(cell).join(' | ')} |\n`;
+}
+
+/** Step code whose functions work out the computed values in their arguments first. */
+function resolvingArgs(code) {
+  return code.replace(/async function \(([^)]+)\) \{/g, (head, params) => `${head}\n  [${params}] = this.values(${params});`);
+}
+
+/** The World of a test with computed values: worked out once per scenario, in its language. */
+function worldWithValues(language) {
+  return WORLD_JS
+    .replace(`import { chromium } from 'playwright';\n`, `import { chromium } from 'playwright';\nimport { resolveValues, valueContext } from './values.js';\n`)
+    .replace(`  constructor(options) {\n    super(options);\n  }\n`, `  constructor(options) {\n    super(options);\n  }\n\n  // Computed values in a step's arguments ({{today}}, {{unique}}…), the same all through the scenario.\n  values(...args) {\n    return args.map((arg) => (typeof arg === 'string' ? resolveValues(arg, this.run).text : arg));\n  }\n`)
+    .replace(`Before(async function () {\n`, `Before(async function () {\n  this.run = valueContext({ language: '${language === 'fr' ? 'fr' : 'en'}' });\n`);
 }
 
 // ─── Templates ──────────────────────────────────────────────────────

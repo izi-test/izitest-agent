@@ -320,5 +320,9 @@ export function projectBrief(project) {
   lines.push(
     'Nobody answers questions during this run. If you cannot record the test — no URL to start from, a page that does not',
     'load —, close the recording window with close_window, then end with one sentence that says what is missing.');
+  // A value that changes from one day or one run to the next is computed, not recorded.
+  lines.push(
+    'A value that depends on the day (a date) or must differ at each run (an e-mail to sign up with) is computed: once recorded,',
+    'make it a variable with add_test_variable and a default_value such as {{today + 1 day | dd/MM/yyyy}} or user-{{unique}}@example.com.');
   return lines.join('\n');
 }

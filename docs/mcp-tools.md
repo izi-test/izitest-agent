@@ -548,6 +548,37 @@ Une case cochée fait souvent aussi partie d'un groupe (les critères d'une rech
 de variables en fait alors une variable de liste, qui choisit *quelle* case ; l'état reste celui
 enregistré.
 
+### Valeurs calculées
+
+Une variable, ou une étape, peut contenir une expression entre `{{ }}`, calculée par le serveur à
+chaque exécution (`lib/values.js`), une seule fois : la date saisie à l'étape 3 est celle que vérifie
+l'assertion de l'étape 9, et la valeur retenue est enregistrée avec l'exécution.
+
+| Écrit | Donne (le 3 novembre 2026, projet en français) |
+| :--- | :--- |
+| `{{today}}`, `{{tomorrow}}`, `{{yesterday}}` | `2026-11-03`, `2026-11-04`, `2026-11-02` |
+| `{{today + 3 days \| dd/MM/yyyy}}` | `06/11/2026` (aussi `jours`, `weeks`/`semaines`, `months`/`mois`, `years`/`ans`) |
+| `{{tomorrow \| EEEE d MMMM}}` | `mercredi 4 novembre` (noms dans la langue des tests du projet) |
+| `{{now \| HH:mm}}`, `{{now + 30 minutes}}` | `14:05`, `2026-11-03 14:35` |
+| `user-{{unique}}@example.com` | `user-lk7lajgdr@example.com` (le même jeton dans toute l'exécution) |
+| `{{uuid}}`, `{{timestamp}}`, `{{random(1000, 9999)}}` | un UUID, l'heure en ms, un entier entre les bornes |
+| `{{round(price * 1.2, 2)}}`, `{{price * qty \| 0,00}}` | un calcul avec d'autres variables, formaté |
+
+Une variable peut en utiliser d'autres (`{{price * quantity}}`). Un `{{nom}}` qui n'est pas une variable
+reste tel quel, comme avant ; une expression qui ne se calcule pas (`{{today + 3 dayz}}`) arrête
+l'exécution avant le navigateur, en disant laquelle et pourquoi. Une valeur passée à `run_test` peut
+être une expression elle aussi.
+
+- **Dans l'onglet Data**, une valeur avec une expression montre ce qu'elle donnerait maintenant, ou
+  l'erreur (`POST /api/values/preview`).
+- **`add_test_variable`** prend `default_value` : la variable vaut alors l'expression au lieu de la
+  valeur enregistrée (`user-{{unique}}@example.com` pour une inscription rejouable).
+- **L'agent qui enregistre** est invité à le faire pour une date ou une valeur qui doit changer à
+  chaque passage.
+- **Le code exporté** calcule les valeurs avec le même fichier : `tests/izitest-values.js` pour
+  Playwright, `features/support/values.js` pour Cucumber, où chaque step résout ses arguments
+  (`this.values(...)`) et les colonnes de l'Outline gardent l'expression.
+
 ### Paramètres de `run_test`
 
 | Paramètre | Type | Description |

@@ -3,8 +3,12 @@
 // step definitions come from the caller, and are read only for playwright-cucumber.
 
 import { extname } from 'path';
-import { generatePlaywrightPlain } from './playwright-plain.js';
+import { readFileSync } from 'fs';
+import { generatePlaywrightPlain, usesComputedValues } from './playwright-plain.js';
 import { generatePlaywrightCucumber } from './playwright-cucumber.js';
+
+// The code of a test holding computed values carries the very file IziTest computes them with.
+export const VALUES_JS = readFileSync(new URL('../values.js', import.meta.url), 'utf8');
 
 export const CODEGEN_FRAMEWORKS = ['playwright-plain', 'playwright-cucumber'];
 
@@ -28,7 +32,12 @@ export function generateTestCode(test, framework, loadDefinitions) {
       .trim()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'test';
-    return { files: [{ path: `tests/${slug}.spec.js`, content: generatePlaywrightPlain(test) }] };
+    return {
+      files: [
+        { path: `tests/${slug}.spec.js`, content: generatePlaywrightPlain(test) },
+        ...(usesComputedValues(test) ? [{ path: 'tests/izitest-values.js', content: VALUES_JS }] : []),
+      ],
+    };
   }
 
   // playwright-cucumber requires step definitions from the project.
@@ -38,7 +47,7 @@ export function generateTestCode(test, framework, loadDefinitions) {
       error: 'Test is not assigned to a project; assign it first to generate playwright-cucumber code',
     };
   }
-  return { files: generatePlaywrightCucumber(test, loadDefinitions(test.project_id)).files };
+  return { files: generatePlaywrightCucumber(test, loadDefinitions(test.project_id), { valuesJs: VALUES_JS }).files };
 }
 
 /**

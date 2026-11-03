@@ -291,6 +291,9 @@ export const AGENT_TOOLS = [
       'column of a Scenario Outline. A business step grouping that step maps it with { "variable": "<name>" }.',
       'A name the test already has reuses that variable: e.g. an assertion that checks the e-mail typed in step 2',
       '(add_assertion links new assertions by itself).',
+      'Its default can be computed at each run instead of the recorded value (default_value): a date relative to the',
+      'day ({{today + 3 days | dd/MM/yyyy}}, {{now | HH:mm}}), a value unique to each run (user-{{unique}}@example.com,',
+      '{{uuid}}, {{random(1000, 9999)}}), a calculation ({{round(price * 1.2, 2)}}, other variables by name).',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -301,14 +304,15 @@ export const AGENT_TOOLS = [
         value: { type: 'string', description: 'The part of the recorded value to replace, e.g. "antony-92160" in the URL. Omit it for the whole value.' },
         name: { type: 'string', description: 'Variable name: letters, digits and _, e.g. "ville"' },
         description: { type: 'string', description: 'What the variable stands for (shown in the dashboard)' },
+        default_value: { type: 'string', description: 'Its default, computed at each run, instead of the recorded value: e.g. "{{today + 1 day | dd/MM/yyyy}}" or "user-{{unique}}@example.com"' },
       },
       required: ['test_name', 'step', 'param', 'name'],
     },
-    handler({ test_name, step, param, value, name, description }) {
+    handler({ test_name, step, param, value, name, description, default_value }) {
       const test = loadTest(test_name);
       if (!test) return { error: `Test "${test_name}" not found` };
 
-      const result = addTestVariable(test, { step, param, value, name, description });
+      const result = addTestVariable(test, { step, param, value, name, description, defaultValue: default_value });
       if (result.error) return { error: result.error };
 
       saveTest(result.test);

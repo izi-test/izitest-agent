@@ -71,7 +71,7 @@ export function linkAssertionToVariables(assertion, variables = {}, values = {})
  * A name the test already has reuses that variable — an assertion checking the e-mail a
  * fill step typed — provided the value is that variable's default.
  */
-export function addTestVariable(test, { step, param, value, name, description }) {
+export function addTestVariable(test, { step, param, value, name, description, defaultValue }) {
   const steps = test.steps || [];
   if (!Number.isInteger(step) || step < 1 || step > steps.length) {
     return { error: `Step ${step} is out of range: test "${test.name}" has ${steps.length} step(s), numbered from 1` };
@@ -110,7 +110,8 @@ export function addTestVariable(test, { step, param, value, name, description })
       ...(updated.variables || {}),
       [name]: {
         type: 'text',
-        defaultValue: part,
+        // The value recorded, or one computed at each run ({{today | dd/MM/yyyy}}, lib/values.js).
+        defaultValue: defaultValue ?? part,
         step,
         description: description || recordedStep.intent || `${param} of step ${step}`,
       },

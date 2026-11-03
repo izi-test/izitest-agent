@@ -129,6 +129,11 @@ export const testsApi = createApi({
       providesTags: (_result, _error, name) => [{ type: 'Test', id: name }],
     }),
 
+    // What a run would compute now for values holding expressions (mcp-server/lib/values.js).
+    previewValues: builder.query<{ values: Record<string, string>; problems: string[] }, { values: Record<string, string>; language?: string }>({
+      query: (body) => ({ url: 'api/values/preview', method: 'POST', body }),
+    }),
+
     // The business steps the agent proposes for a test (mcp-server/lib/business-steps.js).
     getBusinessProposals: builder.query<BusinessProposals, string>({
       query: (name) => `api/tests/${encodeURIComponent(name)}/business-steps`,
@@ -187,6 +192,7 @@ export const {
   usePutTestFeatureMutation,
   useGetTestCodegenQuery,
   useGetBusinessProposalsQuery,
+  usePreviewValuesQuery,
   useProposeBusinessStepsMutation,
   useAcceptBusinessStepMutation,
   useDismissBusinessStepMutation,

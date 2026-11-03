@@ -34,6 +34,8 @@ import { ExecutionHistory } from './ExecutionHistory';
 import { LiveExecutionModal } from './LiveExecutionModal';
 import { GherkinEditor } from './GherkinEditor';
 import { BusinessStepProposals, BusinessStepsNotice } from './BusinessStepProposals';
+import { ComputedHint } from './ComputedValues';
+import { COMPUTED_HELP, useComputedPreview } from '../values';
 import { CodePanel } from './CodePanel';
 import { HeadlessSwitch } from './HeadlessSwitch';
 import { useRunHeadless } from '../headless';
@@ -123,6 +125,9 @@ export function TestDetail({ testName }: TestDetailProps) {
   const [deleteTestMut] = useDeleteTestMutation();
   const [deleteStepMut] = useDeleteStepMutation();
   const [reorderStepsMut] = useReorderStepsMutation();
+  // What the variables holding expressions would give now (Data tab).
+  const currentValues = Object.fromEntries(Object.entries(test?.variables ?? {}).map(([key, info]) => [key, String(variableOverrides[key] ?? (info as { defaultValue?: string })?.defaultValue ?? '')]));
+  const computedPreview = useComputedPreview(currentValues, projects.find((p) => p.id === test?.project_id)?.language);
 
   // Local-only confirm modal state (callback is non-serializable)
   const [confirmData, setConfirmData] = useState<{ isOpen: boolean; title?: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
@@ -512,11 +517,13 @@ CRITICAL RULES:
                           placeholder={info.defaultValue || 'Enter value...'}
                         />
                         {info.type && <span className="data-var-type">{info.type}</span>}
+                        <ComputedHint name={key} value={variableOverrides[key] ?? info.defaultValue ?? ''} preview={computedPreview} />
                       </div>
                     </div>
                   ))}
                 </div>
               )}
+              <p className="field__hint data-help">{COMPUTED_HELP}</p>
             </Card>
           ) : activeTab === 'steps' ? (
             <>

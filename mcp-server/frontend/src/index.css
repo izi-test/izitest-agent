@@ -3097,3 +3097,10 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
   border: 1px solid var(--primary-tint-border); border-radius: 8px; background: var(--primary-tint); color: var(--primary-hover); font-size: 13px;
 }
 .business-notice .link-btn { margin-left: auto; }
+
+/* Computed values in the Data tab (ComputedValues.tsx). */
+.data-var-input { flex-wrap: wrap; }
+.computed-hint { flex-basis: 100%; font-size: 12px; color: var(--text-muted); }
+.computed-hint .mono { color: var(--primary-hover); }
+.computed-hint--error { color: var(--red); }
+.data-help { margin-top: 12px; }

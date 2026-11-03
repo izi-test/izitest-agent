@@ -3,6 +3,7 @@
 import { log } from './logger.js';
 import { db } from './db.js';
 import { loadTest, fillStepPages } from './test-store.js';
+import { computeVariables, resolveValues } from './values.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
@@ -278,17 +279,23 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   const viewportHeight = test.viewport?.height || null;
 
   // Merge default variable values with caller-supplied overrides
-  const mergedVariables = {};
+  const rawVariables = {};
   if (test.variables) {
     for (const [key, info] of Object.entries(test.variables)) {
-      mergedVariables[key] = String(info.defaultValue ?? '');
+      rawVariables[key] = String(info.defaultValue ?? '');
     }
   }
   if (variables) {
     for (const [key, value] of Object.entries(variables)) {
-      mergedVariables[key] = String(value ?? '');
+      rawVariables[key] = String(value ?? '');
     }
   }
+  // Computed values ({{today + 3 days | dd/MM/yyyy}}, {{unique}}, {{price * 1.2}}) worked out
+  // once for the run, in the language of the test's project (lib/values.js). One that does not
+  // work out stops the run here, told: typed as it is, it would fail further on, unexplained.
+  const computed = computeVariables(rawVariables, { language: test.language });
+  const mergedVariables = computed.values;
+  const valueProblems = [...computed.problems];
   log(`Merged variables: ${JSON.stringify(mergedVariables)}`);
 
   const applySubstitutions = (str) => {
@@ -303,7 +310,10 @@ export async function executeTest(name, variables, substitutions, start_step, ne
         result = result.replaceAll(oldVal, newVal);
       }
     }
-    return result;
+    // An expression written in the step itself, with the same values as the variables.
+    const resolved = resolveValues(result, computed.context, { escape: (value) => JSON.stringify(value).slice(1, -1) });
+    valueProblems.push(...resolved.problems);
+    return resolved.text;
   };
 
   const hydratedSteps = test.steps.map(step => {
@@ -325,6 +335,10 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     }
     return hydratedStep;
   });
+
+  if (valueProblems.length) {
+    throw new Error(`Computed values that do not work out — fix them in the test (Data, or its steps):\n${[...new Set(valueProblems)].join('\n')}`);
+  }
 
   // An upload sends the files' content, read here: the extension cannot read the disk.
   for (const step of hydratedSteps) {
