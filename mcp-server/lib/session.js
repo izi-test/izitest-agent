@@ -13,6 +13,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { log } from './logger.js';
 import { resolveValues, valueContext } from './values.js';
+import { datasetRows } from './datasets.js';
 
 const sessions = new Map();      // session id → Session
 const connectionDefaults = new Map(); // connection id → session id
@@ -100,11 +101,18 @@ export class Session {
     if (windowId !== undefined && windowId !== null) this.windowId = windowId;
   }
 
-  /** Starts the session's values afresh: a new recording keeps its own. */
-  resetValues() {
+  /**
+   * Starts the session's values afresh: a new recording keeps its own. Recording a test of a
+   * project, the values of its datasets ({{users[2].email}}); playing one, the first row of it
+   * ({{email}}).
+   */
+  resetValues({ projectId = null, row = null } = {}) {
     this.kept = {};
     this.lastResponse = null;
-    this.values = valueContext({ lookup: (name) => this.kept[name] });
+    this.values = valueContext({
+      lookup: (name) => this.kept[name] ?? row?.[name],
+      datasets: (name) => datasetRows(projectId)[name],
+    });
   }
 
   /**

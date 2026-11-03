@@ -23,7 +23,7 @@ import { withElementNames, elementTargets, listElements, renameElement, deleteEl
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { languageOf } from './gherkin/language.js';
 import { computeVariables } from './values.js';
-import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetOfTest, datasetRows, rowLabel } from './datasets.js';
+import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetOfTest, datasetRows, rowLabel, datasetLines } from './datasets.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
@@ -1429,8 +1429,8 @@ export async function apiRouter(req, res, url) {
         body.prompt += `\n\n${recordingBrief(linkedRequirement, requirementLink.caseId, { viaMcp: agentConfig.mode !== 'api' })}`;
       }
       // The app the test is for: where it is and what to know of it, as the project says.
-      const project = body.project_id ? db.prepare('SELECT name, base_url, context, language FROM projects WHERE id = ?').get(body.project_id) : null;
-      body.prompt += `\n\n${projectBrief(project)}`;
+      const project = body.project_id ? db.prepare('SELECT id, name, base_url, context, language FROM projects WHERE id = ?').get(body.project_id) : null;
+      body.prompt += `\n\n${projectBrief(project, { datasets: datasetLines(project?.id) })}`;
 
       // ── API mode: internal agent via Vercel AI SDK ──
       if (agentConfig.mode === 'api') {
@@ -1457,7 +1457,7 @@ export async function apiRouter(req, res, url) {
           sendCommand,
           (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); },
           abortController.signal,
-          { requirementLink }
+          { requirementLink, projectId: project?.id ?? null }
         );
 
         if (!res.writableEnded) res.end();
@@ -1475,7 +1475,9 @@ export async function apiRouter(req, res, url) {
           'list_profiles', 'navigate', 'click', 'fill', 'extract', 'screenshot',
           'get_tabs', 'get_page_info', 'scroll', 'wait', 'execute_js', 'keyboard',
           'get_cookies', 'snapshot', 'start_recording', 'record_step', 'stop_recording',
-          'list_tests', 'run_test', 'fix_test_step', 'delete_test', 'add_assertion', 'close_window'
+          'list_tests', 'run_test', 'fix_test_step', 'delete_test', 'add_assertion', 'close_window',
+          // What its brief tells it to use: a <select>, a file, a computed value, a value kept, an API.
+          'select', 'upload_file', 'add_test_variable', 'capture_value', 'call_api'
         ].map(t => `mcp__izitest-agent__${t}`).join(',');
         args.push('-p', body.prompt, '--allowedTools', mcpToolNames, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
       } else if (agentConfig.cli?.provider === 'copilot') {

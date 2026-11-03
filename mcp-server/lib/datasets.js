@@ -152,6 +152,81 @@ export function bindDataset(testName, dataset) {
   return { dataset: asDataset(found) };
 }
 
+/**
+ * The datasets of a project as an agent is told them, one line each: its columns, its number of
+ * rows and its first row — what it has to test with ({{users[1].email}}).
+ */
+export function datasetLines(projectId) {
+  if (!projectId) return [];
+  const short = (value) => JSON.stringify(value.length > 40 ? `${value.slice(0, 39)}…` : value);
+  return db.prepare('SELECT * FROM datasets WHERE project_id = ? ORDER BY name').all(projectId).map((row) => {
+    const { name, columns, rows } = asDataset(row, { withRows: true });
+    const first = columns.map((column) => `${column} ${short(rows[0]?.[column] ?? '')}`).join(', ');
+    return `- ${name}: ${columns.join(', ')} — ${rows.length} row(s); row 1: ${first}`;
+  });
+}
+
+/**
+ * The project a recording is for and the dataset it plays (start_recording's project_id and
+ * dataset), checked as it starts: `{ dataset }` — its name and its first row, which {{column}}
+ * is while recording; null when it plays none — or `{ error }`, naming the datasets there are.
+ */
+export function recordingDataset(projectId, name) {
+  if (projectId != null && !db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)) return { error: `No project ${projectId}` };
+  if (!name) return { dataset: null };
+  if (projectId == null) return { error: `A dataset belongs to a project: pass its project_id with dataset "${name}"` };
+  const found = db.prepare('SELECT * FROM datasets WHERE project_id = ? AND name = ?').get(projectId, String(name));
+  if (!found) {
+    const names = listDatasets(projectId).map((d) => d.name);
+    return { error: `No dataset "${name}" in project ${projectId}: ${names.length ? `its datasets are ${names.join(', ')}` : 'it has none'}` };
+  }
+  const { rows } = asDataset(found, { withRows: true });
+  return { dataset: { name: found.name, row: rows[0], rowCount: rows.length } };
+}
+
+/** What start_recording says of the datasets: the one it plays, or those it may take a value from. */
+export function recordingDatasetText(projectId, dataset) {
+  if (dataset) {
+    return `\nIt plays the dataset "${dataset.name}" (${dataset.rowCount} rows): type {{${Object.keys(dataset.row).join('}}, {{')}}}`
+      + ' — the values of its row 1 now, those of each row at run.';
+  }
+  const lines = datasetLines(projectId);
+  return lines.length ? `\nThe datasets of the project — take a value from one rather than make one up, as {{users[1].email}}:\n${lines.join('\n')}` : '';
+}
+
+/**
+ * A recorded test, saved, put in the project it was recorded for and bound to the dataset it
+ * played (start_recording's project_id and dataset): what stop_recording says of it.
+ */
+export function placeRecorded(recording) {
+  if (!recording.projectId) return '';
+  db.prepare("UPDATE tests SET project_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE name = ?").run(recording.projectId, recording.name);
+  if (!recording.dataset) return '';
+  const result = bindDataset(recording.name, recording.dataset.name);
+  return result.error
+    ? `\nNot bound to the dataset "${recording.dataset.name}": ${result.error}`
+    : `\nBound to the dataset "${recording.dataset.name}": it runs once per row of it (${recording.dataset.rowCount} rows), each column a variable of the run.`;
+}
+
+/**
+ * The columns of the dataset a test is bound to, as variables of it whose value is that of row 1:
+ * what an assertion added to it may be linked to — the name a row shows, not only what was typed.
+ */
+export function datasetVariables(testName) {
+  const row = datasetOfTest(testName)?.rows[0] ?? {};
+  return Object.fromEntries(Object.entries(row).map(([column, value]) => [column, { type: 'text', defaultValue: value }]));
+}
+
+/**
+ * A test's variables with the columns of its dataset an expected value names ({{name}}, linked
+ * or written so): its own, row 1's value by default — unbound, the test still checks that row.
+ */
+export function withColumnsOf(variables, fromDataset, expected) {
+  const named = [...String(expected ?? '').matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]);
+  const added = [...new Set(named)].filter((name) => fromDataset[name] && !variables?.[name]);
+  return added.length ? { ...variables, ...Object.fromEntries(added.map((name) => [name, fromDataset[name]])) } : variables;
+}
+
 /** A short label for a row: its number and its first values ("row 2 — bob@x.dev, Bob"). */
 export function rowLabel(row, number) {
   const values = Object.values(row ?? {}).filter((v) => v !== '').slice(0, 2).map((v) => (v.length > 30 ? `${v.slice(0, 29)}…` : v));

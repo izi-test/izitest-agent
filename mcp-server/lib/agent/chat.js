@@ -14,6 +14,7 @@ import { AGENT_TOOLS, getToolMap } from './tools.js';
 import { writingDefinitions } from '../gherkin/step-definition-store.js';
 import { keywordsOf } from '../gherkin/language.js';
 import { elementLines } from '../element-store.js';
+import { datasetLines } from '../datasets.js';
 
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 
@@ -33,6 +34,8 @@ function buildSystemPrompt(project) {
 
   // What the tests of the project act on, by name: usable where a phrase takes a selector.
   const elements = elementLines(project.id, 80);
+  // The values it has to test with: taken from there, not made up.
+  const datasets = datasetLines(project.id);
 
   const testList = tests.length > 0
     ? tests.map(t => `  - ${t.name}${t.description ? ': ' + t.description : ''}`).join('\n')
@@ -64,6 +67,9 @@ ${defList || '  (uniquement les step definitions par défaut)'}
 
 ## Éléments de l'application
 ${elements.length ? `Là où une phrase prend un sélecteur CSS, le nom d'un de ces éléments, mot pour mot, agit sur lui :\n${elements.join('\n')}` : '  (aucun élément enregistré)'}
+
+## Jeux de données
+${datasets.length ? `Des tables de valeurs pour tester, lignes numérotées à partir de 1 :\n${datasets.join('\n')}\nQuand un test a besoin d'une valeur qu'elles ont (un utilisateur pour se connecter, un produit à commander), prends-la là plutôt que de l'inventer : {{users[1].email}} dans le Gherkin. Pour un test à jouer avec chaque ligne, écris ses colonnes, {{email}}, {{password}}, puis rattache le test au jeu de données avec bind_dataset.` : '  (aucun jeu de données)'}
 
 ## Tests existants
 ${testList}

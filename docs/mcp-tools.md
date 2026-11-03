@@ -113,7 +113,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 
 | Tool | Description |
 | :--- | :--- |
-| `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. |
+| `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Jeux de données). |
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. |
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
@@ -600,6 +600,22 @@ texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fich
 - **L'export** emporte les jeux utilisés : en Playwright, un test par ligne (`for … of
   DATASETS['users']`) ; en Cucumber, une ligne d'`Examples` par ligne du jeu, et
   `features/support/datasets.js` pour les expressions.
+- **L'agent IA qui crée un test** (« Create Test with AI ») reçoit les jeux du projet dans sa consigne :
+  colonnes, nombre de lignes, première ligne. Il prend une valeur d'un jeu plutôt que d'en inventer une.
+  Pour une valeur, il tape `{{users[1].email}}`. Pour un test à jouer avec chaque ligne (« pour chaque
+  utilisateur »), il passe `project_id` et `dataset: "users"` à `start_recording` et tape `{{email}}`,
+  `{{password}}`. L'agent du chat, lui, les écrit dans le Gherkin, puis lie le test avec `bind_dataset`.
+- **Pendant l'enregistrement**, `start_recording(project_id)` fait lire les jeux du projet :
+  `{{users[2].email}}` tape la valeur de la ligne 2. Avec `dataset`, `{{email}}` tape celle de la ligne 1 du
+  jeu ; la réponse de `start_recording` dit quoi taper, ou liste les jeux du projet sans `dataset`.
+- **À `stop_recording`**, le test est rangé dans le projet et lié au jeu joué. Une valeur de la ligne 1,
+  écrite `{{email}}` ou tapée telle quelle (3 caractères ou plus), devient la variable de sa colonne,
+  sa valeur par défaut celle de la ligne 1. Un autre champ du même nom qu'une colonne prend un autre
+  nom (`name_2`), pour que la ligne ne le remplace pas.
+- **`add_assertion` sur un test lié** relie aussi l'attendu aux colonnes du jeu, même non tapées :
+  « Welcome Bob », Bob étant le `name` de la ligne 1, est gardé « Welcome {{name}} » et vérifie « Ann »
+  sur la ligne 2. Une colonne nommée dans l'attendu, reliée ainsi ou écrite `{{name}}` par l'agent, devient
+  une variable du test (valeur de la ligne 1) : délié du jeu, le test vérifie encore la ligne 1.
 
 | Route ou outil | Rôle |
 | :--- | :--- |
@@ -607,7 +623,8 @@ texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fich
 | `POST /api/projects/:id/datasets` | Dépose un fichier (`filename`, `content` texte ou `content_base64` pour un Excel) ou des lignes (`name`, `rows`) |
 | `GET /api/datasets/:id`, `DELETE /api/datasets/:id` | Un jeu avec ses lignes ; sa suppression (les tests liés jouent alors une seule fois) |
 | `PUT /api/tests/:name/dataset` | Lie un test à un jeu (`{ dataset: id ou nom }`) ou le délie (`null`) |
-| `save_dataset`, `bind_dataset` | Les mêmes, pour un agent (CSV en texte ou lignes) ; `get_project_context` liste les jeux |
+| `save_dataset`, `bind_dataset` | Les mêmes, pour un agent (CSV en texte ou lignes) ; `get_project_context` liste les jeux, avec leur première ligne |
+| `start_recording(project_id, dataset)` | Enregistre un test qui joue un jeu : `{{email}}` tape la ligne 1, le test est lié au jeu à `stop_recording` |
 
 ### Étapes serveur : garder une valeur, appeler une API
 

@@ -61,16 +61,34 @@ const INPUTS = {
  * Turn what a step typed (fill), picked in a <select> or gave a file input (upload) into a
  * {{variable}} of the test, named after the field. A <select> was left out: its option stayed
  * fixed, run_test could not change it, and its Examples column was missing. False for any
- * other step.
+ * other step. Recorded playing a dataset, `row` is its first row: a value of it is its column's,
+ * which each row of the dataset gives at run.
  */
-export function variabilizeInput(step, index, usedNames) {
+export function variabilizeInput(step, index, usedNames, row = null) {
   const input = INPUTS[step.command];
   const value = input && step.params?.[input.param];
   if (!value) return false;
+  const column = row && columnOf(row, value);
+  if (column) {
+    usedNames.add(column);
+    step.variable = { name: column, type: input.type, defaultValue: row[column] };
+    step.params[input.param] = `{{${column}}}`;
+    return true;
+  }
   const name = uniqueVarName(deriveVarNameFromLocators(step) || `${input.fallback}_${index + 1}`, usedNames);
   step.variable = { name, type: input.type, defaultValue: value };
   step.params[input.param] = `{{${name}}}`;
   return true;
+}
+
+/**
+ * The column of a dataset's row a value typed is: written {{email}}, or the very value of a
+ * column (3 characters or more: a 1 typed in a quantity is no id of the row).
+ */
+function columnOf(row, value) {
+  const named = /^\{\{\s*([A-Za-z_]\w*)\s*\}\}$/.exec(value)?.[1];
+  if (named) return Object.hasOwn(row, named) ? named : null;
+  return value.length >= 3 ? Object.keys(row).find((column) => row[column] === value) ?? null : null;
 }
 
 export function uniqueVarName(baseName, usedNames) {

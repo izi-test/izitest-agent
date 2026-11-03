@@ -53,6 +53,7 @@ export const AGENT_TOOLS = [
       const tests = db.prepare(
         `SELECT t.name, t.description FROM tests t WHERE t.project_id = ?`
       ).all(project_id);
+      const rows = datasetRows(project_id);
 
       return {
         data: {
@@ -73,8 +74,9 @@ export const AGENT_TOOLS = [
             steps_template: d.steps_template,
           })),
           existing_tests: tests.map(t => t.name),
-          // Tables of values: a test bound to one runs once per row ({{column}}); any reads one ({{name[2].column}}).
-          datasets: listDatasets(project_id).map(({ name, columns, row_count, used_by }) => ({ name, columns, rows: row_count, used_by })),
+          // Tables of values to take a value from rather than make one up: a test bound to one runs
+          // once per row ({{column}}); any reads one ({{name[2].column}}).
+          datasets: listDatasets(project_id).map(({ name, columns, row_count, used_by }) => ({ name, columns, rows: row_count, first_row: rows[name]?.[0], used_by })),
           // By name: where a phrase takes a CSS selector, the name acts on that element.
           elements: listElements(project_id).filter(e => e.used_by.length).map(({ name, page, target }) => ({ name, page, target })),
         },

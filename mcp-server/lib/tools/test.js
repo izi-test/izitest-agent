@@ -17,6 +17,7 @@ import { linkAssertionToVariables } from '../test-variable.js';
 import { formatTriage } from '../triage.js';
 import { getRequirement, linkRecorded, nonConformityOf } from '../requirements.js';
 import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair } from '../repairs.js';
+import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from '../datasets.js';
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -95,8 +96,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       requirement: z.string().optional().describe('The requirement this test checks (key, e.g. "REQ-12"): the saved test is linked to it'),
       case_id: z.number().int().optional().describe('The planned case it records (from plan_tests)'),
       criterion: z.number().int().optional().describe('Without a case: the criterion it checks, by its number'),
+      project_id: z.number().int().optional().describe('The project the test is for: saved in it; while recording, a value of one of its datasets is {{users[1].email}} (rows numbered from 1)'),
+      dataset: z.string().optional().describe('With project_id: a dataset of the project the test plays every row of. Type {{email}} (its columns): while recording, the value of its first row; the saved test is bound to it and runs once per row'),
     },
-    async ({ name, description, use_vrt, viewport_width, viewport_height, requirement, case_id, criterion }) => {
+    async ({ name, description, use_vrt, viewport_width, viewport_height, requirement, case_id, criterion, project_id, dataset }) => {
       const recording = getRecording();
       if (recording) {
         // Idempotent: if already recording the same test, return success
@@ -115,9 +118,11 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         if (case_id != null && !found.cases.some((c) => c.id === case_id)) return { isError: true, content: [{ type: 'text', text: `${found.key} has no case #${case_id}.` }] };
       }
       const link = requirement ? { requirement, caseId: case_id ?? null, criterion: criterion ?? null } : null;
-      setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link });
-      // A recording keeps its own values (capture_value, call_api).
-      sess().resetValues();
+      const played = recordingDataset(project_id, dataset);
+      if (played.error) return { isError: true, content: [{ type: 'text', text: played.error }] };
+      setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link, projectId: project_id ?? null, dataset: played.dataset });
+      // A recording keeps its own values (capture_value, call_api), with those of the project's datasets.
+      sess().resetValues({ projectId: project_id, row: played.dataset?.row });
       log(`Recording started: ${name} (VRT: ${use_vrt ? 'enabled' : 'disabled'}, viewport: ${viewport ? `${viewport.width}x${viewport.height}` : 'default'})`);
       
       let newTabId = null;
@@ -139,7 +144,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }).catch(() => {});
 
       const viewportMsg = viewport ? ` with viewport ${viewport.width}x${viewport.height}` : '';
-      return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.` }] };
+      return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.${recordingDatasetText(project_id, played.dataset)}` }] };
     }
   );
 
@@ -208,7 +213,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       recording.steps = cleanRecoverySteps(recording.steps);
 
       log(`Batch variable detection for ${recording.steps.length} steps...`);
-      const usedVarNames = new Set();
+      // Playing a dataset, its columns are the variables of what came from it, and only those.
+      const row = recording.dataset?.row ?? null;
+      const usedVarNames = new Set(row ? Object.keys(row) : []);
 
       // ─── Batch variable detection ─────────────────────────────────
       for (let i = 0; i < recording.steps.length; i++) {
@@ -219,7 +226,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }
 
         // What was typed (fill) or picked in a <select>: a variable named after the field.
-        if (variabilizeInput(step, i, usedVarNames)) {
+        if (variabilizeInput(step, i, usedVarNames, row)) {
           log(`Auto-variabilized ${step.command} step ${i + 1}: {{${step.variable.name}}} = "${step.variable.defaultValue}"`);
           continue;
         }
@@ -279,6 +286,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
       summary += linkRecorded(recording);
+      summary += placeRecorded(recording);
       if (varCount > 0) {
         summary += `\n\n${varCount} variable(s) detected for dynamic replay:\n`;
         for (const [name, info] of Object.entries(variables)) {
@@ -631,8 +639,11 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       // Checked against what the test typed: replayed with other values, it checks those.
       // On the window of a replay of this test, what the page shows is what that replay typed.
       const replay = tabId != null ? sess().replays?.get(tabId) : undefined;
+      // Bound to a dataset, what its row shows is its column's too: "Welcome Bob" checks {{name}}.
+      const fromDataset = datasetVariables(test_name);
       const { assertion: saved, linked, ambiguous } = linkAssertionToVariables(
-        assertion, test.variables, replay?.test === test_name ? replay.values : undefined);
+        assertion, { ...fromDataset, ...test.variables }, replay?.test === test_name ? replay.values : undefined);
+      test.variables = withColumnsOf(test.variables, fromDataset, saved.expected);
       const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
       // The page it was checked on: what it checks is an element of that page (lib/elements.js).
       const page = pageOf(result.pageUrl);

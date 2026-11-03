@@ -33,6 +33,8 @@ import { loadTest, saveTest } from './test-store.js';
 import { linkRecorded, nonConformityOf } from './requirements.js';
 import { evaluateAssertion } from './test-execute.js';
 import { pageOf } from './elements.js';
+import { LIVE_ACTIONS } from './live.js';
+import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from './datasets.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
 
@@ -508,16 +510,22 @@ function buildTools(sendCommand) {
         use_vrt: z.boolean().optional(),
         viewport_width: z.number().optional(),
         viewport_height: z.number().optional(),
+        project_id: z.number().optional().describe('The project the test is for (by default, the one of this run): a value of one of its datasets is {{users[1].email}}'),
+        dataset: z.string().optional().describe('A dataset of the project the test plays every row of: type {{email}} (its columns), the value of its first row while recording; the test is bound to it'),
       }),
-      execute: async ({ name, description, use_vrt, viewport_width, viewport_height }) => {
+      execute: async ({ name, description, use_vrt, viewport_width, viewport_height, project_id, dataset }) => {
         const recording = getRecording();
         if (recording) {
           if (recording.name === name) return `Recording already in progress for "${name}".`;
           return `Already recording "${recording.name}". Stop it first.`;
         }
         const viewport = (viewport_width && viewport_height) ? { width: viewport_width, height: viewport_height } : null;
+        const projectId = project_id ?? sess().projectId ?? null;
+        const played = recordingDataset(projectId, dataset);
+        if (played.error) return played.error;
         // A run of the dashboard's "Create Test with AI" links its test to the request it was given.
-        setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link: sess().requirementLink ?? null });
+        setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link: sess().requirementLink ?? null, projectId, dataset: played.dataset });
+        sess().resetValues({ projectId, row: played.dataset?.row });
         log(`[Agent] Recording started: ${name}`);
 
         try {
@@ -532,7 +540,7 @@ function buildTools(sendCommand) {
           pushOverlayState(null, { mode: 'recording', step: 0, stepName: 'Waiting for action...' });
         }).catch(() => {});
 
-        return `Recording started for "${name}"${use_vrt ? ' (VRT enabled)' : ''}. Navigate to your target URL now.`;
+        return `Recording started for "${name}"${use_vrt ? ' (VRT enabled)' : ''}. Navigate to your target URL now.${recordingDatasetText(projectId, played.dataset)}`;
       },
     }),
 
@@ -557,13 +565,15 @@ function buildTools(sendCommand) {
         recording.steps = cleanRecoverySteps(recording.steps);
         log(`[Agent] Batch variable detection for ${recording.steps.length} steps...`);
 
-        const usedVarNames = new Set();
+        // Playing a dataset, its columns are the variables of what came from it, and only those.
+        const row = recording.dataset?.row ?? null;
+        const usedVarNames = new Set(row ? Object.keys(row) : []);
 
         for (let i = 0; i < recording.steps.length; i++) {
           const step = recording.steps[i];
           if (step.variable) { usedVarNames.add(step.variable.name); continue; }
 
-          if (variabilizeInput(step, i, usedVarNames)) continue;
+          if (variabilizeInput(step, i, usedVarNames, row)) continue;
 
           if (step.command === 'click') {
             const cssLocator = (step.locators || []).find(l => l.type === 'css');
@@ -615,6 +625,7 @@ function buildTools(sendCommand) {
 
         let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
         summary += linkRecorded(recording);
+        summary += placeRecorded(recording);
         if (varCount > 0) {
           summary += `\n\n${varCount} variable(s) detected:\n`;
           for (const [name, info] of Object.entries(variables)) {
@@ -669,8 +680,11 @@ function buildTools(sendCommand) {
           return `Assertion FAILED — NOT added.\n  Type: ${assertion_type}\n  Expected: ${result.expected}\n  Actual: ${result.actual}\nFix and try again.${hint}`;
         }
 
-        // Checked against what the test typed: replayed with other values, it checks those.
-        const { assertion: saved, linked, ambiguous } = linkAssertionToVariables(assertion, test.variables);
+        // Checked against what the test typed: replayed with other values, it checks those. Bound to
+        // a dataset, what its row shows is its column's too: "Welcome Bob" checks {{name}}.
+        const fromDataset = datasetVariables(test_name);
+        const { assertion: saved, linked, ambiguous } = linkAssertionToVariables(assertion, { ...fromDataset, ...test.variables });
+        test.variables = withColumnsOf(test.variables, fromDataset, saved.expected);
         const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
         // The page it was checked on: what it checks is an element of that page (lib/elements.js).
         const page = pageOf(result.pageUrl);
@@ -715,11 +729,14 @@ RULES:
 
 /**
  * Run the dashboard's agent on `prompt`. `options.requirementLink` ({ requirement, caseId,
- * criterion }): the test it records is linked to that requirement.
+ * criterion }): the test it records is linked to that requirement. `options.projectId`: the
+ * project it is for.
  */
 export async function runAgent(config, prompt, sendCommand, onProgress, signal, options = {}) {
   const session = createAdHocSession('dashboard-agent');
   session.requirementLink = options.requirementLink ?? null;
+  // The project the test is for: its datasets are read while recording, the test saved in it.
+  session.projectId = options.projectId ?? null;
   try {
     return await runInSession(session, {}, () =>
       runAgentInSession(config, prompt, sendCommand, onProgress, signal, session));
@@ -732,8 +749,11 @@ async function runAgentInSession(config, prompt, rawSendCommand, onProgress, sig
   const { model: modelName, apiKey } = config;
   // Pin every command to this run's own window, exactly like the MCP tools do.
   // An action says the page it was done on: the step recording it keeps it.
+  // {{…}} in an action done now — a value of a dataset, a date — as the session knows it; the
+  // step recorded keeps it as written.
   const sendCommand = async (profile, command, params, ...rest) => {
-    const result = await rawSendCommand(profile, command, session.scope(params), ...rest);
+    const live = LIVE_ACTIONS.has(command) || command === 'wait' ? session.live(params ?? {}) : params;
+    const result = await rawSendCommand(profile, command, session.scope(live), ...rest);
     session.notePage(result);
     return result;
   };
