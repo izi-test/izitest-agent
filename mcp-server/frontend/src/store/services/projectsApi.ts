@@ -18,18 +18,24 @@ export const projectsApi = createApi({
       providesTags: [{ type: 'ProjectList', id: 'LIST' }],
     }),
 
-    createProject: builder.mutation<{ id: number; name: string }, { name: string; description?: string; context?: string; project_type?: string; base_url?: string }>({
+    createProject: builder.mutation<{ id: number; name: string }, { name: string; description?: string; context?: string; project_type?: string; base_url?: string; language?: string }>({
       query: (body) => ({ url: 'api/projects', method: 'POST', body }),
       invalidatesTags: [{ type: 'ProjectList', id: 'LIST' }],
     }),
 
-    updateProject: builder.mutation<void, { id: number; name?: string; description?: string; context?: string; project_type?: string; base_url?: string }>({
+    updateProject: builder.mutation<void, { id: number; name?: string; description?: string; context?: string; project_type?: string; base_url?: string; language?: string }>({
       query: ({ id, ...body }) => ({
         url: `api/projects/${id}`,
         method: 'PUT',
         body,
       }),
       invalidatesTags: [{ type: 'ProjectList', id: 'LIST' }],
+      // In another language, its tests' Gherkin reads in it.
+      async onQueryStarted({ language }, { dispatch, queryFulfilled }) {
+        if (language === undefined) return;
+        await queryFulfilled.catch(() => null);
+        dispatch(testsApi.util.invalidateTags(['Test']));
+      },
     }),
 
     deleteProject: builder.mutation<void, number>({

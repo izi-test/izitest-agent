@@ -3,6 +3,7 @@ import { Button } from './Button';
 import { X, Wand2, Loader2, Square, FileCode, Bot } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { ProjectField } from './ProjectSelector';
+import { useGetProjectsQuery } from '../store/services/projectsApi';
 import { useAddCaseMutation, useCreateRequirementMutation } from '../store/services/requirementsApi';
 import {
   testsApi,
@@ -37,19 +38,26 @@ interface CreateTestModalProps {
 
 type AgentStatus = 'idle' | 'running' | 'done' | 'error' | 'stopped';
 
-function defaultGherkinTemplate(name: string, description: string): string {
+/** A first scenario to edit, in the language of the project's tests. */
+function defaultGherkinTemplate(name: string, description: string, language: 'en' | 'fr' = 'en'): string {
   const descLines = description
     .split('\n')
     .map((l) => `  ${l}`)
     .join('\n');
-  const header = description ? `Feature: ${name}\n${descLines}\n\n` : `Feature: ${name}\n\n`;
-  return (
-    header +
-    `  Scenario: ${name}\n` +
-    `    Given I am on "https://example.com"\n` +
-    `    When I click on "#submit"\n` +
-    `    Then I should see "Welcome"\n`
-  );
+  const fr = language === 'fr';
+  const feature = fr ? `# language: fr\nFonctionnalité: ${name}` : `Feature: ${name}`;
+  const header = description ? `${feature}\n${descLines}\n\n` : `${feature}\n\n`;
+  return fr
+    ? header +
+      `  Scénario: ${name}\n` +
+      `    Soit je suis sur "https://example.com"\n` +
+      `    Quand je clique sur "#submit"\n` +
+      `    Alors je vois "Bienvenue"\n`
+    : header +
+      `  Scenario: ${name}\n` +
+      `    Given I am on "https://example.com"\n` +
+      `    When I click on "#submit"\n` +
+      `    Then I should see "Welcome"\n`;
 }
 
 const VIEWPORT_PRESETS = [
@@ -124,11 +132,14 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
     }
   }, [isOpen, preset]);
 
-  // Keep the Gherkin draft in sync with name/description until the user edits it.
+  // Keep the Gherkin draft in sync with name/description until the user edits it, in the
+  // language of the project's tests.
+  const { data: projects = [] } = useGetProjectsQuery();
+  const language = projects.find((p) => p.id === projectId)?.language ?? 'en';
   useEffect(() => {
     if (mode !== 'gherkin' || gherkinDraftDirty) return;
-    setGherkinDraft(defaultGherkinTemplate(name.trim() || 'My test', description.trim()));
-  }, [mode, name, description, gherkinDraftDirty]);
+    setGherkinDraft(defaultGherkinTemplate(name.trim() || 'My test', description.trim(), language));
+  }, [mode, name, description, gherkinDraftDirty, language]);
 
   useEffect(() => {
     if (isOpen) {

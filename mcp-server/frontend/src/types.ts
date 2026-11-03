@@ -5,6 +5,8 @@ export interface Project {
   context: string;
   project_type: 'frontend' | 'backend' | 'fullstack' | null;
   base_url: string | null;
+  /** The language its tests are written in: Gherkin, business steps, what the AI writes. */
+  language?: 'en' | 'fr';
   created_at: string;
   updated_at: string;
   test_count?: number;
@@ -390,6 +392,8 @@ export interface BusinessProposal {
   from_step: number;
   to_step: number;
   keyword: 'Given' | 'When' | 'Then';
+  /** The keyword as the test reads, in the language of its project (Quand). */
+  written?: string;
   /** The phrase, as a Cucumber expression: je renseigne mon profil avec le nom {string}. */
   pattern: string;
   args: Array<{ variable?: string; step?: number; param?: string; value?: string }>;

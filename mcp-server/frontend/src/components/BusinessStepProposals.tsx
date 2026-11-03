@@ -84,14 +84,14 @@ function ProposalRow({ testName, proposal }: { testName: string; proposal: Busin
     <div className="business-proposal">
       <div className="business-proposal__head">
         <Pill tone="blue">{steps}</Pill>
-        <span className="business-proposal__keyword">{proposal.keyword}</span>
+        <span className="business-proposal__keyword">{proposal.written ?? proposal.keyword}</span>
         <input
           className="business-proposal__pattern" value={pattern} aria-label={`Phrase of ${steps.toLowerCase()}`}
           onChange={(e) => setPattern(e.target.value)} disabled={accepting}
         />
       </div>
       <div className="business-proposal__body">
-        <div className="business-proposal__reads mono">{pattern === proposal.pattern ? proposal.reads : `${proposal.keyword} ${pattern}`}</div>
+        <div className="business-proposal__reads mono">{pattern === proposal.pattern ? proposal.reads : `${proposal.written ?? proposal.keyword} ${pattern}`}</div>
         <div className="business-proposal__replaces">
           <span className="muted">Instead of</span>
           {proposal.replaces.map((line, i) => <div key={i} className="mono">{line}</div>)}

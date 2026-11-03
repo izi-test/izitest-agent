@@ -14,6 +14,7 @@ import { withElementNames } from './element-store.js';
 import { buildBusinessStep } from './gherkin/business-step.js';
 import { scenarioPhrases, serializeTestToFeatureWith } from './gherkin/serialize.js';
 import { listStepDefinitions, createStepDefinition } from './gherkin/step-definition-store.js';
+import { keywordsOf } from './gherkin/language.js';
 
 const KEYWORDS = ['Given', 'When', 'Then'];
 const MAX_PROPOSALS = 5;
@@ -55,6 +56,8 @@ export const SYSTEM = 'You group the steps of an automated test into business st
 
 /** What the agent reads: the test step by step, the project's business steps, and what to propose. */
 export function proposalBrief(test, definitions) {
+  // The test as it reads, in the language of its project.
+  const words = keywordsOf(test.language);
   const lines = [`# Business steps for the test "${test.name}"`];
   if (test.description) lines.push('', test.description);
 
@@ -62,12 +65,12 @@ export function proposalBrief(test, definitions) {
   for (const phrase of numberedPhrases(test, definitions)) {
     const range = phrase.from === phrase.to ? `${phrase.from}` : `${phrase.from}–${phrase.to}`;
     if (phrase.business) {
-      lines.push(`${range}. ${phrase.keyword} ${phrase.phrase}   [already a business step of the project]`);
+      lines.push(`${range}. ${words[phrase.keyword]} ${phrase.phrase}   [already a business step of the project]`);
       continue;
     }
     const step = test.steps[phrase.from - 1];
     const about = [step.intent && step.intent !== phrase.phrase ? step.intent : null, step.page ? `on ${step.page}` : null].filter(Boolean).join(' — ');
-    lines.push(`${range}. ${phrase.keyword} ${phrase.phrase}${about ? `   (${about})` : ''}`);
+    lines.push(`${range}. ${words[phrase.keyword]} ${phrase.phrase}${about ? `   (${about})` : ''}`);
   }
 
   const variables = Object.entries(test.variables ?? {});
@@ -77,7 +80,7 @@ export function proposalBrief(test, definitions) {
 
   const business = definitions.filter((d) => d.steps_template);
   lines.push('', '## The business steps the project already has — word yours alike');
-  lines.push(...(business.length ? business.map((d) => `- ${d.keyword} ${d.pattern}`) : ['(none yet)']));
+  lines.push(...(business.length ? business.map((d) => `- ${words[d.keyword]} ${d.pattern}`) : ['(none yet)']));
 
   lines.push('', '## What to propose',
     'Group runs of consecutive steps that together do one thing a user of the app means — fill in a form and send it, log',
@@ -89,7 +92,7 @@ export function proposalBrief(test, definitions) {
     '- A value that changes from one scenario to the next is a parameter of the phrase, {string} or {int}, each mapped in',
     '  "args", in order: { "variable": "display_name" } for a {{variable}} of the test — every variable the grouped steps',
     '  use needs one —, { "step": 3, "param": "value" } for a value a step typed. What defines the action stays fixed.',
-    '- Write the phrase in the language of the project\'s business steps, else of the test.',
+    `- Write the phrase in ${keywordsOf(test.language).name}: the tests of this project are written in it.`,
     `- Propose nothing rather than a group that does not make sense; at most ${MAX_PROPOSALS}.`,
     '', '## Answer', 'Answer with this JSON and nothing else:',
     '{ "proposals": [{ "from_step": 2, "to_step": 6, "keyword": "When", "pattern": "…", "args": [{ "variable": "…" }], "reason": "why, in one sentence" }] }');
@@ -128,6 +131,7 @@ function argsOf(args) {
  */
 export function parseProposals(text, test, definitions, otherTests = []) {
   const answer = jsonOf(text);
+  const words = keywordsOf(test.language);
   const phrases = numberedPhrases(test, definitions);
   const grouped = new Set(phrases.filter((p) => p.business).flatMap((p) => range(p.from, p.to)));
   const patterns = new Set(definitions.map((d) => d.pattern));
@@ -166,8 +170,10 @@ export function parseProposals(text, test, definitions, otherTests = []) {
       keyword,
       pattern,
       args,
-      reads: `${keyword} ${reads.phrase}`,
-      replaces: phrases.filter((p) => p.from >= from && p.to <= to).map((p) => `${p.keyword} ${p.phrase}`),
+      // As the test reads, with the keywords of its language; `keyword` stays the definition's.
+      written: words[keyword],
+      reads: `${words[keyword]} ${reads.phrase}`,
+      replaces: phrases.filter((p) => p.from >= from && p.to <= to).map((p) => `${words[p.keyword]} ${p.phrase}`),
       reason: clean(raw.reason) || null,
       also_in: otherTests.filter((other) => scenarioPhrases(other, [...definitions, candidate]).some((p) => p.business === -1)).map((other) => other.name),
     });

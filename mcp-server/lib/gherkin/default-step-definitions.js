@@ -55,3 +55,57 @@ export const DEFAULT_STEP_DEFINITIONS = [
   { keyword: 'Then',  pattern: 'the link {string} should work',           command: 'assert', params_template: { type: 'link_ok', selector: '{0}' } },
   { keyword: 'Then',  pattern: 'the page should not break the accessibility rule {string}', command: 'assert', params_template: { type: 'no_a11y_violations', expected: '{0}' } },
 ];
+
+// The same catalogue in French, phrase for phrase: the same commands and parameters, the
+// arguments in the same order (the exported step code takes them positionally). A project
+// written in French is seeded with it (step-definition-store.js).
+const FRENCH_PATTERNS = {
+  'I am on {string}': 'je suis sur {string}',
+  'I navigate to {string}': 'je vais sur {string}',
+  'I click on {string}': 'je clique sur {string}',
+  'I click on the text {string}': 'je clique sur le texte {string}',
+  'I fill {string} with {string}': 'je remplis {string} avec {string}',
+  'I select {string} in {string}': 'je sélectionne {string} dans {string}',
+  'I check {string}': 'je coche {string}',
+  'I uncheck {string}': 'je décoche {string}',
+  'I set {string} checked to {string}': 'je mets la case {string} à {string}',
+  'I fill the field {string} with {string}': 'je remplis le champ {string} avec {string}',
+  'I select {string} in the field {string}': 'je sélectionne {string} dans le champ {string}',
+  'I check the field {string}': 'je coche le champ {string}',
+  'I uncheck the field {string}': 'je décoche le champ {string}',
+  'I upload {string} to {string}': 'je téléverse {string} dans {string}',
+  'I drag {string} to {string}': 'je glisse {string} sur {string}',
+  'I drag {string} to the {word} of {string}': 'je glisse {string} vers le côté {word} de {string}',
+  'I press {string}': "j'appuie sur {string}",
+  'I scroll to {string}': "je fais défiler jusqu'à {string}",
+  'I wait {int} seconds': "j'attends {int} secondes",
+  'I wait for {string}': "j'attends {string}",
+  'I should see {string}': 'je vois {string}',
+  'I should not see {string}': 'je ne vois pas {string}',
+  '{string} should be visible': '{string} est visible',
+  '{string} should contain {string}': '{string} contient {string}',
+  '{string} should not contain {string}': '{string} ne contient pas {string}',
+  'the URL should be {string}': "l'URL est {string}",
+  'the URL should contain {string}': "l'URL contient {string}",
+  'the title should be {string}': 'le titre est {string}',
+  'the title should contain {string}': 'le titre contient {string}',
+  '{string} should exist': '{string} existe',
+  '{string} should be hidden': '{string} est masqué',
+  '{string} should have text {string}': '{string} a pour texte {string}',
+  'the {string} of {string} should be {string}': "l'attribut {string} de {string} vaut {string}",
+  '{string} should match {int} elements': '{string} correspond à {int} éléments',
+  'the page should log no error containing {string}': "la console n'affiche aucune erreur contenant {string}",
+  'no request to {string} should fail': "aucune requête vers {string} n'échoue",
+  'the link {string} should work': 'le lien {string} fonctionne',
+  'the page should not break the accessibility rule {string}': "la page respecte la règle d'accessibilité {string}",
+};
+
+/** An English phrase of the catalogue in `language`; as it is in English, or for a language without one. */
+export function translatedPattern(pattern, language) {
+  return language === 'fr' ? FRENCH_PATTERNS[pattern] ?? pattern : pattern;
+}
+
+/** The built-in catalogue in `language` ('en', 'fr'), each phrase marked with it. */
+export function defaultStepDefinitions(language = 'en') {
+  return DEFAULT_STEP_DEFINITIONS.map((def) => ({ ...def, pattern: translatedPattern(def.pattern, language), language: language === 'fr' ? 'fr' : 'en' }));
+}

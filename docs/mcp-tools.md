@@ -205,6 +205,25 @@ L'onglet Gherkin du tableau de bord, lui, nomme les éléments (ci-dessous) au l
 sélecteur ; une étape sans élément garde le sélecteur enregistré. Un argument qui contient des
 guillemets doubles s'écrit entre guillemets simples.
 
+### La langue des tests d'un projet
+
+Chaque projet a une langue, `en` ou `fr`, choisie à sa création (« Tests written in », par défaut celle
+du navigateur) et modifiable ensuite : c'est celle de ses tests, pas celle du tableau de bord.
+
+- Son Gherkin est écrit dans cette langue : en français, la feature commence par `# language: fr` et ses
+  mots-clés sont `Fonctionnalité`, `Scénario`, `Soit`, `Quand`, `Alors`, `Et`, que Cucumber lit
+  nativement. Le parseur lit les mots-clés des deux langues.
+- Ses phrases intégrées le sont aussi : `je suis sur {string}`, `je clique sur {string}`,
+  `je remplis {string} avec {string}`, `{string} contient {string}`… les mêmes commandes, arguments
+  dans le même ordre. Un projet passé en français reçoit les phrases françaises et garde les anglaises :
+  ses tests se lisent en français, et ce qui a été écrit en anglais se relit toujours.
+- L'export Cucumber suit : feature en français (`Plan du scénario`, `Exemples`), et
+  `default.steps.js` avec les phrases françaises.
+- Tout ce que l'IA écrit pour le projet est dans sa langue : les étapes métier qu'elle propose, les
+  scénarios de `design_tests` (titres et étapes ; la revue des critères reste dans la langue de
+  l'exigence), les intentions des étapes qu'elle enregistre, le Gherkin du chat.
+  `get_project_context` renvoie la langue (`language`) et les phrases de cette langue.
+
 ### Les éléments d'un projet
 
 Chaque étape qui agit sur un élément de la page (`click`, `fill`, `select`, `upload`, `drag`), et

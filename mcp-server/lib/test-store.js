@@ -15,11 +15,15 @@ export function loadTest(name) {
     'SELECT * FROM test_steps WHERE test_id = ? ORDER BY step_order'
   ).all(test.id);
 
+  // The language its project's tests are written in: its Gherkin is (lib/gherkin/language.js).
+  const language = test.project_id ? db.prepare('SELECT language FROM projects WHERE id = ?').get(test.project_id)?.language : null;
+
   return {
     name: test.name,
     description: test.description,
     createdAt: test.created_at,
     project_id: test.project_id,
+    ...(language && { language }),
     viewport: parseJson(test.viewport) || null,
     variables: parseJson(test.variables) || {},
     steps: steps.map(row => ({

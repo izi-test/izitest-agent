@@ -154,7 +154,8 @@ test('what the agent recording a case is told: the criteria, its own, and where 
 
 test('what the agent recording a test is told of the app: its project, where to start, its context, and to stop when it cannot', () => {
   const brief = projectBrief({ name: 'Shop', base_url: 'https://shop.test', context: 'Login at /login.\n' });
-  assert.match(brief, /^The app under test is the project "Shop"\.\nIt is at https:\/\/shop\.test: start there, unless the description gives another URL\.\nWhat to know about it:\nLogin at \/login\.\n/);
+  assert.match(brief, /^The app under test is the project "Shop"\.\nIts tests are written in English: write the intent of each step in English\.\nIt is at https:\/\/shop\.test: start there, unless the description gives another URL\.\nWhat to know about it:\nLogin at \/login\.\n/);
+  assert.match(projectBrief({ name: 'Boutique', language: 'fr' }), /Its tests are written in French: write the intent of each step in French\./);
   assert.match(brief, /Nobody answers questions during this run\./);
   assert.match(brief, /close_window/);
   // Without a project, or one with no base URL nor context: only what to do when it cannot record.

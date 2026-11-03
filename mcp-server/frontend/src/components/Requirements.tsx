@@ -658,7 +658,11 @@ function ScenarioItem({ scenario, checked, onToggle }: { scenario: DesignedScena
 
 /** A planned case's scenario, edited: checked against the project's phrases when saved. */
 function CaseScenario({ requirement, item, onClose }: { requirement: Requirement; item: RequirementCase; onClose: () => void }) {
-  const [text, setText] = useState(item.gherkin ?? `Scenario: ${item.title}\n  Given I am on "https://"\n`);
+  // A first scenario in the language of the project's tests.
+  const { data: projects = [] } = useGetProjectsQuery(undefined);
+  const french = projects.find((p) => p.id === requirement.project_id)?.language === 'fr';
+  const [text, setText] = useState(item.gherkin
+    ?? (french ? `Scénario: ${item.title}\n  Soit je suis sur "https://"\n` : `Scenario: ${item.title}\n  Given I am on "https://"\n`));
   const [updateCase, { isLoading }] = useUpdateCaseMutation();
   const [error, setError] = useState<string | null>(null);
   const save = async () => {

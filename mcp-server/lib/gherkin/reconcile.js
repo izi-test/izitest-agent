@@ -35,7 +35,7 @@ export function stepsForEditedFeature(featureText, definitions, test, { targets 
   let lastKeyword = null;
   let previous = -1; // index in `before` of the last phrase kept as it was
 
-  for (const [i, { text, keyword, line }] of after.entries()) {
+  for (const [i, { text, keyword, written, line }] of after.entries()) {
     const kept = matched.get(i);
     if (kept !== undefined) {
       steps.push(...before[kept].steps.map(step => structuredClone(step)));
@@ -46,7 +46,7 @@ export function stepsForEditedFeature(featureText, definitions, test, { targets 
 
     const parsed = stepsForPhrase(text, effectiveKeyword(keyword, lastKeyword), compiled, steps.length, targets);
     if (!parsed) {
-      errors.push(unresolved(line, keyword, text));
+      errors.push(unresolved(line, written, text));
       continue;
     }
     // The phrase it most likely replaces: the next one of `before` not kept as it was.

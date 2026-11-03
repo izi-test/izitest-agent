@@ -386,6 +386,20 @@ export function initDatabase() {
     log(`Migration warning (elements): ${err.message}`);
   }
 
+  // The language a project's tests are written in (lib/gherkin/language.js), and that of each
+  // built-in phrase: the ones seeded so far are English.
+  try {
+    const projectCols = db.prepare('PRAGMA table_info(projects)').all().map(c => c.name);
+    if (!projectCols.includes('language')) db.exec("ALTER TABLE projects ADD COLUMN language TEXT NOT NULL DEFAULT 'en'");
+    const definitionCols = db.prepare('PRAGMA table_info(step_definitions)').all().map(c => c.name);
+    if (!definitionCols.includes('language')) {
+      db.exec('ALTER TABLE step_definitions ADD COLUMN language TEXT DEFAULT NULL');
+      db.exec("UPDATE step_definitions SET language = 'en' WHERE is_default = 1");
+    }
+  } catch (err) {
+    log(`Migration warning (language): ${err.message}`);
+  }
+
   // The business steps the agent proposes for a test, until accepted or dismissed (lib/business-steps.js).
   db.exec(`
     CREATE TABLE IF NOT EXISTS business_proposals (

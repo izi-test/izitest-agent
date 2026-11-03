@@ -120,7 +120,10 @@ export function ProjectSwitcher() {
   );
 }
 
-type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string };
+type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string; language: 'en' | 'fr' };
+
+// A new project's tests are written in the language of the browser, French or else English.
+const browserLanguage = (): 'en' | 'fr' => (navigator.language?.toLowerCase().startsWith('fr') ? 'fr' : 'en');
 
 /** A project, created or edited: its name, description, base URL, type, and the context given to the AI. */
 export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
@@ -132,9 +135,10 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
   const [fields, setFields] = useState<ProjectFields>({
     name: project?.name ?? '', description: project?.description ?? '', context: project?.context ?? '',
     project_type: project?.project_type ?? '', base_url: project?.base_url ?? '',
+    language: project ? project.language ?? 'en' : browserLanguage(),
   });
   const [error, setError] = useState<string | null>(null);
-  const set = (field: keyof ProjectFields, value: string) => { setFields({ ...fields, [field]: value }); setError(null); };
+  const set = <K extends keyof ProjectFields>(field: K, value: ProjectFields[K]) => { setFields({ ...fields, [field]: value }); setError(null); };
 
   const save = async (event?: React.FormEvent) => {
     event?.preventDefault();
@@ -191,6 +195,16 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
             </select>
           </label>
         </div>
+        <label className="field">
+          <span className="field__label">Tests written in</span>
+          <select value={fields.language} onChange={(e) => set('language', e.target.value as ProjectFields['language'])}>
+            <option value="en">English — Given, When, Then</option>
+            <option value="fr">Français — Soit, Quand, Alors</option>
+          </select>
+          <span className="field__hint">
+            The Gherkin of its tests, its business steps and what the AI writes for it. Changed, its tests read in the new language; the phrases they were written with still work.
+          </span>
+        </label>
         <label className="field">
           <span className="field__label">Context for the AI</span>
           <textarea rows={9} value={fields.context} onChange={(e) => set('context', e.target.value)}

@@ -1,35 +1,32 @@
 // Serialize a izitest-agent test into a Gherkin .feature document.
 // The Gherkin is computed on the fly from test_steps — nothing is stored.
 
-import { db, parseJson } from '../db.js';
 import { isFragileSelector, isPositionalSelector, lastTag } from '../codegen/locators.js';
 import { elementKey } from '../elements.js';
+import { listStepDefinitions } from './step-definition-store.js';
+import { keywordsOf, languageOf } from './language.js';
 
 export function serializeTestToFeature(test, projectId) {
-  const definitions = db.prepare(
-    'SELECT * FROM step_definitions WHERE project_id = ?'
-  ).all(projectId).map(r => ({
-    ...r,
-    params_template: parseJson(r.params_template) || {},
-    steps_template: parseJson(r.steps_template) || null,
-  }));
-  return serializeTestToFeatureWith(test, definitions);
+  return serializeTestToFeatureWith(test, listStepDefinitions(projectId));
 }
 
 // Pure version — takes pre-loaded definitions. Used by tests and by the
 // API layer when definitions are already in memory.
+// Written in the language of the test's project (`test.language`, or `options.language`):
+// its keywords, and its phrases where the catalogue has them in both.
 export function serializeTestToFeatureWith(test, definitions, options = {}) {
-  const lines = [];
-  lines.push(`Feature: ${test.name}`);
+  const words = keywordsOf(options.language ?? test.language);
+  const lines = words.header ? [words.header] : [];
+  lines.push(`${words.feature}: ${test.name}`);
   if (test.description) {
     for (const l of String(test.description).split('\n')) lines.push(`  ${l}`);
   }
   lines.push('');
-  lines.push(`  Scenario: ${test.name}`);
+  lines.push(`  ${words.scenario}: ${test.name}`);
 
   let lastKeyword = null;
   for (const { keyword, phrase } of scenarioPhrases(test, definitions, options)) {
-    lines.push(`    ${keyword === lastKeyword ? 'And' : keyword} ${phrase}`);
+    lines.push(`    ${keyword === lastKeyword ? words.And : words[keyword] ?? keyword} ${phrase}`);
     lastKeyword = keyword;
   }
 
@@ -43,7 +40,10 @@ export function serializeTestToFeatureWith(test, definitions, options = {}) {
  * `singleStep(step)` gives the step a phrase is rendered from when no business step groups
  * it — the Cucumber export puts a stable target in its selector there.
  */
-export function scenarioPhrases(test, definitions, { singleStep = (step) => step } = {}) {
+export function scenarioPhrases(test, definitions, { singleStep = (step) => step, language } = {}) {
+  // A phrase of the catalogue in another language than the test's comes after its own.
+  const lang = languageOf(language ?? test.language);
+  const foreign = (d) => Number(!!d.language && d.language !== lang);
   // Split into composite and single definitions.
   const composites = definitions.filter(d => d.steps_template);
   const singles = definitions.filter(d => !d.steps_template);
@@ -55,6 +55,7 @@ export function scenarioPhrases(test, definitions, { singleStep = (step) => step
   const sortedSingles = [...singles].sort(
     (a, b) => templateComplexity(b.params_template) - templateComplexity(a.params_template)
       || literalLength(b.params_template) - literalLength(a.params_template)
+      || foreign(a) - foreign(b)
       || Number(!!a.is_default) - Number(!!b.is_default)
   );
   // Longer composites first — greedier match wins.

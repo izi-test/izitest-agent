@@ -4,6 +4,7 @@
 import { AstBuilder, GherkinClassicTokenMatcher, Parser } from '@cucumber/gherkin';
 import { IdGenerator } from '@cucumber/messages';
 import { CucumberExpression, ParameterType, ParameterTypeRegistry } from '@cucumber/cucumber-expressions';
+import { canonicalKeyword } from './language.js';
 
 const gherkinParser = new Parser(
   new AstBuilder(IdGenerator.uuid()),
@@ -31,10 +32,10 @@ export function parseFeatureToStepsWith(featureText, definitions, { targets } = 
   const errors = [];
   let lastResolvedKeyword = null;
 
-  for (const { text: phrase, keyword: rawKeyword, line } of featurePhrases(featureText)) {
+  for (const { text: phrase, keyword: rawKeyword, written, line } of featurePhrases(featureText)) {
     const parsed = stepsForPhrase(phrase, effectiveKeyword(rawKeyword, lastResolvedKeyword), compiled, testSteps.length, targets);
     if (!parsed) {
-      errors.push(unresolved(line, rawKeyword, phrase));
+      errors.push(unresolved(line, written, phrase));
       continue;
     }
     for (const s of parsed.steps) testSteps.push(s);
@@ -45,7 +46,10 @@ export function parseFeatureToStepsWith(featureText, definitions, { targets } = 
   return testSteps;
 }
 
-/** The scenario's phrases as written: text, keyword ("Given", "And"…), line. */
+/**
+ * The scenario's phrases as written: text, keyword (Given, When, Then, And — Soit is Given in a
+ * feature in French), the keyword as `written`, line.
+ */
 export function featurePhrases(featureText) {
   const doc = gherkinParser.parse(featureText);
   const feature = doc.feature;
@@ -55,7 +59,8 @@ export function featurePhrases(featureText) {
   if (!scenarioChild) throw new Error('No Scenario found in Feature');
   return scenarioChild.scenario.steps.map(step => ({
     text: step.text,
-    keyword: step.keyword.trim(),
+    keyword: canonicalKeyword(step.keywordType, step.keyword.trim()),
+    written: step.keyword.trim(),
     line: step.location.line,
   }));
 }

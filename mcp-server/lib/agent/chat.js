@@ -11,7 +11,8 @@ import { tmpdir } from 'os';
 import { db, parseJson } from '../db.js';
 import { log } from '../logger.js';
 import { AGENT_TOOLS, getToolMap } from './tools.js';
-import { listStepDefinitions } from '../gherkin/step-definition-store.js';
+import { writingDefinitions } from '../gherkin/step-definition-store.js';
+import { keywordsOf } from '../gherkin/language.js';
 import { elementLines } from '../element-store.js';
 
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
@@ -19,14 +20,15 @@ const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 // ─── System prompt builder ─────────────────────────────────────────
 
 function buildSystemPrompt(project) {
-  const definitions = listStepDefinitions(project.id);
+  const definitions = writingDefinitions(project.id);
+  const words = keywordsOf(project.language);
   const tests = db.prepare(
     'SELECT name, description FROM tests WHERE project_id = ?'
   ).all(project.id);
 
   const defList = definitions.map(d => {
     const composite = d.steps_template ? ' [composite]' : '';
-    return `  - ${d.keyword} ${d.pattern} → ${d.command}${composite}`;
+    return `  - ${words[d.keyword] ?? d.keyword} ${d.pattern} → ${d.command}${composite}`;
   }).join('\n');
 
   // What the tests of the project act on, by name: usable where a phrase takes a selector.
@@ -53,6 +55,9 @@ function buildSystemPrompt(project) {
 
 ### Spécifications / Notes du projet
 ${project.context || '(aucun contexte fourni — demande à l\'utilisateur de décrire son projet)'}
+
+## Langue des tests
+Les tests de ce projet sont écrits en ${words.name === 'French' ? 'français' : 'anglais'} : écris le Gherkin, les étapes métier et les intentions dans cette langue${words.header ? `, la feature commençant par \`${words.header}\`` : ''}, avec les mots-clés ${[words.feature, words.scenario, words.Given, words.When, words.Then, words.And].join(' / ')}.
 
 ## Step definitions disponibles
 ${defList || '  (uniquement les step definitions par défaut)'}

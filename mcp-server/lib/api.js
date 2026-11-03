@@ -21,6 +21,7 @@ import { serializeTestToFeature } from './gherkin/serialize.js';
 import { stepsForEditedFeature } from './gherkin/reconcile.js';
 import { withElementNames, elementTargets, listElements, renameElement, deleteElement } from './element-store.js';
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
+import { languageOf } from './gherkin/language.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
@@ -976,7 +977,7 @@ export async function apiRouter(req, res, url) {
     // project) and its last campaign
     if (method === 'GET' && path === '/api/projects') {
       const rows = db.prepare(`
-        SELECT p.id, p.name, p.description, p.context, p.project_type, p.base_url, p.created_at, p.updated_at,
+        SELECT p.id, p.name, p.description, p.context, p.project_type, p.base_url, p.language, p.created_at, p.updated_at,
                (SELECT COUNT(*) FROM tests t WHERE t.project_id = p.id) AS test_count,
                (SELECT COUNT(*) FROM requirements r WHERE r.project_id = p.id) AS requirement_count,
                (SELECT COUNT(*) FROM campaigns c WHERE c.project_id = p.id) AS campaign_count,
@@ -1024,15 +1025,17 @@ export async function apiRouter(req, res, url) {
       if (!body.name) return json(res, 400, { error: 'name is required' });
 
       try {
+        // The language its tests are written in: its built-in phrases are seeded in it.
         const result = db.prepare(
-          `INSERT INTO projects (name, description, context, project_type, base_url)
-           VALUES (?, ?, ?, ?, ?) RETURNING *`
+          `INSERT INTO projects (name, description, context, project_type, base_url, language)
+           VALUES (?, ?, ?, ?, ?, ?) RETURNING *`
         ).get(
           body.name,
           body.description || '',
           body.context || '',
           body.project_type || null,
-          body.base_url || null
+          body.base_url || null,
+          languageOf(body.language)
         );
         seedProjectStepDefinitions(result.id);
         return json(res, 201, result);
@@ -1056,6 +1059,7 @@ export async function apiRouter(req, res, url) {
       if (body.context !== undefined) { sets.push('context = ?'); vals.push(body.context); }
       if (body.project_type !== undefined) { sets.push('project_type = ?'); vals.push(body.project_type); }
       if (body.base_url !== undefined) { sets.push('base_url = ?'); vals.push(body.base_url); }
+      if (body.language !== undefined) { sets.push('language = ?'); vals.push(languageOf(body.language)); }
       if (sets.length === 0) return json(res, 400, { error: 'Nothing to update' });
 
       sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')");
@@ -1066,6 +1070,9 @@ export async function apiRouter(req, res, url) {
           `UPDATE projects SET ${sets.join(', ')} WHERE id = ? RETURNING *`
         ).get(...vals);
         if (!result) return json(res, 404, { error: 'Project not found' });
+        // Written in another language from now on: its phrases in that one too. Those of the
+        // language before stay, so its tests still read and parse.
+        if (body.language !== undefined) seedProjectStepDefinitions(result.id);
         return json(res, 200, result);
       } catch (err) {
         if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
@@ -1378,7 +1385,7 @@ export async function apiRouter(req, res, url) {
         body.prompt += `\n\n${recordingBrief(linkedRequirement, requirementLink.caseId, { viaMcp: agentConfig.mode !== 'api' })}`;
       }
       // The app the test is for: where it is and what to know of it, as the project says.
-      const project = body.project_id ? db.prepare('SELECT name, base_url, context FROM projects WHERE id = ?').get(body.project_id) : null;
+      const project = body.project_id ? db.prepare('SELECT name, base_url, context, language FROM projects WHERE id = ?').get(body.project_id) : null;
       body.prompt += `\n\n${projectBrief(project)}`;
 
       // ── API mode: internal agent via Vercel AI SDK ──

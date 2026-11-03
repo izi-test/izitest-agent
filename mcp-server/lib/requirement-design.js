@@ -11,9 +11,10 @@
 import { db } from './db.js';
 import { log } from './logger.js';
 import { CASE_KINDS, PRIORITIES, TECHNIQUES, getRequirement, planCases, saveDesign, scenarioFeature } from './requirements.js';
-import { listStepDefinitions } from './gherkin/step-definition-store.js';
+import { writingDefinitions, projectLanguage } from './gherkin/step-definition-store.js';
+import { keywordsOf } from './gherkin/language.js';
 import { elementLines } from './element-store.js';
-import { DEFAULT_STEP_DEFINITIONS } from './gherkin/default-step-definitions.js';
+import { DEFAULT_STEP_DEFINITIONS, translatedPattern } from './gherkin/default-step-definitions.js';
 import { featurePhrases, compileDefinitions, effectiveKeyword, stepsForPhrase } from './gherkin/parse.js';
 
 const TECHNIQUE_GUIDE = {
@@ -27,7 +28,7 @@ const TECHNIQUE_GUIDE = {
 
 /** The Gherkin phrases a requirement's scenarios are written with: its project's, or the defaults. */
 export function definitionsFor(requirement) {
-  return requirement.project_id ? listStepDefinitions(requirement.project_id) : DEFAULT_STEP_DEFINITIONS;
+  return requirement.project_id ? writingDefinitions(requirement.project_id) : DEFAULT_STEP_DEFINITIONS;
 }
 
 /**
@@ -43,14 +44,17 @@ function selectorArguments(definition) {
 
 const ORDINALS = ['1st', '2nd', '3rd', '4th'];
 
-/** A phrase as the agent reads it; `withElements`: the app has elements, named where a selector goes. */
-function phraseLine(definition, withElements = false) {
+/**
+ * A phrase as the agent reads it, with the keyword of the project's language; `withElements`:
+ * the app has elements, named where a selector goes.
+ */
+function phraseLine(definition, withElements = false, words = keywordsOf('en')) {
   const selectors = selectorArguments(definition);
   const actions = definition.steps_template?.length;
   const orName = withElements ? ` (or the name of an element of the app)` : '';
   const note = actions ? ` — business step (${actions} action${actions === 1 ? '' : 's'} of this app)`
     : selectors.length ? ` — the ${selectors.map((n) => ORDINALS[n] ?? `#${n + 1}`).join(' and ')} {string} ${selectors.length > 1 ? 'are CSS selectors' : 'is a CSS selector'}${orName}` : '';
-  return `- ${definition.keyword} ${definition.pattern}${note}`;
+  return `- ${words[definition.keyword] ?? definition.keyword} ${definition.pattern}${note}`;
 }
 
 /**
@@ -60,6 +64,10 @@ function phraseLine(definition, withElements = false) {
  */
 export function designBrief(requirement, { answer = 'json' } = {}) {
   const project = requirement.project_id ? db.prepare('SELECT * FROM projects WHERE id = ?').get(requirement.project_id) : null;
+  // The scenarios are written in the language of the project's tests, with its phrases.
+  const language = projectLanguage(requirement.project_id);
+  const words = keywordsOf(language);
+  const say = (pattern) => translatedPattern(pattern, language);
   const lines = [`# Test design for ${requirement.key} — ${requirement.title}`];
   if (requirement.description) lines.push('', requirement.description);
   lines.push('', '## Acceptance criteria');
@@ -86,7 +94,7 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
   // What the tests of the project act on, by name: a scenario can name them where a selector goes.
   const elements = requirement.project_id ? elementLines(requirement.project_id) : [];
   lines.push('', '## The Gherkin phrases of the project — write the steps with these, word for word',
-    ...definitionsFor(requirement).map((definition) => phraseLine(definition, elements.length > 0)));
+    ...definitionsFor(requirement).map((definition) => phraseLine(definition, elements.length > 0, words)));
   if (elements.length) {
     lines.push('', '## The elements of the app — where a phrase takes a CSS selector, the name of one of these, word for word, acts on it',
       'Recorded by the tests of the project, page by page:', ...elements);
@@ -107,14 +115,14 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
     '   say what is expected, there is no scenario to write: that is a question of step 1.',
     '5. Write each scenario\'s steps in Gherkin with the phrases above, word for word, values in quotes. Start from the',
     '   address of the app. Fill in a CSS selector only when the project notes or a business step give it — never a',
-    '   guessed one: prefer the phrases that need none (I am on, I click on the text, I should see, the URL should',
-    '   contain), the business steps, and the names of the elements of the app where it lists them (When I click on',
-    '   "Save profile"). A step no phrase covers is written in plain words (When I type "wrong" as the',
-    '   password): an agent records it later, browsing the app.',
+    `   guessed one: prefer the phrases that need none (${['I am on {string}', 'I click on the text {string}', 'I should see {string}', 'the URL should contain {string}'].map((p) => say(p).replace(' {string}', '')).join(', ')}),`,
+    `   the business steps, and the names of the elements of the app where it lists them (${words.When} ${say('I click on {string}').replace('{string}', '"Save profile"')}).`,
+    `   A step no phrase covers is written in plain words (${words.When} ${language === 'fr' ? 'je tape "faux" comme mot de passe' : 'I type "wrong" as the password'}):`,
+    '   an agent records it later, browsing the app.',
     '6. Priority: high for the expected path and for what loses data, money or access; medium for the alternatives and',
     '   the errors users will meet; low for the rest.',
-    '7. Write titles, issues, questions, rewordings and reasons in the language of the requirement. Gherkin keywords',
-    '   stay Given / When / Then / And.');
+    `7. Write the issues, questions, rewordings and reasons in the language of the requirement. Write the scenarios —`,
+    `   titles and steps — in ${words.name}, the language of the project's tests, with its keywords: ${[words.scenario, words.Given, words.When, words.Then, words.And].join(' / ')}.`);
 
   const shape = [
     '{',
@@ -124,7 +132,7 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
     '    "title": "…", "criterion": 1, "kind": "nominal | alternative | error | boundary",',
     `    "technique": "${TECHNIQUES.join(' | ')}", "priority": "high | medium | low",`,
     '    "rationale": "why this scenario, in one sentence",',
-    '    "gherkin": "Scenario: …\\n  Given …\\n  When …\\n  Then …"',
+    `    "gherkin": "${words.scenario}: …\\n  ${words.Given} …\\n  ${words.When} …\\n  ${words.Then} …"`,
     '  }]',
     '}',
   ];
@@ -190,7 +198,7 @@ export function parseDesign(text, requirement) {
       title, criterion: criterion?.position ?? null, criterion_text: criterion?.text ?? null, kind, technique,
       priority: PRIORITIES.includes(s.priority) ? s.priority : 'medium',
       rationale: clean(s.rationale, 500) || null,
-      gherkin: scenarioFeature(clean(s.gherkin, 6000), requirement.title, title),
+      gherkin: scenarioFeature(clean(s.gherkin, 6000), requirement.title, title, projectLanguage(requirement.project_id)),
     }];
   }).slice(0, 40).map((s, i) => ({ id: `s${i + 1}`, ...s }));
   return { review, missing, scenarios };
@@ -212,10 +220,10 @@ export function resolveScenario(feature, definitions) {
   const unresolved = [];
   let last = null;
   let steps = 0;
-  for (const { text, keyword } of phrases) {
+  for (const { text, keyword, written } of phrases) {
     const parsed = stepsForPhrase(text, effectiveKeyword(keyword, last), compiled, steps);
     if (!parsed) {
-      unresolved.push(`${keyword} ${text}`);
+      unresolved.push(`${written} ${text}`);
       continue;
     }
     steps += parsed.steps.length;
@@ -304,6 +312,8 @@ export function projectBrief(project) {
   const lines = [];
   if (project) {
     lines.push(`The app under test is the project "${project.name}".`);
+    // The intents read in its Gherkin, in the language its tests are written in.
+    lines.push(`Its tests are written in ${keywordsOf(project.language).name}: write the intent of each step in ${keywordsOf(project.language).name}.`);
     if (project.base_url) lines.push(`It is at ${project.base_url}: start there, unless the description gives another URL.`);
     if (project.context?.trim()) lines.push('What to know about it:', project.context.trim());
   }

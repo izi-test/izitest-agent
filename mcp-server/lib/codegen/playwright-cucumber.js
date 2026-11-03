@@ -9,19 +9,25 @@ import { uploadPathsOf } from '../upload-files.js';
 import { dropTargetOf, dragToCode } from './drag.js';
 import { collectorLines, oracleCode, needsAxe, AXE_IMPORT } from './oracles.js';
 import { requirementTags } from './requirement-tags.js';
+import { keywordsOf, languageOf } from '../gherkin/language.js';
+import { translatedPattern } from '../gherkin/default-step-definitions.js';
 
 export function generatePlaywrightCucumber(test, definitions) {
   const slug = slugify(test.name || 'test');
   const tags = requirementTags(test);
-  const feature = (tags.length ? `${tags.join(' ')}\n` : '') + toScenarioOutline(
+  const outline = toScenarioOutline(
     serializeTestToFeatureWith(test, definitions, { singleStep: withStableTarget }),
-    test.variables
+    test.variables,
+    test.language
   );
+  // The tags go on the feature, after the line that says its language.
+  const [, header = '', body] = outline.match(/^(# language: \w+\n)?([\s\S]*)$/);
+  const feature = header + (tags.length ? `${tags.join(' ')}\n` : '') + body;
 
   const composites = definitions.filter(d => d.steps_template);
   const files = [
     { path: `features/${slug}.feature`, content: feature },
-    { path: 'features/steps/default.steps.js', content: DEFAULT_STEPS_JS },
+    { path: 'features/steps/default.steps.js', content: defaultStepsJs(test.language) },
     { path: 'features/support/world.js', content: WORLD_JS },
     { path: 'cucumber.js', content: CUCUMBER_CONFIG_JS },
     { path: 'package.json', content: renderPackageJson(slug) },
@@ -59,7 +65,8 @@ function withStableTarget(step) {
  * before matching, so an {int} parameter still matches; left as is, "{{ville}}" would
  * have been typed into the page.
  */
-export function toScenarioOutline(feature, variables = {}) {
+export function toScenarioOutline(feature, variables = {}, language = 'en') {
+  const words = keywordsOf(language);
   const used = [];
   const outline = feature.replace(/\{\{\s*([A-Za-z_]\w*)\s*\}\}/g, (_, name) => {
     if (!used.includes(name)) used.push(name);
@@ -71,7 +78,8 @@ export function toScenarioOutline(feature, variables = {}) {
   // the {string}: a value holding that quote — "d'abord" in '"reason": "<reason>"' — closed
   // the string early, and the step was undefined. Escaped (\'), {string} reads it back as '.
   const enclosing = {};
-  for (const line of outline.split('\n').filter(l => /^\s*(Given|When|Then|And|But)\b/.test(l))) {
+  const stepKeywords = [words.Given, words.When, words.Then, words.And, 'But', 'Mais'].join('|');
+  for (const line of outline.split('\n').filter(l => new RegExp(`^\\s*(${stepKeywords})(\\s|$)`).test(l))) {
     for (const m of line.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)) {
       const quote = m[1] !== undefined ? '"' : "'";
       for (const [, name] of (m[1] ?? m[2]).matchAll(/<([A-Za-z_]\w*)>/g)) (enclosing[name] ??= new Set()).add(quote);
@@ -82,13 +90,20 @@ export function toScenarioOutline(feature, variables = {}) {
     for (const quote of enclosing[name] ?? []) value = value.replaceAll(quote, `\\${quote}`);
     return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n');
   };
-  return outline.replace(/^(\s*)Scenario:/m, '$1Scenario Outline:').trimEnd() + '\n\n' +
-    '    Examples:\n' +
+  return outline.replace(new RegExp(`^(\\s*)${words.scenario}:`, 'm'), `$1${words.outline}:`).trimEnd() + '\n\n' +
+    `    ${words.examples}:\n` +
     `      | ${used.join(' | ')} |\n` +
     `      | ${used.map(cell).join(' | ')} |\n`;
 }
 
 // ─── Templates ──────────────────────────────────────────────────────
+
+/** The generic steps, their phrases in the language of the test's project. */
+function defaultStepsJs(language) {
+  if (languageOf(language) === 'en') return DEFAULT_STEPS_JS;
+  return DEFAULT_STEPS_JS.replace(/^(Given|When|Then)\('([^'\n]*)',/gm,
+    (_, keyword, pattern) => `${keyword}(${jsString(translatedPattern(pattern, language))},`);
+}
 
 const DEFAULT_STEPS_JS = `import { Given, When, Then } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';

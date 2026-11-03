@@ -8,6 +8,8 @@
 import { createHash } from 'node:crypto';
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
+import { keywordsOf } from './gherkin/language.js';
+import { projectLanguage } from './gherkin/step-definition-store.js';
 
 export const SOURCES = ['prompt', 'manual', 'jira', 'import'];
 export const PRIORITIES = ['high', 'medium', 'low'];
@@ -158,13 +160,16 @@ function criterionOf(requirement, criterion) {
  * scenario alone (its steps, or "Scenario:" and its steps), it is put in a Feature named
  * after the requirement, and a Scenario named after the case. Empty: null.
  */
-export function scenarioFeature(gherkin, featureTitle, scenarioTitle) {
+export function scenarioFeature(gherkin, featureTitle, scenarioTitle, language = 'en') {
   const text = gherkin?.trim();
   if (!text) return null;
-  if (/^\s*Feature:/m.test(text)) return `${text}\n`;
+  if (/^\s*(Feature|Fonctionnalité):/m.test(text) || /^#\s*language:/.test(text)) return `${text}\n`;
+  // In the language of the project's tests: a French one starts with # language: fr.
+  const words = keywordsOf(language);
   const indent = (block, by) => block.split('\n').map((line) => (line.trim() ? `${by}${line.trim()}` : '')).join('\n');
-  const [, head, steps] = text.match(/^\s*(Scenario(?: Outline)?:.*)\n?([\s\S]*)$/m) ?? [null, `Scenario: ${scenarioTitle}`, text];
-  return `Feature: ${featureTitle}\n\n  ${head.trim()}\n${indent(steps, '    ')}\n`;
+  const [, head, steps] = text.match(/^\s*((?:Scenario(?: Outline)?|Scénario|Plan du scénario|Exemple):.*)\n?([\s\S]*)$/mi)
+    ?? [null, `${words.scenario}: ${scenarioTitle}`, text];
+  return `${words.header ? `${words.header}\n` : ''}${words.feature}: ${featureTitle}\n\n  ${head.trim()}\n${indent(steps, '    ')}\n`;
 }
 
 /** A case's fields checked: kind, technique, priority — what a planned case or an edit gives. */
@@ -176,7 +181,7 @@ function caseFields(requirement, c) {
   if (!c.title?.trim()) throw new Error('A case needs a title');
   return {
     title: c.title.trim(), kind, technique: c.technique ?? null, priority: c.priority ?? null,
-    rationale: c.rationale?.trim() || null, gherkin: scenarioFeature(c.gherkin, requirement.title, c.title.trim()),
+    rationale: c.rationale?.trim() || null, gherkin: scenarioFeature(c.gherkin, requirement.title, c.title.trim(), projectLanguage(requirement.project_id)),
   };
 }
 

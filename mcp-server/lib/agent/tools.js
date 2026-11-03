@@ -12,7 +12,7 @@ import { parseFeatureToStepsWith } from '../gherkin/parse.js';
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
 import { withElementNames, elementTargets, listElements } from '../element-store.js';
 import {
-  listStepDefinitions,
+  writingDefinitions,
   createStepDefinition,
 } from '../gherkin/step-definition-store.js';
 import { log } from '../logger.js';
@@ -36,7 +36,7 @@ function projectDefinitions(projectId) {
 export const AGENT_TOOLS = [
   {
     name: 'get_project_context',
-    description: 'Get the full context of the current project: name, description, base URL, type, specs/context text, existing step definitions, and the elements its tests act on — in a Gherkin phrase, the name of one of them goes where a CSS selector goes.',
+    description: 'Get the full context of the current project: name, description, base URL, type, specs/context text, the language its tests are written in (en, fr), its step definitions in that language, and the elements its tests act on — in a Gherkin phrase, the name of one of them goes where a CSS selector goes.',
     parameters: {
       type: 'object',
       properties: {
@@ -48,7 +48,7 @@ export const AGENT_TOOLS = [
       const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(project_id);
       if (!project) return { error: 'Project not found' };
 
-      const definitions = listStepDefinitions(project_id);
+      const definitions = writingDefinitions(project_id);
       const tests = db.prepare(
         `SELECT t.name, t.description FROM tests t WHERE t.project_id = ?`
       ).all(project_id);
@@ -61,6 +61,8 @@ export const AGENT_TOOLS = [
           context: project.context || '',
           project_type: project.project_type,
           base_url: project.base_url,
+          // Its tests are written in it: Gherkin, business steps, intents (a feature in French starts with "# language: fr").
+          language: project.language ?? 'en',
           step_definitions: definitions.map(d => ({
             id: d.id,
             keyword: d.keyword,
@@ -111,7 +113,7 @@ export const AGENT_TOOLS = [
 
   {
     name: 'create_test_from_gherkin',
-    description: 'Create a new test by parsing a Gherkin feature document. The Gherkin is resolved against the project step definitions to produce executable test steps. Where a phrase takes a CSS selector, the name of an element of the project (get_project_context lists them, e.g. When I click on "Save profile") acts on that element as its tests recorded it.',
+    description: 'Create a new test by parsing a Gherkin feature document. The Gherkin is resolved against the project step definitions to produce executable test steps. Write it in the language of the project\'s tests (get_project_context: language; in French, the feature starts with "# language: fr" and its keywords are Fonctionnalité, Scénario, Soit, Quand, Alors, Et). Where a phrase takes a CSS selector, the name of an element of the project (get_project_context lists them, e.g. When I click on "Save profile") acts on that element as its tests recorded it.',
     parameters: {
       type: 'object',
       properties: {
