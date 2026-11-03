@@ -354,8 +354,8 @@ export function initDatabase() {
     log(`Migration warning (campaigns): ${err.message}`);
   }
 
-  // Xray and Jira (lib/xray.js, lib/jira.js): the Test Execution a campaign was sent to, and the
-  // comment IziTest keeps on a story — sent again, they are updated, not repeated.
+  // Where Jira and Xray kept, before connectors, the comment IziTest keeps on a story and the Test
+  // Execution a campaign was sent to: moved to connector_refs below.
   try {
     const campaignCols = db.prepare('PRAGMA table_info(campaigns)').all().map(c => c.name);
     if (!campaignCols.includes('xray_execution_key')) db.exec('ALTER TABLE campaigns ADD COLUMN xray_execution_key TEXT DEFAULT NULL');
@@ -363,6 +363,34 @@ export function initDatabase() {
     if (!requirementCols.includes('jira_comment_id')) db.exec('ALTER TABLE requirements ADD COLUMN jira_comment_id TEXT DEFAULT NULL');
   } catch (err) {
     log(`Migration warning (Xray, Jira comments): ${err.message}`);
+  }
+
+  // What a connector (lib/connectors) keeps of what it sent: the comment IziTest keeps on a story,
+  // the Test Execution a campaign went to — sent again, they are updated, not repeated. Those kept
+  // above are moved here; a requirement or a campaign deleted takes its own along (an id may come back).
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS connector_refs (
+        connector TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        item_id INTEGER NOT NULL,
+        ref TEXT NOT NULL,
+        updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (connector, kind, item_id)
+      );
+      INSERT OR IGNORE INTO connector_refs (connector, kind, item_id, ref)
+        SELECT 'jira', 'requirement', id, jira_comment_id FROM requirements WHERE jira_comment_id IS NOT NULL;
+      INSERT OR IGNORE INTO connector_refs (connector, kind, item_id, ref)
+        SELECT 'xray', 'campaign', id, xray_execution_key FROM campaigns WHERE xray_execution_key IS NOT NULL;
+      UPDATE requirements SET jira_comment_id = NULL WHERE jira_comment_id IS NOT NULL;
+      UPDATE campaigns SET xray_execution_key = NULL WHERE xray_execution_key IS NOT NULL;
+      CREATE TRIGGER IF NOT EXISTS connector_refs_of_requirement AFTER DELETE ON requirements
+        BEGIN DELETE FROM connector_refs WHERE kind = 'requirement' AND item_id = OLD.id; END;
+      CREATE TRIGGER IF NOT EXISTS connector_refs_of_campaign AFTER DELETE ON campaigns
+        BEGIN DELETE FROM connector_refs WHERE kind = 'campaign' AND item_id = OLD.id; END;
+    `);
+  } catch (err) {
+    log(`Migration warning (connectors): ${err.message}`);
   }
 
   // The elements of a project (lib/elements.js): what its steps act on, known by their page and

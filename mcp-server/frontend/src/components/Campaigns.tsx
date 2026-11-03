@@ -26,7 +26,7 @@ import type { Campaign, CampaignTestStatus } from '../types';
 // a project's, a requirement's, or a chosen list —, a few at a time, each in its own window.
 // The report says what failed and why, what regressed since the last campaign of the same
 // tests, and where each requirement stands; it downloads as JUnit for a CI, or opens as HTML,
-// and is sent to Xray and to the Jira stories it checks (CampaignWriteBack).
+// and is sent to the tools set as connectors — Xray, the Jira stories it checks (CampaignWriteBack).
 
 const STATUS_ORDER: CampaignTestStatus[] = ['passed', 'failed', 'error', 'running', 'pending', 'skipped'];
 const STATUS_TONES: Record<CampaignTestStatus, string> = { passed: 'green', failed: 'red', error: 'amber', running: 'blue', pending: 'slate', skipped: 'slate' };

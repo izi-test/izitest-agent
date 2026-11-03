@@ -117,10 +117,10 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. |
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
-| `save_requirement` | Saves a requirement — from a request, written by hand, or a Jira story — with its acceptance criteria (see below). |
+| `save_requirement` | Saves a requirement — from a request, written by hand, or an issue of a tool (a Jira story) — with its acceptance criteria (see below). |
 | `import_requirements` | Imports requirements from a file — CSV, TSV, Excel, a Jira CSV export, JSON, Markdown —, a dry run first (see below). |
-| `import_from_jira` | Reads stories from the Jira site set in the dashboard — a JQL query, their keys, or again (`sync`) — as requirements, a dry run first. |
-| `comment_on_jira` | Writes each Jira story's coverage — a campaign's stories, or those of their keys — as IziTest's comment on it, updated after; a dry run first (see below). |
+| `import_from_connector` | Reads requirements from a tool set in the dashboard (a connector: Jira, GitHub Issues) — a query, their keys, or again (`sync`) —, a dry run first (see below). |
+| `send_coverage` | Tells a tool where each requirement imported from it stands — a campaign's, or those of their keys — as IziTest's comment on it (Jira), updated after; a dry run first (see below). |
 | `design_tests` | Lays out how to design a requirement's tests: its criteria, its cases, the app, the project's Gherkin phrases, and the method — review, what is left unsaid, scenarios by test technique (see below). |
 | `plan_tests` | Plans a requirement's test cases: per criterion, nominal, alternative, error, boundary — with their technique, priority and scenario in Gherkin; says which scenarios are ready and which have steps to record. |
 | `link_test` | Links a saved test to a requirement: to a planned case, a criterion, or the whole requirement. |
@@ -130,7 +130,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `resolve_repair` | Applies a repair to the saved test, or rejects it — on the user's word. |
 | `run_campaign` | Replays a project's tests, a requirement's or a list together, for a version of the app, and answers with the report (see below). |
 | `get_campaign` / `list_campaigns` / `stop_campaign` | A campaign's report; the campaigns, newest first; stop one that runs. |
-| `export_to_xray` | Sends a campaign's results to Xray as a Test Execution, each test a Generic test linked to the stories it covers; a dry run first (see below). |
+| `send_results` | Sends a campaign's results to a tool (a connector: Xray, a Test Execution, each test linked to the stories it covers); a dry run first (see below). |
 | `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
@@ -692,8 +692,8 @@ les testent. Le même objet, d'où qu'elle vienne :
 | :--- | :--- |
 | Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré ; l'agent reçoit l'URL de base et le contexte du projet, et s'il s'arrête sans sauver le test (pas d'URL d'où partir), la fenêtre reste ouverte avec son dernier message. |
 | Un fichier (un cahier de recette, un export) | `import_requirements(path)` ou le bouton **Import** de la page Requirements (voir plus bas). |
-| Un site Jira | `import_from_jira(jql)` ou l'onglet **From Jira** de l'import (voir plus bas), une fois le site réglé dans Settings → Jira. |
-| Un outil (une story Jira) | l'agent la lit (par exemple avec un serveur MCP Atlassian) et la garde : `source: "jira"`, sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |
+| Un outil branché (Jira, GitHub Issues) | `import_from_connector(connector, query)` ou l'onglet **From Jira**, **From GitHub Issues**… de l'import (voir les connecteurs plus bas), une fois l'outil réglé dans Settings. |
+| Un outil sans connecteur (une page Notion) | l'agent la lit (par exemple avec le serveur MCP de l'outil) et la garde : `source` l'id d'un connecteur (`"jira"`) ou un nom de son choix (`"notion"`), sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |
 | Un testeur | page **Requirements** du tableau de bord : écrire l'exigence et ses critères, demander des scénarios (« Propose scenarios »), planifier des cas, y lier des tests. |
 
 Un cas est d'abord **planifié** (`plan_tests` : son titre, le critère qu'il vérifie, son type —
@@ -756,18 +756,86 @@ ou déposé) ou un texte collé, montre l'aperçu et la colonne de chaque champ 
 dans le projet choisi en tête du panneau : celui du tableau de bord par défaut ; avec « All projects », à
 choisir (« No project » compris, mais exprès).
 
-#### Lire les stories d'un site Jira : `import_from_jira`
+### Connecteurs : les outils d'où viennent les exigences, et où vont les résultats
+
+Une exigence est un objet d'IziTest, d'où qu'elle vienne. Les outils d'une équipe — Jira, GitHub
+Issues, demain Notion ou Linear — y sont branchés par des **connecteurs** (`lib/connectors`) : un
+fichier par outil, qui déclare comment on l'atteint et ce qu'il sait faire. Trois rôles, un connecteur
+en a un ou plusieurs :
+
+| Rôle | Ce qu'il fait | Aujourd'hui |
+| :--- | :--- | :--- |
+| `requirements` | lit les exigences de l'outil : par une requête dans son langage, leurs clés, ou à nouveau (`sync`) pour voir ce qui a changé | Jira (JQL), GitHub Issues (la recherche de GitHub) |
+| `coverage` | dit à l'outil où en est chaque exigence qui en vient : un commentaire d'IziTest, mis à jour ensuite | Jira |
+| `results` | envoie les résultats d'une campagne, mis à jour s'ils l'ont déjà été | Xray (une Test Execution) |
+
+Le reste est commun à tous, et fait une seule fois :
+- **les réglages** : chaque connecteur a sa carte dans **Settings** (Jira, Xray, GitHub Issues…), faite de
+  ses champs (une adresse, un compte, un jeton) ; un secret est gardé sur la machine et jamais réaffiché
+  (masqué, et redonné masqué il garde celui enregistré) ; « Test the connection » dit si ça marche ; à
+  défaut, des variables d'environnement en tiennent lieu (`JIRA_API_TOKEN`…). Un connecteur qui n'a besoin
+  de rien (GitHub, pour un dépôt public) marche tel quel ;
+- **la lecture** n'écrit rien dans l'outil : un essai d'abord (nouvelle, modifiée, inchangée), puis
+  l'import ; l'exigence garde comme `source` l'id du connecteur (`jira`, `github`), sa clé et son lien ;
+- **l'écriture** ne se fait que sur demande, après un essai qui montre ce qui serait envoyé ; ce qui a été
+  envoyé (le commentaire d'une story, la Test Execution d'une campagne) est retenu
+  (`connector_refs`) : renvoyé, il est mis à jour, pas répété.
+
+| Route ou outil | Rôle |
+| :--- | :--- |
+| `GET /api/connectors` | Les connecteurs : ce que chacun fait, ses champs, ses réglages (secrets masqués) |
+| `PUT /api/connectors/:id` | Ses réglages (`{ values }`) ; son premier champ vide les retire |
+| `POST /api/connectors/:id/test` | Si ces réglages (ou ceux enregistrés) marchent |
+| `GET /api/connectors/:id/scopes` | Par où commencer à lire : les projets d'un site Jira, chacun avec sa requête |
+| `POST /api/connectors/:id/import` | `{ query \| keys \| sync, project_id, dry_run }` : les exigences lues, enregistrées hors essai |
+| `POST /api/connectors/:id/coverage` | `{ keys \| campaign_id, dry_run }` : la couverture envoyée, hors essai |
+| `POST /api/campaigns/:id/send/:connector` | `{ options, dry_run }` : les résultats d'une campagne envoyés, hors essai |
+| `import_from_connector`, `send_coverage`, `send_results` | Les mêmes, pour un agent : leur description liste les connecteurs et ce qu'ils prennent |
+
+#### Écrire un connecteur
+
+Un connecteur est un objet exporté par un fichier de `lib/connectors/`, inscrit dans
+`lib/connectors/index.js` (la liste des connecteurs, en tête). Rien d'autre à toucher : l'API, les outils
+MCP, Settings, l'import et la page d'une campagne le prennent d'eux-mêmes.
+
+```js
+export const notion = {
+  id: 'notion', name: 'Notion',                     // l'id devient la source de ses exigences
+  description: 'Les pages d\'une base Notion, lues comme exigences.',
+  settings: {
+    fields: [{ name: 'token', label: 'Token', type: 'secret', env: 'NOTION_TOKEN' }],  // url | text | secret, optional
+    hint: 'Où créer le jeton.', link: 'https://www.notion.so/my-integrations',
+  },
+  async test({ config, fetch }) { /* appelle l'outil */ return 'Reads as …'; },       // une phrase
+  requirements: {
+    item: 'page', items: 'pages', keys: 'abc123', reads: 'son titre, son texte, ses critères',
+    query: { label: 'database id', placeholder: '…' },
+    async read({ config, fetch }, { query, keys, known }) {                          // known : déjà importées (sync)
+      return { records: [{ key, title, description, criteria: [], priority: 'medium', url }], warnings: [] };
+    },
+  },
+  // coverage: { where, render(requirement, { campaign }) → { body, text }, async post(ctx, requirement, body, { ref }) → { ref, action, url } }
+  // results:  { what, options, note, prepare(campaign, options, { ref }) → { target, items, payload }, async send(ctx, prepared, { ref }) → { ref, url } }
+};
+```
+
+Le connecteur reçoit `fetch` (une doublure dans ses tests : voir `test/connectors.test.js`), ses réglages,
+et ceux d'un autre (`configOf('jira')`, dont Xray tire l'adresse du site). Il ne touche ni à la base ni
+aux réglages : les clés, les critères trouvés dans une description (« Acceptance criteria »), l'essai,
+ce qui a été envoyé, c'est le cadre commun qui s'en charge.
+
+#### Jira : ses stories en exigences (`import_from_connector`, connecteur `jira`)
 
 Le site se règle dans le tableau de bord (**Settings → Jira**) : son adresse
 (`https://votre-equipe.atlassian.net`), l'email du compte, et un jeton d'API de ce compte (créé sur
 id.atlassian.com → Security → API tokens). Il est gardé sur la machine, et jamais réaffiché : le tableau de
 bord le montre masqué. « Test the connection » dit sous quel compte IziTest lit. À défaut, `JIRA_BASE_URL`,
 `JIRA_EMAIL` et `JIRA_API_TOKEN` en tiennent lieu. La lecture n'écrit rien dans Jira ; seuls les
-commentaires de couverture (`comment_on_jira`, plus bas) y écrivent, et seulement quand on le demande.
+commentaires de couverture (`send_coverage`, plus bas) y écrivent, et seulement quand on le demande.
 
-`import_from_jira` lit, par l'API REST v3 de Jira Cloud (la recherche JQL « enhanced », page après page,
+`import_from_connector(connector: "jira")` lit, par l'API REST v3 de Jira Cloud (la recherche JQL « enhanced », page après page,
 500 stories au plus) :
-- les stories d'une requête JQL (`project = SHOP AND issuetype = Story ORDER BY key` : une requête
+- les stories d'une requête JQL (`query`, `project = SHOP AND issuetype = Story ORDER BY key` : une requête
   bornée, Jira refuse les autres) ;
 - ou celles de leurs clés (`keys`) — une clé que Jira ne connaît pas, ou que ce compte ne voit pas, est
   dite, les autres sont lues ;
@@ -778,13 +846,13 @@ d'Atlassian, mis en texte), sa priorité, son lien. Ses critères d'acceptation 
 (« Acceptance Criteria », un champ personnalisé) quand le site en a un, sinon de la liste sous
 « Acceptance criteria » dans sa description. Comme pour un fichier : un essai d'abord, puis l'import ;
 une story modifiée depuis, qui a des tests liés, est signalée. Dans le tableau de bord : **Requirements
-→ Import → From Jira**, avec les projets du site pour partir d'une requête (choisir un projet propose ses
+→ Import → From Jira**, avec les projets du site pour partir d'une requête (« Where to start ») (choisir un projet propose ses
 stories, `issuetype = Story` ; sans type Story, ses tickets sauf les sous-tâches), et « Check the
 imported ones for changes ».
 
-#### Dire à Jira où en est chaque story : `comment_on_jira`
+#### Dire à Jira où en est chaque story : `send_coverage` (connecteur `jira`)
 
-`comment_on_jira` écrit sur chaque story, en commentaire, où elle en est dans IziTest : sa couverture
+`send_coverage(connector: "jira")` écrit sur chaque story, en commentaire, où elle en est dans IziTest : sa couverture
 (`passing`, `failing`, `not run`, `not covered`), chacun de ses critères avec ses tests et leur dernier
 résultat (`✓`, `✗`, `○` sans test), la campagne d'où ça vient, et quand. Pour les stories de `keys`, ou
 celles que vérifient les tests d'une campagne (`campaign_id` : ses exigences importées de Jira, les
@@ -794,7 +862,23 @@ jour, pas répété ; supprimé dans Jira entre-temps, un nouveau le remplace.
 C'est d'abord un **essai** (`dry_run`, par défaut) qui montre chaque commentaire : l'agent le montre à
 l'utilisateur et lui demande avant de rappeler avec `dry_run: false`. Une story que Jira refuse (supprimée,
 ce compte n'y a pas droit) est dite, les autres sont commentées. Dans le tableau de bord : le rapport d'une
-campagne, **Jira and Xray → Comment on the Jira stories…**, aperçu puis « Post ».
+campagne, **Send the results → Tell the Jira stories…**, aperçu puis « Send N to Jira ».
+
+#### GitHub Issues : ses tickets en exigences (connecteur `github`)
+
+Un **dépôt public se lit sans rien régler** ; un jeton (**Settings → GitHub Issues**, à défaut
+`GITHUB_TOKEN`) n'est utile que pour un dépôt privé, ou au-delà de 60 requêtes par heure.
+`import_from_connector(connector: "github")` lit :
+- les tickets d'une recherche GitHub (`query`, `repo:acme/shop is:open label:story` ; `is:issue` est ajouté,
+  les pull requests laissées de côté ; 500 au plus) ;
+- ou ceux de leurs clés (`keys`, `acme/shop#12`) — un ticket introuvable est dit, une pull request aussi ;
+- ou, `sync: true`, ceux déjà importés, relus depuis leur lien.
+
+Chaque ticket devient une exigence (source `github`) : sa clé (le nom du dépôt et son numéro, `SHOP-12`),
+son titre, son texte, son lien, sa priorité d'après ses libellés (`priority: high`, `P1`…), et ses critères :
+la liste sous « Acceptance criteria » dans son texte, sinon sa liste de tâches (`- [ ] …`). Rien n'est
+écrit sur GitHub. Deux dépôts de même nom chez deux propriétaires donneraient les mêmes clés : en importer
+un seul par projet IziTest.
 
 #### Concevoir les tests d'une exigence : `design_tests`
 
@@ -905,7 +989,7 @@ ordinaire (sans « HeadlessChrome » dans le user agent).
 Son profil est le sien : cookies, sessions et stockage ne sont pas ceux du Chrome de l'utilisateur. Un
 test d'une appli derrière une connexion se connecte lui-même.
 
-#### Envoyer une campagne à Xray : `export_to_xray`
+#### Envoyer une campagne à Xray : `send_results` (connecteur `xray`)
 
 La clé d'API de Xray se règle dans le tableau de bord (**Settings → Xray**) : son client id et son secret,
 créés dans Jira → Apps → Xray → API Keys (par un administrateur). Le secret est gardé sur la machine et
@@ -913,10 +997,10 @@ jamais réaffiché ; « Test the API key » vérifie que Xray la prend. À défa
 `XRAY_CLIENT_SECRET` en tiennent lieu ; `XRAY_BASE_URL` désigne un Xray régional
 (`https://eu.xray.cloud.getxray.app`).
 
-`export_to_xray(id)` envoie les résultats d'une campagne terminée, par l'import JSON de Xray Cloud
+`send_results(connector: "xray", id, options)` envoie les résultats d'une campagne terminée, par l'import JSON de Xray Cloud
 (`/api/v2/import/execution`) :
-- une **Test Execution** dans le projet Jira `project_key` — par défaut celui des stories que couvrent ses
-  tests, quand elles sont toutes d'un même projet —, ajoutée au Test Plan `test_plan_key` s'il est donné ;
+- une **Test Execution** dans le projet Jira `options.project_key` — par défaut celui des stories que couvrent ses
+  tests, quand elles sont toutes d'un même projet —, ajoutée au Test Plan `options.test_plan_key` s'il est donné ;
   son résumé est « IziTest — <campagne> (<version>) », sa description les totaux, les régressions, les
   non-conformités ;
 - chaque test d'IziTest est un **test Generic** de Xray, créé au premier envoi puis retrouvé par sa
@@ -929,7 +1013,7 @@ Envoyée à nouveau, la campagne **met à jour sa Test Execution** (sa clé est 
 ses champs (Xray peut ne pas avoir le droit de réécrire ses dates, sur un projet « team-managed »), et
 les mêmes tests, retrouvés par leur définition ; supprimée dans Jira entre-temps, une nouvelle est créée. C'est d'abord un **essai** (`dry_run`, par défaut) qui dit ce
 qui serait envoyé : l'agent le montre et demande avant d'envoyer. Dans le tableau de bord : le rapport
-d'une campagne, **Jira and Xray → Send to Xray…** (le projet et le Test Plan, l'aperçu, puis l'envoi), et
+d'une campagne, **Send the results → Send to Xray…** (le projet et le Test Plan, l'aperçu, puis l'envoi), et
 la Test Execution une fois envoyée. Xray demande un projet où ses types de tickets (Test, Test Execution)
 sont activés ; sur un projet « team-managed », passer d'abord par sa configuration Xray.
 

@@ -1,17 +1,18 @@
 import { useState } from 'react';
 import { Upload, Loader2, RefreshCw, Search, FileUp, X } from 'lucide-react';
-import { useImportRequirementsMutation, useImportFromJiraMutation, useGetJiraProjectsQuery } from '../store/services/requirementsApi';
-import { useGetJiraConfigQuery } from '../store/services/settingsApi';
+import { useImportRequirementsMutation, useImportFromConnectorMutation, useGetConnectorScopesQuery } from '../store/services/requirementsApi';
+import { useGetConnectorsQuery } from '../store/services/settingsApi';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
 import { Button } from './Button';
 import { ProjectField } from './ProjectSelector';
 import { Pill } from './ui';
-import type { RequirementImport } from '../types';
+import type { Connector, RequirementImport } from '../types';
 
 // Requirements from a file (mcp-server/lib/requirement-import.js) — a test plan in a spreadsheet
-// (CSV, Excel), a Jira CSV export, JSON, a Markdown spec, chosen or pasted — or from the Jira site
-// set in Settings (mcp-server/lib/jira.js), by a JQL query or again to see what changed: previewed
-// (what is new, changed, unchanged; for a table, which column is which), then imported.
+// (CSV, Excel), a Jira CSV export, JSON, a Markdown spec, chosen or pasted — or from a tool set in
+// Settings → Connectors (mcp-server/lib/connectors: Jira, GitHub Issues…), by a query, their keys
+// or again to see what changed: previewed (what is new, changed, unchanged; for a table, which
+// column is which), then imported.
 
 const FIELDS = ['key', 'title', 'description', 'criteria', 'priority', 'url'] as const;
 const FIELD_LABELS: Record<(typeof FIELDS)[number], string> = {
@@ -29,10 +30,10 @@ function base64Of(buffer: ArrayBuffer) {
   return btoa(binary);
 }
 
-/** What is read: a file (its bytes, or pasted text), or stories of Jira (a query, or those imported already). */
+/** What is read: a file (its bytes, or pasted text), or a tool's requirements (a query, their keys, or those imported already). */
 type Source =
   | { kind: 'file'; filename: string; content_base64?: string; content?: string }
-  | { kind: 'jira'; jql?: string; sync?: boolean };
+  | { kind: 'connector'; connector: string; query?: string; keys?: string[]; sync?: boolean };
 
 export function RequirementImportPanel({ defaultProjectId, onDone, onCancel }: {
   defaultProjectId: number | null; onDone: () => void; onCancel: () => void;
@@ -41,7 +42,10 @@ export function RequirementImportPanel({ defaultProjectId, onDone, onCancel }: {
   const [projectId, setProjectId] = useState<number | null | undefined>(defaultProjectId ?? undefined);
   const { data: projects = [] } = useGetProjectsQuery();
   const projectName = projectId == null ? null : projects.find((p) => p.id === projectId)?.name ?? null;
-  const [tab, setTab] = useState<'file' | 'jira'>('file');
+  // A file, or a connector's id.
+  const [tab, setTab] = useState('file');
+  const { data: connectors = [] } = useGetConnectorsQuery();
+  const sources = connectors.filter((c) => c.requirements);
   const [dragging, setDragging] = useState(false);
   const [source, setSource] = useState<Source | null>(null);
   const [pasted, setPasted] = useState('');
@@ -51,14 +55,14 @@ export function RequirementImportPanel({ defaultProjectId, onDone, onCancel }: {
   const [done, setDone] = useState<RequirementImport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [readFile, { isLoading: readingFile }] = useImportRequirementsMutation();
-  const [readJira, { isLoading: readingJira }] = useImportFromJiraMutation();
-  const isLoading = readingFile || readingJira;
+  const [readTool, { isLoading: readingTool }] = useImportFromConnectorMutation();
+  const isLoading = readingFile || readingTool;
 
   const ask = async (from: Source, options: { columns?: Record<string, string | null>; sheet?: string; dryRun: boolean }) => {
     setError(null);
     try {
-      const { import: result } = from.kind === 'jira'
-        ? await readJira({ jql: from.jql, sync: from.sync, project_id: projectId, dry_run: options.dryRun }).unwrap()
+      const { import: result } = from.kind === 'connector'
+        ? await readTool({ connector: from.connector, query: from.query, keys: from.keys, sync: from.sync, project_id: projectId, dry_run: options.dryRun }).unwrap()
         : await readFile({
           filename: from.filename, content: from.content, content_base64: from.content_base64,
           columns: options.columns ?? columns, sheet: (options.sheet ?? sheet) || undefined, project_id: projectId, dry_run: options.dryRun,
@@ -84,7 +88,8 @@ export function RequirementImportPanel({ defaultProjectId, onDone, onCancel }: {
     setColumns(next);
     if (source) ask(source, { columns: next, dryRun: true });
   };
-  const switchTo = (next: 'file' | 'jira') => { setTab(next); setPreview(null); setSource(null); setError(null); };
+  const switchTo = (next: string) => { setTab(next); setPreview(null); setSource(null); setError(null); };
+  const tool = sources.find((c) => c.id === tab);
 
   if (done) {
     return (
@@ -101,14 +106,18 @@ export function RequirementImportPanel({ defaultProjectId, onDone, onCancel }: {
     <div className="import-panel">
       <nav className="tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'file'} className={`tab ${tab === 'file' ? 'active' : ''}`} onClick={() => switchTo('file')}><FileUp size={15} /> From a file</button>
-        <button type="button" role="tab" aria-selected={tab === 'jira'} className={`tab ${tab === 'jira' ? 'active' : ''}`} onClick={() => switchTo('jira')}><RefreshCw size={15} /> From Jira</button>
+        {sources.map((c) => (
+          <button key={c.id} type="button" role="tab" aria-selected={tab === c.id} className={`tab ${tab === c.id ? 'active' : ''}`} onClick={() => switchTo(c.id)}>
+            <RefreshCw size={15} /> From {c.name}
+          </button>
+        ))}
       </nav>
       <ProjectField
         label="Import into project" value={projectId}
         onChange={(id) => { setProjectId(id); setPreview(null); setSource(null); }}
         hint="Imported again, a requirement is updated under its key (or title): its unchanged criteria keep their tests."
       />
-      {projectId !== undefined && (tab === 'file' ? (
+      {projectId !== undefined && (!tool ? (
         <>
           <p className="help">
             A test plan in a spreadsheet (CSV, Excel), a Jira CSV export, JSON, or a Markdown spec. Columns are found by their names —
@@ -139,7 +148,7 @@ export function RequirementImportPanel({ defaultProjectId, onDone, onCancel }: {
           </details>
         </>
       ) : (
-        <JiraSource projectName={projectName} busy={isLoading} onRead={start} />
+        <ConnectorSource key={tool.id} connector={tool} projectName={projectName} busy={isLoading} onRead={start} />
       ))}
       {isLoading && <p className="help"><Loader2 size={12} className="spin" /> Reading…</p>}
       {error && <div className="alert alert--error">{error}</div>}
@@ -155,35 +164,51 @@ export function RequirementImportPanel({ defaultProjectId, onDone, onCancel }: {
   );
 }
 
-/** Stories of the Jira site set in Settings: a JQL query (a project's stories to start from), or the ones imported already, read again. */
-function JiraSource({ projectName, busy, onRead }: { projectName: string | null; busy: boolean; onRead: (from: Source) => void }) {
-  const { data: config, isLoading } = useGetJiraConfigQuery();
-  const { data: projects = [], error } = useGetJiraProjectsQuery(undefined, { skip: !config });
-  const [jql, setJql] = useState('');
-  if (isLoading) return null;
-  if (!config) return <div className="alert alert--info">No Jira site set yet: Settings → Jira (its address, your email, an API token).</div>;
+/**
+ * A tool's requirements (a connector set in Settings): those a query finds — a project's to start
+ * from, when the tool has projects —, those of their keys, or the ones imported already, read again.
+ */
+function ConnectorSource({ connector: c, projectName, busy, onRead }: {
+  connector: Connector; projectName: string | null; busy: boolean; onRead: (from: Source) => void;
+}) {
+  const role = c.requirements!;
+  const { data: scopes = [], error } = useGetConnectorScopesQuery(c.id, { skip: !c.config || !role.scopes });
+  const [query, setQuery] = useState('');
+  const [keys, setKeys] = useState('');
+  if (!c.config) return <div className="alert alert--info">{c.name} is not set yet: Settings → {c.name}.</div>;
+  const listed = keys.split(/[\s,;]+/).filter(Boolean);
+  const site = c.config.baseUrl;
   return (
     <>
       <div className="alert alert--info">
-        Stories of <strong>{config.baseUrl}</strong>, read as requirements: summary, description, priority, link, and their acceptance
-        criteria — from an "Acceptance Criteria" field, or the list under "Acceptance criteria" in the description. Nothing is written
-        to Jira. Into: <strong>{projectName ?? 'no project'}</strong>.
+        {role.items.replace(/^./, (l) => l.toUpperCase())} read as requirements{site && <> from <strong>{site}</strong></>}: {role.reads}.
+        Nothing is written to {c.name}. Into: <strong>{projectName ?? 'no project'}</strong>.
       </div>
       {error && <div className="alert alert--error">{errorOf(error)}</div>}
+      {scopes.length > 0 && (
+        <label className="field">
+          <span className="field__label">Where to start</span>
+          <select value="" onChange={(e) => e.target.value && setQuery(e.target.value)}>
+            <option value="">Choose…</option>
+            {scopes.map((scope) => <option key={scope.label} value={scope.query}>{scope.label}</option>)}
+          </select>
+        </label>
+      )}
       <label className="field">
-        <span className="field__label">A project's stories</span>
-        <select value="" onChange={(e) => e.target.value && setJql(e.target.value)}>
-          <option value="">Choose a Jira project…</option>
-          {projects.map((p) => <option key={p.key} value={p.jql}>{p.key} — {p.name}</option>)}
-        </select>
+        <span className="field__label">{role.query.label.replace(/^./, (l) => l.toUpperCase())}</span>
+        <textarea className="mono" rows={2} placeholder={`e.g. ${role.query.placeholder}`} value={query} onChange={(e) => setQuery(e.target.value)} spellCheck={false} />
       </label>
       <label className="field">
-        <span className="field__label">JQL query</span>
-        <textarea className="mono" rows={2} placeholder='e.g. project = SHOP AND issuetype = Story ORDER BY key' value={jql} onChange={(e) => setJql(e.target.value)} spellCheck={false} />
+        <span className="field__label">Or their keys</span>
+        <input type="text" className="mono" placeholder={`e.g. ${role.keys}`} value={keys} onChange={(e) => setKeys(e.target.value)} spellCheck={false} />
       </label>
       <div className="repair-actions">
-        <Button size="sm" variant="secondary" icon={Search} disabled={!jql.trim() || busy} onClick={() => onRead({ kind: 'jira', jql })}>Preview</Button>
-        <Button size="sm" variant="ghost" icon={RefreshCw} disabled={busy} title="Read again the requirements imported from Jira: which changed?" onClick={() => onRead({ kind: 'jira', sync: true })}>
+        <Button size="sm" variant="secondary" icon={Search} disabled={(!query.trim() && !listed.length) || busy}
+          onClick={() => onRead(listed.length ? { kind: 'connector', connector: c.id, keys: listed } : { kind: 'connector', connector: c.id, query })}>
+          Preview
+        </Button>
+        <Button size="sm" variant="ghost" icon={RefreshCw} disabled={busy} title={`Read again the requirements imported from ${c.name}: which changed?`}
+          onClick={() => onRead({ kind: 'connector', connector: c.id, sync: true })}>
           Check the imported ones for changes
         </Button>
       </div>

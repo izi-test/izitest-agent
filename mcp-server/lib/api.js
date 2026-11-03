@@ -31,8 +31,9 @@ import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
 import { designTests, planDesigned, withResolution, recordingBrief, projectBrief } from './requirement-design.js';
 import { importRequirements } from './requirement-import.js';
-import { jiraConfig, maskedJiraConfig, saveJiraConfig, siteOf, jiraClient, testJira, jiraProjects, importFromJira, commentOnJira } from './jira.js';
-import { xrayConfig, maskedXrayConfig, saveXrayConfig, xrayClient, testXray, exportToXray } from './xray.js';
+import {
+  describeConnectors, connectorOf, saveConnectorConfig, testConnector, connectorConfig, importFromConnector, sendCoverage, sendResults, sentTo,
+} from './connectors/index.js';
 import { complete, agentName } from './agent/complete.js';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport } from './campaigns.js';
 import { generateTestCode } from './codegen/index.js';
@@ -533,48 +534,59 @@ export async function apiRouter(req, res, url) {
       }
     }
 
-    // ── Jira (lib/jira.js): the site to read stories from, and the stories read ──
+    // ── Connectors (lib/connectors): the tools requirements are read from and results written to ──
 
-    // GET | PUT /api/settings/jira — { baseUrl, email, apiToken }: the token masked when read, kept when given masked
-    if (path === '/api/settings/jira' && (method === 'GET' || method === 'PUT')) {
-      if (method === 'GET') return json(res, 200, { jira: maskedJiraConfig() });
+    // GET /api/connectors — each one: what it does, its fields, its settings (secrets masked)
+    if (method === 'GET' && path === '/api/connectors') {
+      return json(res, 200, { connectors: describeConnectors() });
+    }
+
+    // PUT /api/connectors/:id — its settings: a secret given masked keeps the one saved; its first field empty removes them
+    params = matchRoute(path, '/api/connectors/:id');
+    if (method === 'PUT' && params) {
       const body = await readBody(req);
       try {
-        return json(res, 200, { jira: saveJiraConfig(body) });
+        saveConnectorConfig(params.id, body.values ?? body);
+        return json(res, 200, { connector: describeConnectors().find((c) => c.id === params.id) });
       } catch (err) {
         return json(res, 400, { error: err.message });
       }
     }
 
-    // POST /api/settings/jira/test — { baseUrl, email, apiToken } (a token given masked: the one saved): who it reads as
-    if (method === 'POST' && path === '/api/settings/jira/test') {
+    // POST /api/connectors/:id/test — { values } (a secret given masked: the one saved), else the saved ones: whether they work
+    params = matchRoute(path, '/api/connectors/:id/test');
+    if (method === 'POST' && params) {
       const body = await readBody(req);
       try {
-        const saved = jiraConfig();
-        const config = body.baseUrl ? {
-          baseUrl: siteOf(body.baseUrl), email: body.email, apiToken: body.apiToken?.includes('•') ? saved?.apiToken : body.apiToken,
-        } : saved;
-        return json(res, 200, { success: true, ...(await testJira(jiraClient(config))) });
+        connectorOf(params.id);
       } catch (err) {
-        return json(res, 200, { success: false, error: err.message });
+        return json(res, 404, { error: err.message });
       }
+      return json(res, 200, await testConnector(params.id, body.values ?? null));
     }
 
-    // GET /api/jira/projects — the site's projects, for a query to start from
-    if (method === 'GET' && path === '/api/jira/projects') {
+    // GET /api/connectors/:id/scopes — where to start reading from: a Jira project's stories
+    params = matchRoute(path, '/api/connectors/:id/scopes');
+    if (method === 'GET' && params) {
       try {
-        return json(res, 200, { projects: await jiraProjects(jiraClient()) });
+        const connector = connectorOf(params.id);
+        const scopes = connector.requirements?.scopes;
+        if (!scopes) return json(res, 200, { scopes: [] });
+        const config = connectorConfig(params.id);
+        if (!config) return json(res, 400, { error: `${connector.name} is not set: Settings → Connectors` });
+        return json(res, 200, { scopes: await scopes({ config, fetch: globalThis.fetch, configOf: connectorConfig }) });
       } catch (err) {
         return json(res, 400, { error: err.message });
       }
     }
 
-    // POST /api/jira/import — { jql | keys | sync, project_id, dry_run }: stories read as requirements, saved unless dry_run
-    if (method === 'POST' && path === '/api/jira/import') {
+    // POST /api/connectors/:id/import — { query | keys | sync, project_id, dry_run }: requirements read, saved unless dry_run
+    params = matchRoute(path, '/api/connectors/:id/import');
+    if (method === 'POST' && params) {
       const body = await readBody(req);
       try {
-        const result = await importFromJira({
-          jql: body.jql, keys: Array.isArray(body.keys) ? body.keys : undefined, sync: !!body.sync,
+        const result = await importFromConnector(params.id, {
+          query: body.query ?? null, keys: Array.isArray(body.keys) ? body.keys : [], sync: !!body.sync,
           projectId: body.project_id ?? null, dryRun: body.dry_run !== false,
         });
         return json(res, 200, { import: result });
@@ -583,42 +595,17 @@ export async function apiRouter(req, res, url) {
       }
     }
 
-    // POST /api/jira/comments — { keys | campaign_id, dry_run }: each story's coverage as IziTest's comment on it, posted unless dry_run
-    if (method === 'POST' && path === '/api/jira/comments') {
+    // POST /api/connectors/:id/coverage — { keys | campaign_id, dry_run }: where each requirement stands, sent unless dry_run
+    params = matchRoute(path, '/api/connectors/:id/coverage');
+    if (method === 'POST' && params) {
       const body = await readBody(req);
       try {
-        const result = await commentOnJira({
+        const result = await sendCoverage(params.id, {
           keys: Array.isArray(body.keys) ? body.keys : [], campaignId: body.campaign_id ?? null, dryRun: body.dry_run !== false,
         });
-        return json(res, 200, { comments: result });
+        return json(res, 200, { coverage: result });
       } catch (err) {
         return json(res, 400, { error: err.message });
-      }
-    }
-
-    // ── Xray (lib/xray.js): the API key, and a campaign's results sent as a Test Execution ──
-
-    // GET | PUT /api/settings/xray — { clientId, clientSecret }: the secret masked when read, kept when given masked
-    if (path === '/api/settings/xray' && (method === 'GET' || method === 'PUT')) {
-      if (method === 'GET') return json(res, 200, { xray: maskedXrayConfig() });
-      const body = await readBody(req);
-      try {
-        return json(res, 200, { xray: saveXrayConfig(body) });
-      } catch (err) {
-        return json(res, 400, { error: err.message });
-      }
-    }
-
-    // POST /api/settings/xray/test — { clientId, clientSecret } (a secret given masked: the one saved): whether Xray takes it
-    if (method === 'POST' && path === '/api/settings/xray/test') {
-      const body = await readBody(req);
-      try {
-        const config = body.clientId
-          ? { clientId: body.clientId.trim(), clientSecret: body.clientSecret?.includes('•') ? xrayConfig()?.clientSecret : body.clientSecret }
-          : xrayConfig();
-        return json(res, 200, { success: true, ...(await testXray(xrayClient(config))) });
-      } catch (err) {
-        return json(res, 200, { success: false, error: err.message });
       }
     }
 
@@ -754,7 +741,8 @@ export async function apiRouter(req, res, url) {
     if (params && (method === 'GET' || method === 'DELETE')) {
       if (method === 'GET') {
         const campaign = getCampaign(params.id);
-        return campaign ? json(res, 200, { campaign }) : json(res, 404, { error: 'Campaign not found' });
+        // Where its results were sent (lib/connectors): a Test Execution of Xray.
+        return campaign ? json(res, 200, { campaign: { ...campaign, sent_to: sentTo(campaign.id) } }) : json(res, 404, { error: 'Campaign not found' });
       }
       try {
         deleteCampaign(params.id);
@@ -774,15 +762,13 @@ export async function apiRouter(req, res, url) {
       }
     }
 
-    // POST /api/campaigns/:id/xray — { project_key, test_plan_key, dry_run }: its results as a Test Execution of Xray, sent unless dry_run
-    params = matchRoute(path, '/api/campaigns/:id/xray');
+    // POST /api/campaigns/:id/send/:connector — { options, dry_run }: its results sent to a tool (a Test Execution of Xray), unless dry_run
+    params = matchRoute(path, '/api/campaigns/:id/send/:connector');
     if (method === 'POST' && params) {
       const body = await readBody(req);
       try {
-        const result = await exportToXray(params.id, {
-          projectKey: body.project_key || null, testPlanKey: body.test_plan_key || null, dryRun: body.dry_run !== false,
-        });
-        return json(res, 200, { xray: result });
+        const result = await sendResults(params.connector, params.id, { options: body.options ?? {}, dryRun: body.dry_run !== false });
+        return json(res, 200, { results: result });
       } catch (err) {
         return json(res, 400, { error: err.message });
       }

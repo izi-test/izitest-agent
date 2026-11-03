@@ -353,7 +353,7 @@ export function requirementsFromJson(text) {
       key: first(fields, ['key', 'id', 'ref']) != null ? String(first(fields, ['key', 'id', 'ref'])) : null,
       title, description: fromText ? fromText.description : description.trim(), criteria: fromText ? fromText.criteria : listed,
       priority: priorityOf(priority) ?? 'medium', url: first(fields, ['url', 'link']) ?? null,
-      source: ['prompt', 'manual', 'jira', 'import'].includes(fields.source) ? fields.source : item?.fields ? 'jira' : 'import',
+      source: /^[a-z][a-z0-9_-]*$/.test(fields.source ?? '') ? fields.source : item?.fields ? 'jira' : 'import',
     }];
   });
   return { requirements, warnings };

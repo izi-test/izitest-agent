@@ -1,41 +1,18 @@
-// Jira Cloud: requirements read from a Jira site — its stories, by their keys or a JQL query —
-// into the records IziTest keeps (lib/requirement-import.js): key, summary, description,
-// acceptance criteria (a field of their own, or the list under "Acceptance criteria" in the
-// description), priority, link. Read again, a story changed since is told, with its tests to
-// check. Written to Jira only when asked, and once tried as a dry run: a story's coverage, as a
-// comment of IziTest's — one a story, updated after.
+// Jira Cloud, a connector (lib/connectors): its stories read as requirements — summary,
+// description, acceptance criteria (a field of their own, or the list under "Acceptance criteria"
+// in the description), priority, link — by a JQL query, their keys, or again to see which
+// changed; and each story told where it stands in IziTest, as a comment of IziTest's (one a
+// story, updated after) — only when asked, after a dry run.
 //
 // The site, the account's email and an API token of that account are set in the dashboard
-// (Settings → Jira), else read from JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN.
+// (Settings → Connectors → Jira), else read from JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN.
 
-import { db, parseJson } from './db.js';
-import { log } from './logger.js';
-import { applyImport, splitCriteria, priorityOf, fold } from './requirement-import.js';
-import { getRequirement } from './requirements.js';
-import { getCampaign } from './campaigns.js';
+import { splitCriteria, priorityOf, fold } from '../requirement-import.js';
 
 const KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
 const MAX_ISSUES = 500;
 
 // ─── Connection ──────────────────────────────────────────────────────
-
-/** The Jira site to read: set in the dashboard, else in the environment; null when neither is. */
-export function jiraConfig() {
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'jira'").get();
-  const saved = parseJson(row?.value);
-  if (saved?.baseUrl && saved?.email && saved?.apiToken) return { ...saved, from: 'settings' };
-  const { JIRA_BASE_URL: baseUrl, JIRA_EMAIL: email, JIRA_API_TOKEN: apiToken } = process.env;
-  return baseUrl && email && apiToken ? { baseUrl: baseUrl.replace(/\/+$/, ''), email, apiToken, from: 'env' } : null;
-}
-
-/** A secret as the dashboard is shown it: its ends, the rest dots. */
-export const mask = (token) => (token.length > 8 ? `${token.slice(0, 4)}${'•'.repeat(token.length - 8)}${token.slice(-4)}` : '••••••••');
-
-/** The connection as the dashboard shows it: the token masked. */
-export function maskedJiraConfig() {
-  const config = jiraConfig();
-  return config ? { ...config, apiToken: mask(config.apiToken) } : null;
-}
 
 /** A site's address as Jira gives it: https, no path. */
 export function siteOf(url) {
@@ -49,25 +26,6 @@ export function siteOf(url) {
   return parsed.origin;
 }
 
-/**
- * Keep the connection the dashboard sets. A token given masked (as the dashboard was shown it)
- * keeps the one saved; an empty address removes the connection.
- */
-export function saveJiraConfig({ baseUrl, email, apiToken }) {
-  if (!baseUrl?.trim()) {
-    db.prepare("DELETE FROM settings WHERE key = 'jira'").run();
-    return null;
-  }
-  const saved = parseJson(db.prepare("SELECT value FROM settings WHERE key = 'jira'").get()?.value);
-  const token = apiToken?.includes('•') ? saved?.apiToken : apiToken?.trim();
-  if (!email?.trim() || !token) throw new Error('Jira needs the account\'s email and an API token');
-  const value = { baseUrl: siteOf(baseUrl), email: email.trim(), apiToken: token };
-  db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES ('jira', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-              ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(JSON.stringify(value));
-  log(`Jira connection set: ${value.baseUrl} as ${value.email}`);
-  return maskedJiraConfig();
-}
-
 /** Why Jira refused a call, in a sentence. */
 function refusal(status, body, path) {
   const messages = [...(body?.errorMessages ?? []), ...Object.values(body?.errors ?? {})].join(' ');
@@ -77,9 +35,8 @@ function refusal(status, body, path) {
   return messages || `Jira answered ${status} to ${path}`;
 }
 
-/** A client of a Jira site's REST API, as its account. `fetch` can be given (tests). */
-export function jiraClient(config = jiraConfig(), { fetch = globalThis.fetch } = {}) {
-  if (!config) throw new Error('No Jira site set: Settings → Jira in the dashboard (or JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN)');
+/** A client of a Jira site's REST API, as its account. */
+export function jiraClient(config, { fetch = globalThis.fetch } = {}) {
   const auth = `Basic ${Buffer.from(`${config.email}:${config.apiToken}`).toString('base64')}`;
   const call = async (method, path, body) => {
     let res;
@@ -103,18 +60,6 @@ export function jiraClient(config = jiraConfig(), { fetch = globalThis.fetch } =
   return {
     baseUrl: config.baseUrl, get: (path) => call('GET', path), post: (path, body) => call('POST', path, body), put: (path, body) => call('PUT', path, body),
   };
-}
-
-/** Whether the connection works: who it reads as. */
-export async function testJira(client) {
-  const me = await client.get('/rest/api/3/myself');
-  return { user: me.displayName ?? me.emailAddress ?? me.accountId, site: client.baseUrl };
-}
-
-/** The site's projects, for a query to start from. */
-export async function jiraProjects(client) {
-  const page = await client.get('/rest/api/3/project/search?maxResults=100&orderBy=key&expand=issueTypes');
-  return (page.values ?? []).map((p) => ({ key: p.key, name: p.name, jql: storiesQuery(p) }));
 }
 
 /**
@@ -195,7 +140,7 @@ export function requirementOfIssue(issue, { baseUrl, criteriaFieldIds = [] }) {
   return {
     key: issue.key, title: String(fields.summary ?? '').trim() || issue.key,
     description: adfToText(fields.description), criteria: splitCriteria(fromField),
-    priority: priorityOf(fields.priority?.name) ?? 'medium', url: `${baseUrl}/browse/${issue.key}`, source: 'jira',
+    priority: priorityOf(fields.priority?.name) ?? 'medium', url: `${baseUrl}/browse/${issue.key}`,
   };
 }
 
@@ -203,20 +148,13 @@ export function requirementOfIssue(issue, { baseUrl, criteriaFieldIds = [] }) {
 const refusedKeys = (messages) => messages.flatMap((m) => [...m.matchAll(/'([A-Z][A-Z0-9_]+-\d+)'/g)].map((x) => x[1]));
 
 /**
- * Read stories from Jira and import them as requirements (lib/requirement-import.js): those
- * a JQL query finds, those of `keys`, or — `sync` — the ones imported from Jira already (in
- * `projectId`, or all), to see which changed. A dry run unless `dryRun` is false.
+ * The stories to read as requirements: those a JQL query finds, those of `keys`, or those imported
+ * already (`known`, read again). A key that is not in Jira is told, the others read.
  */
-export async function importFromJira({ jql, keys, sync = false, projectId = null, dryRun = true }, { client = jiraClient() } = {}) {
-  let wanted = keys?.map((k) => String(k).trim().toUpperCase()).filter(Boolean) ?? [];
-  if (sync) {
-    wanted = db.prepare(`SELECT key FROM requirements WHERE source = 'jira' AND (project_id IS ? OR ? IS NULL) ORDER BY id`)
-      .all(projectId, projectId).map((r) => r.key).filter((k) => KEY.test(k));
-    if (!wanted.length) throw new Error('No requirement imported from Jira yet: import some first, by a query or their keys');
-  }
+async function readStories(client, { query, keys, known }) {
+  const wanted = (known ? known.map((k) => k.key) : keys.map((k) => k.toUpperCase())).filter((k) => !known || KEY.test(k));
   const bad = wanted.filter((k) => !KEY.test(k));
   if (bad.length) throw new Error(`Not Jira keys: ${bad.join(', ')} (e.g. SHOP-12)`);
-  if (!wanted.length && !jql?.trim()) throw new Error('Say which stories: a JQL query, or their keys');
 
   const fieldIds = await criteriaFields(client);
   const fields = ['summary', 'description', 'priority', 'issuetype', 'status', ...fieldIds];
@@ -239,11 +177,9 @@ export async function importFromJira({ jql, keys, sync = false, projectId = null
     const found = new Set(issues.map((i) => i.key));
     for (const key of wanted) if (!found.has(key)) warnings.push(`${key} is not in Jira, or this account cannot see it`);
   } else {
-    issues = await searchIssues(client, jql.trim(), fields);
+    issues = await searchIssues(client, query, fields);
   }
-  log(`Jira: ${issues.length} issue(s) read${jql ? ` for "${jql}"` : ''}`);
-  const requirements = issues.map((issue) => requirementOfIssue(issue, { baseUrl: client.baseUrl, criteriaFieldIds: fieldIds }));
-  return applyImport(requirements, { format: 'jira', warnings, projectId, dryRun });
+  return { records: issues.map((issue) => requirementOfIssue(issue, { baseUrl: client.baseUrl, criteriaFieldIds: fieldIds })), warnings };
 }
 
 // ─── Writing back: a story's coverage, as a comment ─────────────────
@@ -289,63 +225,60 @@ export function coverageComment(requirement, { campaign = null, now = new Date()
   };
 }
 
-/** Post a story's comment — IziTest's one, updated when it is still there; its id, and what was done. */
-async function postComment(client, requirement, body) {
+/** Posts a story's comment — IziTest's one (`ref`), updated when it is still there: its id, what was done, its link. */
+async function postComment(client, requirement, body, ref) {
   const path = `/rest/api/3/issue/${encodeURIComponent(requirement.key)}/comment`;
-  if (requirement.jira_comment_id) {
+  const link = (id) => `${client.baseUrl}/browse/${requirement.key}?focusedCommentId=${id}`;
+  if (ref) {
     try {
-      await client.put(`${path}/${requirement.jira_comment_id}`, { body });
-      return { id: requirement.jira_comment_id, action: 'updated' };
+      await client.put(`${path}/${ref}`, { body });
+      return { ref, action: 'updated', url: link(ref) };
     } catch (err) {
       if (err.status !== 404) throw err; // deleted in Jira since: a new one
     }
   }
   const comment = await client.post(path, { body });
-  db.prepare('UPDATE requirements SET jira_comment_id = ? WHERE id = ?').run(String(comment.id), requirement.id);
-  return { id: String(comment.id), action: 'added' };
+  return { ref: String(comment.id), action: 'added', url: link(comment.id) };
 }
 
-/**
- * Tell Jira stories where they stand in IziTest: those of `keys`, or those a campaign's tests
- * check (its requirements imported from Jira). One comment a story, IziTest's, updated when it
- * is there already. A dry run unless `dryRun` is false: what each comment would say.
- */
-export async function commentOnJira({ keys = [], campaignId = null, dryRun = true }, { client = null } = {}) {
-  const campaign = campaignId != null ? getCampaign(campaignId) : null;
-  if (campaignId != null && !campaign) throw new Error(`No campaign #${campaignId}`);
-  if (campaign?.running) throw new Error(`Campaign #${campaign.id} is still running: comment once it is done`);
-  const warnings = [];
-  const stories = [];
-  for (const key of [...new Set(keys.map((k) => String(k).trim().toUpperCase()).filter(Boolean))]) {
-    const requirement = getRequirement(key);
-    if (!requirement) warnings.push(`${key}: no such requirement in IziTest`);
-    else if (requirement.source !== 'jira' || !KEY.test(requirement.key)) warnings.push(`${key} was not imported from Jira: no comment`);
-    else stories.push(requirement);
-  }
-  // A campaign's: its requirements from Jira, the others left out.
-  for (const { key } of campaign?.requirements ?? []) {
-    const requirement = getRequirement(key);
-    if (requirement?.source === 'jira' && KEY.test(requirement.key) && !stories.some((s) => s.id === requirement.id)) stories.push(requirement);
-  }
-  if (!stories.length && !warnings.length) {
-    throw new Error(campaign ? `None of the requirements campaign #${campaign.id} checks comes from Jira` : 'Say which stories: their keys, or a campaign');
-  }
-  if (!dryRun) client ??= jiraClient();
-  const comments = [];
-  for (const requirement of stories) {
-    const body = coverageComment(requirement, { campaign });
-    const entry = { key: requirement.key, action: requirement.jira_comment_id ? 'update' : 'add', status: requirement.coverage.status, text: adfToText(body) };
-    if (!dryRun) {
-      // A story Jira refuses (gone, not allowed): told, the others still commented.
-      try {
-        const { id, action } = await postComment(client, requirement, body);
-        Object.assign(entry, { action, url: `${client.baseUrl}/browse/${requirement.key}?focusedCommentId=${id}` });
-      } catch (err) {
-        entry.error = err.message;
-      }
-    }
-    comments.push(entry);
-  }
-  if (!dryRun) log(`Jira: coverage commented on ${comments.filter((c) => !c.error).map((c) => c.key).join(', ') || 'no story'}`);
-  return { sent: !dryRun, comments, warnings };
-}
+// ─── The connector ───────────────────────────────────────────────────
+
+export const jira = {
+  id: 'jira',
+  name: 'Jira',
+  description: 'A Jira Cloud site.',
+  settings: {
+    fields: [
+      { name: 'baseUrl', label: 'Site', type: 'url', placeholder: 'https://your-team.atlassian.net', env: 'JIRA_BASE_URL' },
+      { name: 'email', label: 'Email of the account', type: 'text', placeholder: 'you@example.com', env: 'JIRA_EMAIL' },
+      { name: 'apiToken', label: 'API token', type: 'secret', placeholder: 'Paste a token of that account', env: 'JIRA_API_TOKEN' },
+    ],
+    hint: 'A token is made at id.atlassian.com → Security → API tokens: a token, not the account password.',
+    link: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+    normalize: (values) => ({ ...values, baseUrl: siteOf(values.baseUrl) }),
+  },
+  async test({ config, fetch }) {
+    const client = jiraClient(config, { fetch });
+    const me = await client.get('/rest/api/3/myself');
+    return `Connected to ${client.baseUrl} as ${me.displayName ?? me.emailAddress ?? me.accountId}.`;
+  },
+  requirements: {
+    item: 'story', items: 'stories', keys: 'SHOP-12',
+    reads: 'summary, description, priority, link, and their acceptance criteria — from an "Acceptance Criteria" field, or the list under "Acceptance criteria" in the description',
+    query: { label: 'JQL query', placeholder: 'project = SHOP AND issuetype = Story ORDER BY key' },
+    // The site's projects, each with a query for its stories to start from.
+    async scopes({ config, fetch }) {
+      const page = await jiraClient(config, { fetch }).get('/rest/api/3/project/search?maxResults=100&orderBy=key&expand=issueTypes');
+      return (page.values ?? []).map((p) => ({ label: `${p.key} — ${p.name}`, query: storiesQuery(p) }));
+    },
+    read: ({ config, fetch }, wanted) => readStories(jiraClient(config, { fetch }), wanted),
+  },
+  coverage: {
+    where: 'a comment on each story',
+    render(requirement, { campaign }) {
+      const body = coverageComment(requirement, { campaign });
+      return { body, text: adfToText(body) };
+    },
+    post: ({ config, fetch }, requirement, body, { ref }) => postComment(jiraClient(config, { fetch }), requirement, body, ref),
+  },
+};

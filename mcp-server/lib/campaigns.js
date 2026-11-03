@@ -216,7 +216,8 @@ function requirementsOf(tests) {
       return tested.every((c) => c.last_run?.status === 'success') ? 'passing' : 'not_run';
     };
     return {
-      key: requirement.key, title: requirement.title,
+      // Where it comes from: a tool's (lib/connectors) is told its coverage there.
+      key: requirement.key, title: requirement.title, source: requirement.source,
       status: coverageOf(requirement.criteria, cases).status,
       criteria: requirement.criteria.map((c) => ({ number: c.position, text: c.text, status: criterionStatus(c) })),
     };

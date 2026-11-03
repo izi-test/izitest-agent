@@ -7,8 +7,8 @@ type RequirementInput = Partial<Pick<Requirement, 'title' | 'description' | 'pri
   project_id?: number | null;
 };
 
-/** A project of the Jira site, and a query for its stories to start from. */
-type JiraProject = { key: string; name: string; jql: string };
+/** Where to start reading a tool's requirements from: a Jira project's stories, as a query. */
+type ConnectorScope = { label: string; query: string };
 
 // Requirements, their criteria and cases, and the tests linked to them (mcp-server/lib/requirements.js).
 export const requirementsApi = createApi({
@@ -74,14 +74,16 @@ export const requirementsApi = createApi({
       query: (body) => ({ url: 'api/requirements/import', method: 'POST', body }),
       invalidatesTags: (_result, _error, { dry_run }) => (dry_run ? [] : ['Requirements', 'Requirement', 'TestRequirements']),
     }),
-    // Stories read from the Jira site set in Settings: by a query, their keys, or again (sync); saved unless dry_run.
-    importFromJira: builder.mutation<{ import: RequirementImport }, { jql?: string; keys?: string[]; sync?: boolean; project_id?: number | null; dry_run: boolean }>({
-      query: (body) => ({ url: 'api/jira/import', method: 'POST', body }),
+    // Requirements read from a tool set in Settings → Connectors: by a query, their keys, or again (sync); saved unless dry_run.
+    importFromConnector: builder.mutation<{ import: RequirementImport }, {
+      connector: string; query?: string; keys?: string[]; sync?: boolean; project_id?: number | null; dry_run: boolean;
+    }>({
+      query: ({ connector, ...body }) => ({ url: `api/connectors/${connector}/import`, method: 'POST', body }),
       invalidatesTags: (_result, _error, { dry_run }) => (dry_run ? [] : ['Requirements', 'Requirement', 'TestRequirements']),
     }),
-    getJiraProjects: builder.query<JiraProject[], void>({
-      query: () => 'api/jira/projects',
-      transformResponse: (response: { projects: JiraProject[] }) => response.projects ?? [],
+    getConnectorScopes: builder.query<ConnectorScope[], string>({
+      query: (connector) => `api/connectors/${connector}/scopes`,
+      transformResponse: (response: { scopes: ConnectorScope[] }) => response.scopes ?? [],
     }),
     getTestRequirements: builder.query<TestRequirement[], string>({
       query: (testName) => `api/tests/${encodeURIComponent(testName)}/requirements`,
@@ -104,7 +106,7 @@ export const {
   usePlanDesignMutation,
   useDismissDesignMutation,
   useImportRequirementsMutation,
-  useImportFromJiraMutation,
-  useGetJiraProjectsQuery,
+  useImportFromConnectorMutation,
+  useGetConnectorScopesQuery,
   useGetTestRequirementsQuery,
 } = requirementsApi;

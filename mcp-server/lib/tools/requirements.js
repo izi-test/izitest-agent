@@ -1,6 +1,6 @@
 // Requirement MCP tools: what tests are for (lib/requirements.js). A developer's plain request
 // becomes a requirement the agent words as criteria, then plans and records cases for; a
-// requirement written in the dashboard or taken from a tool (a Jira story read by the agent)
+// requirement written in the dashboard or taken from a tool (a Jira story, a GitHub issue: lib/connectors)
 // is saved the same way. design_tests lays out how to design its tests (lib/requirement-design.js),
 // plan_tests keeps the cases chosen; start_recording and create_test_from_gherkin link what they create.
 
@@ -10,7 +10,7 @@ import {
 } from '../requirements.js';
 import { designBrief, withResolution } from '../requirement-design.js';
 import { FORMATS, importRequirements, formatImport } from '../requirement-import.js';
-import { importFromJira, commentOnJira } from '../jira.js';
+import { connectorsFor, importFromConnector, sendCoverage, formatCoverage } from '../connectors/index.js';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, extname } from 'node:path';
 
@@ -28,7 +28,7 @@ export function registerRequirementTools(server) {
       'refused"), save it first: source "prompt", title = their request, criteria = the behaviours you understood it',
       'expects, one per line, each checkable. SHOW those criteria to the user and get their go-ahead before planning or',
       'recording: tests check what the requirement says, not what the app happens to do.',
-      'For a story from a tool (a Jira issue you read), source "jira", key = its key, url = its link, criteria = its',
+      'For one from a tool (a Jira issue you read), source = its connector\'s id ("jira"), key = its key, url = its link, criteria = its',
       'acceptance criteria, as written.',
     ].join('\n'),
     {
@@ -36,8 +36,8 @@ export function registerRequirementTools(server) {
       criteria: z.array(z.string()).optional().describe('The acceptance criteria, in order: each one observable, with its expected result'),
       description: z.string().optional(),
       key: z.string().optional().describe('Its key in the tool it comes from (e.g. "SHOP-123"). Default: REQ-<id>. Same key → updated.'),
-      source: z.enum(SOURCES).optional().describe('prompt (a user\'s request), manual (written by a person), jira, import. Default: manual'),
-      url: z.string().optional().describe('Where it lives (the Jira issue)'),
+      source: z.string().optional().describe(`${SOURCES.join(', ')} — prompt (a user's request), manual (written by a person), import (a file) —, or the id of the connector of the tool it comes from (${connectorsFor('requirements').map((c) => c.id).join(', ')}). Default: manual`),
+      url: z.string().optional().describe('Where it lives (the Jira issue, the GitHub issue)'),
       project_id: z.number().optional(),
       priority: z.enum(PRIORITIES).optional(),
     },
@@ -98,27 +98,28 @@ export function registerRequirementTools(server) {
     }
   );
 
-  // --- Tool: import_from_jira ---
+  // --- Tool: import_from_connector ---
+  const sources = connectorsFor('requirements');
   server.tool(
-    'import_from_jira',
+    'import_from_connector',
     [
-      'Read stories from the Jira site set in the dashboard (Settings → Jira) and import them as requirements: those a JQL query',
-      'finds ("project = SHOP AND issuetype = Story"), those of their keys, or — sync: true — the ones imported from Jira already,',
-      'to see which changed since. Each keeps its key, summary, description, priority and link; its acceptance criteria come',
-      'from a field of their own ("Acceptance Criteria") when the site has one, else from the list under "Acceptance criteria" in',
-      'its description. By default a dry run: new, changed, unchanged — nothing saved; show it to the user, then call again',
-      'with dry_run: false. A changed story with tests linked is flagged: check they still match it. Nothing is written to Jira.',
+      'Read requirements from a tool set in the dashboard (Settings → Connectors) and import them: those a query finds, those',
+      'of their keys, or — sync: true — the ones imported from that tool already, to see which changed since. By default a dry',
+      'run: new, changed, unchanged — nothing saved; show it to the user, then call again with dry_run: false. A changed',
+      'requirement with tests linked is flagged: check they still match it. Nothing is written to the tool. The connectors:',
+      ...sources.map((c) => `- ${c.id}: ${c.name} — a ${c.requirements.query.label} (e.g. "${c.requirements.query.placeholder}"), or keys like ${c.requirements.keys}; reads of each ${c.requirements.item} its ${c.requirements.reads}.`),
     ].join('\n'),
     {
-      jql: z.string().optional().describe('A JQL query, bounded (e.g. "project = SHOP AND issuetype = Story ORDER BY key")'),
-      keys: z.array(z.string()).optional().describe('Or the stories\' keys (e.g. ["SHOP-12", "SHOP-14"])'),
-      sync: z.boolean().optional().describe('Or read again the requirements imported from Jira (of project_id, or all)'),
+      connector: z.enum(sources.map((c) => c.id)).describe('The tool to read from'),
+      query: z.string().optional().describe('A query in the tool\'s own language, bounded (a JQL query, a GitHub issue search)'),
+      keys: z.array(z.string()).optional().describe('Or their keys in the tool (e.g. ["SHOP-12"], ["owner/name#12"])'),
+      sync: z.boolean().optional().describe('Or read again the requirements imported from that tool (of project_id, or all)'),
       project_id: z.number().optional().describe('The IziTest project the requirements belong to'),
       dry_run: z.boolean().optional().describe('Default true: show what would be imported, save nothing'),
     },
-    async ({ jql, keys, sync, project_id, dry_run }) => {
+    async ({ connector, query, keys, sync, project_id, dry_run }) => {
       try {
-        const result = await importFromJira({ jql, keys, sync: !!sync, projectId: project_id ?? null, dryRun: dry_run !== false });
+        const result = await importFromConnector(connector, { query, keys, sync: !!sync, projectId: project_id ?? null, dryRun: dry_run !== false });
         return text(formatImport(result));
       } catch (err) {
         return text(err.message, true);
@@ -126,31 +127,27 @@ export function registerRequirementTools(server) {
     }
   );
 
-  // --- Tool: comment_on_jira ---
+  // --- Tool: send_coverage ---
+  const told = connectorsFor('coverage');
   server.tool(
-    'comment_on_jira',
+    'send_coverage',
     [
-      'Tell Jira stories where they stand in IziTest, as a comment on each: its coverage (passing, failing, not run, not',
+      'Tell a tool where the requirements imported from it stand in IziTest: their coverage (passing, failing, not run, not',
       'covered), each acceptance criterion with its tests and how they did last, and the campaign it comes from. For the',
-      'stories of keys, or those a campaign\'s tests check (its requirements imported from Jira; the others are left out).',
-      'One comment a story, IziTest\'s own: posted again, it is updated. This WRITES to the Jira site: by default a dry run',
-      'that shows each comment — show it to the user and ask before calling again with dry_run: false.',
+      'requirements of keys, or those a campaign\'s tests check (those imported from that tool; the others are left out). One',
+      'a requirement, IziTest\'s own: sent again, it is updated. This WRITES to the tool: by default a dry run that shows what',
+      'each would say — show it to the user and ask before calling again with dry_run: false. The connectors:',
+      ...told.map((c) => `- ${c.id}: ${c.name}, ${c.coverage.where}.`),
     ].join('\n'),
     {
-      keys: z.array(z.string()).optional().describe('The stories\' keys (e.g. ["SHOP-12"]): requirements imported from Jira'),
-      campaign_id: z.number().int().optional().describe('Or the stories this campaign\'s tests check, with its results'),
-      dry_run: z.boolean().optional().describe('Default true: show the comments, post nothing'),
+      connector: z.enum(told.map((c) => c.id)).describe('The tool to write to'),
+      keys: z.array(z.string()).optional().describe('The requirements\' keys (e.g. ["SHOP-12"]): imported from that tool'),
+      campaign_id: z.number().int().optional().describe('Or the requirements this campaign\'s tests check, with its results'),
+      dry_run: z.boolean().optional().describe('Default true: show what would be sent, send nothing'),
     },
-    async ({ keys, campaign_id, dry_run }) => {
+    async ({ connector, keys, campaign_id, dry_run }) => {
       try {
-        const result = await commentOnJira({ keys: keys ?? [], campaignId: campaign_id ?? null, dryRun: dry_run !== false });
-        const lines = result.comments.map((c) => (c.error
-          ? `${c.key}: NOT commented — ${c.error}`
-          : `${c.key}: ${result.sent ? `${c.action} — ${c.url}` : `would ${c.action} IziTest's comment:`}${result.sent ? '' : `\n${c.text.replace(/^/gm, '    ')}`}`));
-        return text([
-          result.sent ? 'Commented on Jira:' : 'Dry run — nothing posted; dry_run: false posts these comments:',
-          ...lines, ...result.warnings.map((w) => `Note: ${w}`),
-        ].join('\n'));
+        return text(formatCoverage(await sendCoverage(connector, { keys: keys ?? [], campaignId: campaign_id ?? null, dryRun: dry_run !== false })));
       } catch (err) {
         return text(err.message, true);
       }

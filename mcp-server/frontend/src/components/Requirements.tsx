@@ -11,6 +11,7 @@ import {
 import { useGetTestsQuery } from '../store/services/testsApi';
 import { useGetCampaignsQuery, useStartCampaignMutation } from '../store/services/campaignsApi';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
+import { useGetConnectorsQuery } from '../store/services/settingsApi';
 import { RequirementImportPanel } from './RequirementImport';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { showToast } from '../store/slices/uiSlice';
@@ -41,7 +42,13 @@ const COVERAGE_LABELS: Record<Requirement['coverage']['status'], string> = {
   not_run: 'Not run yet',
   not_covered: 'Not covered',
 };
-const SOURCE_LABELS: Record<Requirement['source'], string> = { prompt: 'From a request', manual: 'Written', jira: 'Jira', import: 'Imported' };
+const SOURCE_LABELS: Record<string, string> = { prompt: 'From a request', manual: 'Written', import: 'Imported' };
+
+/** What each source of requirements is called: IziTest's own, and each tool's (mcp-server/lib/connectors). */
+function useSourceLabels(): Record<string, string> {
+  const { data: connectors = [] } = useGetConnectorsQuery();
+  return { ...SOURCE_LABELS, ...Object.fromEntries(connectors.filter((c) => c.requirements).map((c) => [c.id, c.name])) };
+}
 const KINDS = ['nominal', 'alternative', 'error', 'boundary'] as const;
 const TECHNIQUE_LABELS: Record<Technique, string> = {
   use_case: 'Use case',
@@ -76,6 +83,7 @@ type CoverageFilter = 'all' | Requirement['coverage']['status'];
 
 export function RequirementsPage() {
   const go = useGo();
+  const sources = useSourceLabels();
   const projectId = useAppSelector((state) => state.ui.selectedProjectId);
   const { data: requirements = [], isLoading } = useGetRequirementsQuery(projectId);
   const { data: projects = [] } = useGetProjectsQuery(undefined);
@@ -137,7 +145,7 @@ export function RequirementsPage() {
         />
         <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source">
           <option value="">Source: any</option>
-          {Object.entries(SOURCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          {Object.entries(sources).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </div>
 
@@ -146,7 +154,7 @@ export function RequirementsPage() {
           requirements.length === 0
             ? <EmptyState icon={ClipboardList} title={project ? `No requirement in ${project.name} yet` : 'No requirement yet'}
                 action={<div className="repair-actions"><Button variant="secondary" icon={Upload} onClick={() => setImporting(true)}>Import</Button><Button icon={Plus} onClick={() => setCreating(true)}>New requirement</Button></div>}>
-                Write one, import a test plan or Jira stories — or let an agent save them with save_requirement.
+                Write one, import a test plan or the issues of a tool (Jira, GitHub…) — or let an agent save them with save_requirement.
               </EmptyState>
             : <EmptyState icon={Search} title="No requirement matches" action={<Button variant="secondary" onClick={() => { setSearch(''); setCoverage('all'); setSource(''); }}>Clear the filters</Button>} />
         ) : (
@@ -163,7 +171,7 @@ export function RequirementsPage() {
                     <td><KeyChip>{r.key}</KeyChip></td>
                     <td className="req-title">{r.title}</td>
                     {projectId === null && <td><ProjectChip project={projects.find((p) => p.id === r.project_id)} /></td>}
-                    <td><span className="tag">{SOURCE_LABELS[r.source]}</span></td>
+                    <td><span className="tag">{sources[r.source] ?? r.source}</span></td>
                     <td>
                       <div className="coverage-cell">
                         <div className="result-bar">
@@ -270,6 +278,7 @@ export function RequirementPage({ requirementKey }: { requirementKey: string }) 
 
 function RequirementEditor({ requirement }: { requirement: Requirement }) {
   const dispatch = useAppDispatch();
+  const sources = useSourceLabels();
   const go = useGo();
   const navigate = useNavigate();
   const back = useBack('/requirements', 'Requirements');
@@ -352,7 +361,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
             <div className="detail-meta-row">
               <KeyChip>{requirement.key}</KeyChip>
               <CoverageBadge coverage={requirement.coverage} />
-              <span className="tag">{SOURCE_LABELS[requirement.source]}</span>
+              <span className="tag">{sources[requirement.source] ?? requirement.source}</span>
               {requirement.external_url && (
                 <a className="meta-item" href={requirement.external_url} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Source</a>
               )}
@@ -456,7 +465,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
                   {projects.filter((p) => p.id !== requirement.project_id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </dd>
-              <dt>Source</dt><dd>{SOURCE_LABELS[requirement.source]}</dd>
+              <dt>Source</dt><dd>{sources[requirement.source] ?? requirement.source}</dd>
               <dt>Created</dt><dd>{dateTime(requirement.created_at)}</dd>
               <dt>Updated</dt><dd>{dateTime(requirement.updated_at)}</dd>
             </dl>

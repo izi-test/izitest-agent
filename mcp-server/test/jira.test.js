@@ -1,4 +1,4 @@
-// Unit tests for Jira (lib/jira.js): the connection kept, Atlassian documents read as text,
+// Unit tests for the Jira connector (lib/connectors/jira.js): the connection kept, Atlassian documents read as text,
 // stories read by a JQL query (page after page), by their keys (one that does not exist
 // told), or again (sync) to see which changed — imported as requirements. The Jira site is a
 // stand-in answering as Jira Cloud's REST API v3 does. On a database of their own.
@@ -13,9 +13,8 @@ import { join } from 'node:path';
 process.env.IZITEST_DB_PATH = join(await mkdtemp(join(tmpdir(), 'jira-')), 'test.db');
 const { db, initDatabase } = await import('../lib/db.js');
 initDatabase();
-const {
-  jiraConfig, maskedJiraConfig, saveJiraConfig, siteOf, jiraClient, testJira, jiraProjects, adfToText, importFromJira,
-} = await import('../lib/jira.js');
+const { connectorConfig, maskedConfig, saveConnectorConfig, testConnector, importFromConnector } = await import('../lib/connectors/index.js');
+const { jira, siteOf, adfToText } = await import('../lib/connectors/jira.js');
 const { getRequirement } = await import('../lib/requirements.js');
 
 const text = (t) => ({ type: 'text', text: t });
@@ -72,33 +71,36 @@ function site({ token = 'good-token', issues = stories() } = {}) {
 
 const CONFIG = { baseUrl: 'https://shop.atlassian.net', email: 'qa@example.com', apiToken: 'good-token' };
 
-test('the connection kept: the token masked when read, kept when given back masked; the environment as a fallback', () => {
-  assert.equal(jiraConfig(), null);
+test('the connection kept: the token masked when read, kept when given back masked; the environment as a fallback', async () => {
+  assert.equal(connectorConfig('jira'), null);
+  await assert.rejects(importFromConnector('jira', { query: 'project = SHOP' }), /Jira is not set: Settings → Connectors → Jira \(or JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN\)/);
   process.env.JIRA_BASE_URL = 'https://env.atlassian.net/';
   process.env.JIRA_EMAIL = 'env@example.com';
   process.env.JIRA_API_TOKEN = 'env-token-123456';
-  assert.deepEqual(jiraConfig(), { baseUrl: 'https://env.atlassian.net', email: 'env@example.com', apiToken: 'env-token-123456', from: 'env' });
-  const saved = saveJiraConfig({ baseUrl: 'https://shop.atlassian.net/jira/software/projects/SHOP/boards/1', email: 'qa@example.com', apiToken: 'good-token' });
+  assert.deepEqual(connectorConfig('jira'), { baseUrl: 'https://env.atlassian.net', email: 'env@example.com', apiToken: 'env-token-123456', from: 'env' });
+  const saved = saveConnectorConfig('jira', { baseUrl: 'https://shop.atlassian.net/jira/software/projects/SHOP/boards/1', email: 'qa@example.com', apiToken: 'good-token' });
   assert.deepEqual(saved, { baseUrl: 'https://shop.atlassian.net', email: 'qa@example.com', apiToken: 'good••oken', from: 'settings' });
-  saveJiraConfig({ baseUrl: 'https://shop.atlassian.net', email: 'qa@example.com', apiToken: saved.apiToken });
-  assert.equal(jiraConfig().apiToken, 'good-token', 'masked: the saved one kept');
+  saveConnectorConfig('jira', { baseUrl: 'https://shop.atlassian.net', email: 'qa@example.com', apiToken: saved.apiToken });
+  assert.equal(connectorConfig('jira').apiToken, 'good-token', 'masked: the saved one kept');
   assert.throws(() => siteOf('http://shop.atlassian.net'), /over https/);
   assert.throws(() => siteOf('shop'), /Not a Jira site address/);
-  assert.throws(() => saveJiraConfig({ baseUrl: 'https://x.atlassian.net', email: '', apiToken: 't' }), /needs the account's email/);
-  assert.equal(saveJiraConfig({ baseUrl: '' }), null);
-  assert.equal(maskedJiraConfig().from, 'env', 'removed: the environment again');
+  assert.throws(() => saveConnectorConfig('jira', { baseUrl: 'https://x.atlassian.net', email: '', apiToken: 't' }), /Jira needs: Email of the account/);
+  assert.equal(saveConnectorConfig('jira', { baseUrl: '' }).from, 'env', 'removed: the environment again');
+  assert.equal(maskedConfig('jira').apiToken, 'env-••••••••3456');
   delete process.env.JIRA_BASE_URL;
-  saveJiraConfig(CONFIG);
+  saveConnectorConfig('jira', CONFIG);
 });
 
 test('who the connection reads as, the projects and a query for their stories; a refused token said plainly', async () => {
-  assert.deepEqual(await testJira(jiraClient(CONFIG, site())), { user: 'QA Bot', site: 'https://shop.atlassian.net' });
-  assert.deepEqual(await jiraProjects(jiraClient(CONFIG, site())), [
-    { key: 'OPS', name: 'Ops', jql: 'project = OPS AND issuetype in standardIssueTypes() ORDER BY key' },
-    { key: 'SHOP', name: 'Shop', jql: 'project = SHOP AND issuetype = Story ORDER BY key' },
+  assert.deepEqual(await testConnector('jira', null, site()), { success: true, text: 'Connected to https://shop.atlassian.net as QA Bot.' });
+  assert.deepEqual(await jira.requirements.scopes({ config: CONFIG, fetch: site().fetch }), [
+    { label: 'OPS — Ops', query: 'project = OPS AND issuetype in standardIssueTypes() ORDER BY key' },
+    { label: 'SHOP — Shop', query: 'project = SHOP AND issuetype = Story ORDER BY key' },
   ], "a project's stories to start from; without a Story type, its issues but sub-tasks");
-  await assert.rejects(testJira(jiraClient({ ...CONFIG, apiToken: 'bad' }, site())), /refused the email and API token/);
-  assert.throws(() => jiraClient(null), /No Jira site set/);
+  const refused = await testConnector('jira', { ...CONFIG, apiToken: 'bad' }, site());
+  assert.equal(refused.success, false);
+  assert.match(refused.error, /refused the email and API token/);
+  assert.equal((await testConnector('jira', { ...CONFIG, apiToken: 'good••oken' }, site())).success, true, 'a token given masked: the saved one');
 });
 
 test('an Atlassian document as text: lines, list items (nested, tasks), a table, a mention', () => {
@@ -117,7 +119,7 @@ test('an Atlassian document as text: lines, list items (nested, tasks), a table,
 
 test('stories a query finds, page after page: criteria from their field, else from the description', async () => {
   const jira = site();
-  const result = await importFromJira({ jql: 'project = SHOP ORDER BY key' }, { client: jiraClient(CONFIG, jira) });
+  const result = await importFromConnector('jira', { query: 'project = SHOP ORDER BY key' }, jira);
   assert.deepEqual(result.items.map((i) => [i.key, i.status, i.priority, i.source, i.url, i.criteria]), [
     ['SHOP-1', 'new', 'high', 'jira', 'https://shop.atlassian.net/browse/SHOP-1', ['Refused after 14 days', 'The refund shows in the history']],
     ['SHOP-2', 'new', 'low', 'jira', 'https://shop.atlassian.net/browse/SHOP-2', ['A declined card shows "Payment refused"', 'The order stays unpaid']],
@@ -133,22 +135,22 @@ test('stories a query finds, page after page: criteria from their field, else fr
 test('saved, then read again (sync): unchanged — until the story changes in Jira', async () => {
   const jira = site();
   const project = db.prepare("INSERT INTO projects (name) VALUES ('Shop') RETURNING id").get().id;
-  await importFromJira({ jql: 'project = SHOP', projectId: project, dryRun: false }, { client: jiraClient(CONFIG, jira) });
+  await importFromConnector('jira', { query: 'project = SHOP', projectId: project, dryRun: false }, jira);
   assert.deepEqual([getRequirement('SHOP-2').source, getRequirement('SHOP-2').project_id, getRequirement('SHOP-2').criteria.length], ['jira', project, 2]);
-  const again = await importFromJira({ sync: true, projectId: project }, { client: jiraClient(CONFIG, jira) });
+  const again = await importFromConnector('jira', { sync: true, projectId: project }, jira);
   assert.deepEqual(again.items.map((i) => i.status), ['unchanged', 'unchanged']);
   assert.match(jira.calls.at(-2).body.jql, /^key in \(SHOP-1, SHOP-2\) ORDER BY key$/);
   jira.issues['SHOP-1'].summary = 'Refund an order within 14 days';
-  const changed = await importFromJira({ sync: true }, { client: jiraClient(CONFIG, jira) });
+  const changed = await importFromConnector('jira', { sync: true }, jira);
   assert.deepEqual(changed.items.map((i) => [i.key, i.status]), [['SHOP-1', 'changed'], ['SHOP-2', 'unchanged']]);
 });
 
 test('by their keys: one that is not in Jira is told, the others read', async () => {
-  const result = await importFromJira({ keys: ['shop-2', 'SHOP-99'] }, { client: jiraClient(CONFIG, site()) });
+  const result = await importFromConnector('jira', { keys: ['shop-2', 'SHOP-99'] }, site());
   assert.deepEqual(result.items.map((i) => i.key), ['SHOP-2']);
   assert.deepEqual(result.warnings, ['SHOP-99 is not in Jira, or this account cannot see it']);
-  await assert.rejects(importFromJira({ keys: ['nope'] }, { client: jiraClient(CONFIG, site()) }), /Not Jira keys: NOPE/);
-  await assert.rejects(importFromJira({}, { client: jiraClient(CONFIG, site()) }), /a JQL query, or their keys/);
+  await assert.rejects(importFromConnector('jira', { keys: ['nope'] }, site()), /Not Jira keys: NOPE/);
+  await assert.rejects(importFromConnector('jira', {}, site()), /Say which stories: a JQL query, or their keys/);
   db.prepare("DELETE FROM requirements WHERE source = 'jira'").run();
-  await assert.rejects(importFromJira({ sync: true }, { client: jiraClient(CONFIG, site()) }), /No requirement imported from Jira yet/);
+  await assert.rejects(importFromConnector('jira', { sync: true }, site()), /No requirement imported from Jira yet/);
 });

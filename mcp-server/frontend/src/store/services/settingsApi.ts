@@ -1,4 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+import type { Connector } from '../../types';
 
 interface CliConfig {
   provider: string;
@@ -33,21 +34,6 @@ export interface OpenRouterModel {
   pricing: { prompt: string; completion: string };
 }
 
-/** The Jira site requirements are read from (mcp-server/lib/jira.js): its token comes back masked. */
-export interface JiraConfig {
-  baseUrl: string;
-  email: string;
-  apiToken: string;
-  from?: 'settings' | 'env';
-}
-
-/** The Xray API key campaigns are sent with (mcp-server/lib/xray.js): its secret comes back masked. */
-export interface XrayConfig {
-  clientId: string;
-  clientSecret: string;
-  from?: 'settings' | 'env';
-}
-
 /** Where the headless Chrome stands: installed (which version), being installed, running, connected. */
 export interface HeadlessStatus {
   installed: { version: string } | null;
@@ -64,7 +50,7 @@ export interface HeadlessStatus {
 export const settingsApi = createApi({
   reducerPath: 'settingsApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
-  tagTypes: ['AgentConfig', 'JiraConfig', 'XrayConfig', 'Headless'],
+  tagTypes: ['AgentConfig', 'Connectors', 'Headless'],
   endpoints: (builder) => ({
 
     getAgentConfig: builder.query<AgentConfig, void>({
@@ -86,37 +72,20 @@ export const settingsApi = createApi({
       query: (body) => ({ url: 'api/settings/agent/test-api', method: 'POST', body }),
     }),
 
-    getJiraConfig: builder.query<JiraConfig | null, void>({
-      query: () => 'api/settings/jira',
-      transformResponse: (response: { jira: JiraConfig | null }) => response.jira,
-      providesTags: ['JiraConfig'],
+    // The tools requirements are read from and results written to (mcp-server/lib/connectors).
+    getConnectors: builder.query<Connector[], void>({
+      query: () => 'api/connectors',
+      transformResponse: (response: { connectors: Connector[] }) => response.connectors,
+      providesTags: ['Connectors'],
     }),
-
-    updateJiraConfig: builder.mutation<{ jira: JiraConfig | null }, JiraConfig>({
-      query: (body) => ({ url: 'api/settings/jira', method: 'PUT', body }),
-      invalidatesTags: ['JiraConfig'],
+    // A secret given masked keeps the one saved; the first field empty removes the settings.
+    saveConnector: builder.mutation<{ connector: Connector }, { id: string; values: Record<string, string> }>({
+      query: ({ id, values }) => ({ url: `api/connectors/${id}`, method: 'PUT', body: { values } }),
+      invalidatesTags: ['Connectors'],
     }),
-
-    testJira: builder.mutation<{ success: boolean; user?: string; site?: string; error?: string }, Partial<JiraConfig>>({
-      query: (body) => ({ url: 'api/settings/jira/test', method: 'POST', body }),
+    testConnector: builder.mutation<{ success: boolean; text?: string; error?: string }, { id: string; values: Record<string, string> }>({
+      query: ({ id, values }) => ({ url: `api/connectors/${id}/test`, method: 'POST', body: { values } }),
     }),
-
-    getXrayConfig: builder.query<XrayConfig | null, void>({
-      query: () => 'api/settings/xray',
-      transformResponse: (response: { xray: XrayConfig | null }) => response.xray,
-      providesTags: ['XrayConfig'],
-    }),
-
-    updateXrayConfig: builder.mutation<{ xray: XrayConfig | null }, XrayConfig>({
-      query: (body) => ({ url: 'api/settings/xray', method: 'PUT', body }),
-      invalidatesTags: ['XrayConfig'],
-    }),
-
-    testXray: builder.mutation<{ success: boolean; url?: string; error?: string }, Partial<XrayConfig>>({
-      query: (body) => ({ url: 'api/settings/xray/test', method: 'POST', body }),
-    }),
-
-    // The Chrome without windows tests can run in (mcp-server/lib/headless.js).
     getHeadless: builder.query<HeadlessStatus, void>({
       query: () => 'api/headless',
       transformResponse: (response: { headless: HeadlessStatus }) => response.headless,
@@ -139,12 +108,9 @@ export const {
   useTestAgentMutation,
   useTestApiKeyMutation,
   useGetModelsQuery,
-  useGetJiraConfigQuery,
-  useUpdateJiraConfigMutation,
-  useTestJiraMutation,
-  useGetXrayConfigQuery,
-  useUpdateXrayConfigMutation,
-  useTestXrayMutation,
+  useGetConnectorsQuery,
+  useSaveConnectorMutation,
+  useTestConnectorMutation,
   useGetHeadlessQuery,
   useHeadlessActionMutation,
 } = settingsApi;

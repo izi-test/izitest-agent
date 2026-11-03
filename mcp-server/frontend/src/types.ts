@@ -287,7 +287,8 @@ export interface Requirement {
   project_id: number | null;
   title: string;
   description: string;
-  source: 'prompt' | 'manual' | 'jira' | 'import';
+  /** A request, a person, a file — or the id of the connector of the tool it comes from (jira, github). */
+  source: string;
   external_url: string | null;
   priority: 'high' | 'medium' | 'low';
   created_at: string;
@@ -328,6 +329,8 @@ export interface CampaignRun {
 export interface CampaignRequirement {
   key: string;
   title: string;
+  /** Where it comes from: a connector's id (jira), told its coverage there. */
+  source: string;
   status: Requirement['coverage']['status'];
   criteria: Array<{ number: number; text: string; status: 'passing' | 'failing' | 'not_run' | 'not_covered' }>;
 }
@@ -352,27 +355,56 @@ export interface Campaign {
   requirements: CampaignRequirement[];
   non_conformities: string[];
   runs: CampaignRun[];
-  /** The Test Execution of Xray its results were sent to. */
-  xray_execution_key: string | null;
+  /** Where its results were sent (mcp-server/lib/connectors): a Test Execution of Xray. */
+  sent_to?: Array<{ connector: string; name: string; ref: string; url: string | null }>;
   /** Run in the Chrome without windows (mcp-server/lib/headless.js). */
   headless: boolean;
 }
 
-/** A campaign's results as sent (or to be sent) to Xray (mcp-server/lib/xray.js). */
-export interface XrayExport {
-  sent: boolean;
-  project: string;
-  /** The Test Execution: updated when it was sent before. */
-  execution: string | null;
-  updates: boolean;
-  url?: string | null;
-  tests: Array<{ name: string; status: string; stories: string[] }>;
+/**
+ * A tool IziTest reads requirements from or writes back to (mcp-server/lib/connectors): its
+ * fields, its settings (secrets masked; null while one it needs is missing), and its roles.
+ */
+export interface Connector {
+  id: string;
+  name: string;
+  description: string;
+  settings: {
+    fields: Array<{ name: string; label: string; type: 'url' | 'text' | 'secret'; placeholder?: string; optional?: boolean; env?: string }>;
+    hint: string | null;
+    link: string | null;
+  };
+  /** A tool requirements live in: what each is called, how to say which. */
+  requirements?: { item: string; items: string; keys: string; reads: string; query: { label: string; placeholder: string }; scopes: boolean };
+  /** Told where each requirement imported from it stands. */
+  coverage?: { where: string };
+  /** Sent a campaign's results. */
+  results?: { what: string; options: Array<{ name: string; label: string; placeholder?: string }>; note: string | null };
+  config: (Record<string, string> & { from: 'settings' | 'env' | 'default' }) | null;
 }
 
-/** Each story's coverage as IziTest's comment on it in Jira, to post or posted (mcp-server/lib/jira.js). */
-export interface JiraComments {
+/** A campaign's results as sent (or to be sent) to a connector's tool: a Test Execution of Xray. */
+export interface ResultsSend {
   sent: boolean;
-  comments: Array<{ key: string; action: 'add' | 'update' | 'added' | 'updated'; status: string; text: string; url?: string; error?: string }>;
+  connector: string;
+  name: string;
+  what: string;
+  /** Where it goes: Xray's Jira project. */
+  target: string;
+  /** What was sent before: updated, not repeated. */
+  ref: string | null;
+  updates: boolean;
+  url?: string | null;
+  items: Array<{ test: string; status: string; links: string[] }>;
+}
+
+/** Each requirement's coverage as told to the tool it comes from — IziTest's comment on a Jira story —, to send or sent. */
+export interface CoverageSend {
+  sent: boolean;
+  connector: string;
+  name: string;
+  where: string;
+  items: Array<{ key: string; action: 'add' | 'update' | 'added' | 'updated'; status: string; text: string; url?: string | null; error?: string }>;
   warnings: string[];
 }
 
@@ -384,7 +416,8 @@ export type TestCampaign = Omit<Campaign, 'requirements' | 'runs' | 'changes'> &
 
 /** What a file of requirements holds, previewed or imported (mcp-server/lib/requirement-import.js). */
 export interface RequirementImport {
-  format: 'csv' | 'xlsx' | 'json' | 'markdown' | 'jira';
+  /** A file's format, or the connector it was read from. */
+  format: string;
   headers: string[] | null;
   columns: Partial<Record<'key' | 'title' | 'description' | 'criteria' | 'priority' | 'url', string>> | null;
   warnings: string[];

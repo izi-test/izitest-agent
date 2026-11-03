@@ -1,8 +1,8 @@
-// Unit tests for writing back to Jira and Xray: a story's coverage as IziTest's comment on it
-// (lib/jira.js) — added, then updated, added again once deleted — and a campaign sent to Xray
-// (lib/xray.js) as a Test Execution, each test a Generic test linked to the stories it covers;
-// sent again, the same Test Execution given its results again (not its fields). Jira and Xray are stand-ins answering as their REST APIs
-// do. On a database of their own.
+// Unit tests for writing back through connectors (lib/connectors): a story's coverage as
+// IziTest's comment on it (Jira) — added, then updated, added again once deleted — and a campaign
+// sent to Xray as a Test Execution, each test a Generic test linked to the stories it covers;
+// sent again, the same Test Execution given its results again (not its fields). Jira and Xray are
+// stand-ins answering as their REST APIs do. On a database of their own.
 // Run with: node --test test/writeback.test.js
 
 import { test } from 'node:test';
@@ -16,8 +16,8 @@ const { db, initDatabase } = await import('../lib/db.js');
 initDatabase();
 const { saveTest } = await import('../lib/test-store.js');
 const { saveRequirement, linkTest } = await import('../lib/requirements.js');
-const { jiraClient, commentOnJira, coverageComment, adfToText } = await import('../lib/jira.js');
-const { xrayConfig, maskedXrayConfig, saveXrayConfig, xrayClient, testXray, exportToXray, formatXrayExport } = await import('../lib/xray.js');
+const { coverageComment, adfToText } = await import('../lib/connectors/jira.js');
+const { connectorConfig, maskedConfig, saveConnectorConfig, testConnector, sendCoverage, sendResults, formatResults, formatCoverage, sentTo } = await import('../lib/connectors/index.js');
 const { getRequirement } = await import('../lib/requirements.js');
 
 const project = db.prepare("INSERT INTO projects (name) VALUES ('Shop') RETURNING id").get().id;
@@ -91,6 +91,8 @@ function xray() {
 
 const SITE = { baseUrl: 'https://shop.atlassian.net', email: 'qa@example.com', apiToken: 'token' };
 const KEY = { clientId: 'id', clientSecret: 'secret-123456' };
+saveConnectorConfig('jira', SITE);
+const commentRef = () => db.prepare("SELECT ref FROM connector_refs WHERE connector = 'jira' AND kind = 'requirement' AND item_id = (SELECT id FROM requirements WHERE key = 'SHOP-1')").get()?.ref;
 
 test('a story\'s coverage as a comment: where it stands, each criterion, its tests and how they did', () => {
   const body = coverageComment(getRequirement('SHOP-1'), { now: new Date('2026-11-02T12:00:00Z') });
@@ -105,52 +107,59 @@ test('a story\'s coverage as a comment: where it stands, each criterion, its tes
 
 test('commented on Jira: a campaign\'s stories only, a dry run first; added, then updated, added again once deleted', async () => {
   const id = campaign();
-  const dry = await commentOnJira({ campaignId: id });
+  const dry = await sendCoverage('jira', { campaignId: id });
   assert.equal(dry.sent, false);
-  assert.deepEqual(dry.comments.map((c) => [c.key, c.action, c.status]), [['SHOP-1', 'add', 'failing']], 'REQ-1 is not from Jira: left out');
-  assert.match(dry.comments[0].text, /^IziTest — ❌ Failing · 2\/2 criteria covered, 2 tests\n- ✓ 1\. One can log in — login: passed \(2026-11-02\)\n- ✗ 2\. One can get a refund — refund: failed \(2026-11-02\)\nCampaign #\d+ "Shop" \(1\.2\): 1\/3 passed\. Updated by IziTest on /);
+  assert.deepEqual(dry.items.map((c) => [c.key, c.action, c.status]), [['SHOP-1', 'add', 'failing']], 'REQ-1 is not from Jira: left out');
+  assert.match(formatCoverage(dry), /^Dry run — nothing sent; dry_run: false sends a comment on each story:\nSHOP-1: would add IziTest's:\n {4}IziTest — ❌ Failing/);
+  assert.match(dry.items[0].text, /^IziTest — ❌ Failing · 2\/2 criteria covered, 2 tests\n- ✓ 1\. One can log in — login: passed \(2026-11-02\)\n- ✗ 2\. One can get a refund — refund: failed \(2026-11-02\)\nCampaign #\d+ "Shop" \(1\.2\): 1\/3 passed\. Updated by IziTest on /);
 
   const site = jira();
-  const sent = await commentOnJira({ campaignId: id, dryRun: false }, { client: jiraClient(SITE, site) });
-  assert.deepEqual(sent.comments.map((c) => [c.action, c.url]), [['added', 'https://shop.atlassian.net/browse/SHOP-1?focusedCommentId=10001']]);
+  const sent = await sendCoverage('jira', { campaignId: id, dryRun: false }, site);
+  assert.deepEqual(sent.items.map((c) => [c.action, c.url]), [['added', 'https://shop.atlassian.net/browse/SHOP-1?focusedCommentId=10001']]);
   assert.equal(site.comments.get('10001').body.content[0].content[0].text, 'IziTest — ❌ Failing');
-  const again = await commentOnJira({ keys: ['shop-1'], dryRun: false }, { client: jiraClient(SITE, site) });
-  assert.deepEqual([again.comments[0].action, site.calls.at(-1).method, site.calls.at(-1).path], ['updated', 'PUT', '/rest/api/3/issue/SHOP-1/comment/10001']);
+  const again = await sendCoverage('jira', { keys: ['shop-1'], dryRun: false }, site);
+  assert.deepEqual([again.items[0].action, site.calls.at(-1).method, site.calls.at(-1).path], ['updated', 'PUT', '/rest/api/3/issue/SHOP-1/comment/10001']);
   site.comments.clear();
-  const readded = await commentOnJira({ keys: ['SHOP-1'], dryRun: false }, { client: jiraClient(SITE, site) });
-  assert.deepEqual([readded.comments[0].action, getRequirement('SHOP-1').jira_comment_id], ['added', '10002'], 'deleted in Jira: a new one, kept');
+  const readded = await sendCoverage('jira', { keys: ['SHOP-1'], dryRun: false }, site);
+  assert.deepEqual([readded.items[0].action, commentRef()], ['added', '10002'], 'deleted in Jira: a new one, kept');
 
-  const told = await commentOnJira({ keys: ['REQ-1', 'NOPE-9'] });
-  assert.deepEqual(told.warnings, ['REQ-1 was not imported from Jira: no comment', 'NOPE-9: no such requirement in IziTest']);
-  await assert.rejects(commentOnJira({}), /their keys, or a campaign/);
-  await assert.rejects(commentOnJira({ campaignId: 999 }), /No campaign #999/);
+  const told = await sendCoverage('jira', { keys: ['REQ-1', 'NOPE-9'] });
+  assert.deepEqual(told.warnings, ['REQ-1 was not imported from Jira: nothing sent', 'NOPE-9: no such requirement in IziTest']);
+  await assert.rejects(sendCoverage('jira', {}), /their keys, or a campaign/);
+  await assert.rejects(sendCoverage('jira', { campaignId: 999 }), /No campaign #999/);
+  await assert.rejects(sendCoverage('xray', { campaignId: id }), /Xray is not told the coverage of requirements/);
+  db.prepare("DELETE FROM requirements WHERE key = 'GONE-1'").run();
+  const gone = saveRequirement({ key: 'GONE-1', title: 'Gone', source: 'jira' }).requirement;
+  db.prepare("INSERT INTO connector_refs (connector, kind, item_id, ref) VALUES ('jira', 'requirement', ?, '9')").run(gone.id);
+  db.prepare('DELETE FROM requirements WHERE id = ?').run(gone.id);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM connector_refs WHERE kind = 'requirement' AND item_id = ?").get(gone.id).n, 0, 'a requirement deleted takes its ref along');
 });
 
 test('the Xray API key kept: the secret masked when read, kept when given back masked; the environment as a fallback', async () => {
-  assert.equal(xrayConfig(), null);
+  assert.equal(connectorConfig('xray'), null);
+  await assert.rejects(sendResults('xray', campaign(), { dryRun: false }), /Xray is not set: Settings → Connectors → Xray \(or XRAY_CLIENT_ID, XRAY_CLIENT_SECRET\)/);
   process.env.XRAY_CLIENT_ID = 'env-id';
   process.env.XRAY_CLIENT_SECRET = 'env-secret';
-  assert.equal(maskedXrayConfig().from, 'env');
-  const saved = saveXrayConfig(KEY);
+  assert.equal(maskedConfig('xray').from, 'env');
+  const saved = saveConnectorConfig('xray', KEY);
   assert.deepEqual(saved, { clientId: 'id', clientSecret: 'secr•••••3456', from: 'settings' });
-  saveXrayConfig({ clientId: 'id', clientSecret: saved.clientSecret });
-  assert.equal(xrayConfig().clientSecret, 'secret-123456', 'masked: the saved one kept');
-  assert.throws(() => saveXrayConfig({ clientId: 'id', clientSecret: '' }), /needs the client secret/);
-  assert.equal(saveXrayConfig({ clientId: '' }), null);
-  assert.equal(xrayConfig().from, 'env', 'removed: the environment again');
+  saveConnectorConfig('xray', { clientId: 'id', clientSecret: saved.clientSecret });
+  assert.equal(connectorConfig('xray').clientSecret, 'secret-123456', 'masked: the saved one kept');
+  assert.throws(() => saveConnectorConfig('xray', { clientId: 'id', clientSecret: '' }), /Xray needs: Client secret/);
+  assert.equal(saveConnectorConfig('xray', { clientId: '' }).from, 'env', 'removed: the environment again');
   delete process.env.XRAY_CLIENT_ID;
   delete process.env.XRAY_CLIENT_SECRET;
+  saveConnectorConfig('xray', KEY);
 
-  assert.deepEqual(await testXray(xrayClient(KEY, { fetch: xray().fetch, baseUrl: 'https://xray.test' })), { url: 'https://xray.test' });
-  await assert.rejects(testXray(xrayClient({ ...KEY, clientSecret: 'bad' }, xray())), /Xray refused the API key/);
-  assert.throws(() => xrayClient(null), /No Xray API key set/);
+  assert.deepEqual(await testConnector('xray', null, xray()), { success: true, text: 'Xray takes this API key (https://xray.cloud.getxray.app).' });
+  assert.match((await testConnector('xray', { ...KEY, clientSecret: 'bad' }, xray())).error, /Xray refused the API key/);
 });
 
 test('a campaign sent to Xray: a dry run first; a Test Execution, each test Generic and linked to its stories; sent again, the same one', async () => {
   const id = campaign();
-  const dry = await exportToXray(id);
+  const dry = await sendResults('xray', id);
   assert.equal(dry.sent, false);
-  assert.equal(dry.project, 'SHOP', 'the project of the stories its tests cover');
+  assert.equal(dry.target, 'SHOP', 'the project of the stories its tests cover');
   assert.deepEqual(dry.payload.info, {
     project: 'SHOP', summary: 'IziTest — Shop (1.2)', startDate: '2026-11-02T10:00:00Z', finishDate: '2026-11-02T10:05:00Z',
     description: `IziTest campaign #${id}: 1/3 passed, 1 failed, 1 not run.\nNon-conformities: refund.`,
@@ -161,27 +170,30 @@ test('a campaign sent to Xray: a dry run first; a Test Execution, each test Gene
     ['search', 'izitest:search', null, 'TODO', null],
   ]);
   assert.equal(dry.payload.tests[1].comment, 'Failed at step 2/3 in 8s: Assertion failed: "Refunded" expected\n\nTriage: non_conformity (high) — The refund is refused');
-  assert.match(formatXrayExport(dry), /^Dry run — would create a Test Execution in SHOP: 1 PASSED, 1 FAILED, 1 TODO\. Nothing sent/);
+  assert.match(formatResults(dry), /^Dry run — would create a Test Execution in SHOP: 1 PASSED, 1 FAILED, 1 TODO\. Nothing sent[\s\S]*\n- refund: FAILED — covers SHOP-1\n[\s\S]*Generic test of Xray/);
 
   const server = xray();
-  const client = xrayClient(KEY, server);
-  const sent = await exportToXray(id, { testPlanKey: 'shop-40', dryRun: false }, { client });
-  assert.deepEqual([sent.execution, sent.updates], ['SHOP-100', false]);
+  const sent = await sendResults('xray', id, { options: { test_plan_key: 'shop-40' }, dryRun: false }, server);
+  assert.deepEqual([sent.ref, sent.updates, sent.url], ['SHOP-100', false, 'https://shop.atlassian.net/browse/SHOP-100']);
   assert.equal(server.calls.at(-1).body.info.testPlanKey, 'SHOP-40');
-  const again = await exportToXray(id, { dryRun: false }, { client });
-  assert.deepEqual([again.execution, again.updates, server.calls.at(-1).body.testExecutionKey], ['SHOP-100', true, 'SHOP-100']);
+  assert.deepEqual(sentTo(id), [{ connector: 'xray', name: 'Xray', ref: 'SHOP-100', url: 'https://shop.atlassian.net/browse/SHOP-100' }]);
+  const again = await sendResults('xray', id, { dryRun: false }, server);
+  assert.deepEqual([again.ref, again.updates, server.calls.at(-1).body.testExecutionKey], ['SHOP-100', true, 'SHOP-100']);
   assert.deepEqual([server.calls.at(-1).body.info, server.calls.at(-1).body.tests.length], [undefined, 3], 'its results again, not its fields');
-  await exportToXray(id, { testPlanKey: 'SHOP-41', dryRun: false }, { client });
+  await sendResults('xray', id, { options: { test_plan_key: 'SHOP-41' }, dryRun: false }, server);
   assert.deepEqual(server.calls.at(-1).body.info, { testPlanKey: 'SHOP-41' }, 'only the Test Plan it is added to');
-  assert.equal(server.calls.filter((c) => c.path === '/api/v2/authenticate').length, 1, 'one token for the client');
+  assert.equal(server.calls.filter((c) => c.path === '/api/v2/authenticate').length, 3, 'one token a send');
   server.executions.clear();
-  const recreated = await exportToXray(id, { dryRun: false }, { client });
-  assert.equal(recreated.execution, 'SHOP-101', 'its Test Execution deleted since: a new one');
+  const recreated = await sendResults('xray', id, { dryRun: false }, server);
+  assert.equal(recreated.ref, 'SHOP-101', 'its Test Execution deleted since: a new one');
   assert.equal(server.calls.at(-1).body.info.project, 'SHOP', 'created whole');
 
-  assert.equal((await exportToXray(id, { projectKey: 'qa' })).project, 'QA');
-  await assert.rejects(exportToXray(id, { projectKey: 'not a key' }), /Not a Jira project key/);
-  await assert.rejects(exportToXray(999), /No campaign #999/);
+  assert.equal((await sendResults('xray', id, { options: { project_key: 'qa' } })).target, 'QA');
+  await assert.rejects(sendResults('xray', id, { options: { project_key: 'not a key' } }), /Not a Jira project key/);
+  await assert.rejects(sendResults('xray', 999), /No campaign #999/);
+  await assert.rejects(sendResults('jira', id), /Jira takes no campaign results/);
   db.prepare("UPDATE requirements SET source = 'manual' WHERE key = 'SHOP-1'").run();
-  await assert.rejects(exportToXray(id), /say which Jira project/);
+  await assert.rejects(sendResults('xray', id), /say which Jira project/);
+  db.prepare('DELETE FROM campaigns WHERE id = ?').run(id);
+  assert.deepEqual(sentTo(id), [], 'a campaign deleted takes its ref along');
 });

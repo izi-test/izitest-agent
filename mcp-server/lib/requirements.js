@@ -1,6 +1,6 @@
 // Requirements: what tests are for. One comes from a prompt (a developer's "test that a wrong
-// password is refused"), is written in the dashboard by a tester, or is imported from a tool
-// (a Jira story) — the same record whatever its source: a key, a title, a description, its
+// password is refused"), is written in the dashboard by a tester, or is imported from a file or
+// a tool (a Jira story, a GitHub issue: lib/connectors) — the same record whatever its source: a key, a title, a description, its
 // acceptance criteria, and the test cases that cover them. A case is planned first (its
 // title, the criterion it checks, what kind of case it is), then linked to the test that
 // checks it. Coverage is read from those links and from each test's last run.
@@ -11,7 +11,10 @@ import { log } from './logger.js';
 import { keywordsOf } from './gherkin/language.js';
 import { projectLanguage } from './gherkin/step-definition-store.js';
 
-export const SOURCES = ['prompt', 'manual', 'jira', 'import'];
+// Where a requirement comes from: a request, a person, a file — or a tool, by the id of its
+// connector (lib/connectors: jira, github…).
+export const SOURCES = ['prompt', 'manual', 'import'];
+const SOURCE = /^[a-z][a-z0-9_-]*$/;
 export const PRIORITIES = ['high', 'medium', 'low'];
 // The kinds of case a requirement is tested with: the expected path, another way through,
 // an error the app must handle, a value at the edge of what is allowed.
@@ -41,7 +44,7 @@ function rowOf(ref) {
  */
 export function saveRequirement({ key, title, description = '', criteria = [], source = 'manual', url = null, projectId = null, priority = 'medium' }) {
   if (!title?.trim()) throw new Error('A requirement needs a title');
-  if (!SOURCES.includes(source)) throw new Error(`No such source: ${source}`);
+  if (!SOURCE.test(String(source))) throw new Error(`No such source: ${source} (${SOURCES.join(', ')}, or a connector's id)`);
   if (!PRIORITIES.includes(priority)) throw new Error(`No such priority: ${priority}`);
   const items = criteria.map((c) => (typeof c === 'string' ? { text: c } : c)).filter((c) => c.text?.trim());
   const hash = contentHash({ title: title.trim(), description, criteria: items.map((c) => c.text.trim()) });

@@ -36,7 +36,7 @@ test('a request saved as a requirement: REQ-<id>, its criteria in order', () => 
   assert.deepEqual(requirement.criteria.map((c) => [c.position, c.text]), LOGIN.criteria.map((t, i) => [i + 1, t]));
   assert.equal(requirement.coverage.status, 'not_covered');
   assert.throws(() => saveRequirement({ title: ' ' }), /needs a title/);
-  assert.throws(() => saveRequirement({ title: 'x', source: 'email' }), /No such source/);
+  assert.throws(() => saveRequirement({ title: 'x', source: 'E-mail!' }), /No such source/, "not a connector's id either");
 });
 
 test('cases planned, then tests linked: coverage from each test\'s last run', () => {

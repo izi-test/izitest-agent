@@ -1,11 +1,11 @@
 // Campaign MCP tools (lib/campaigns.js): run a project's tests, a requirement's or a list
 // together, for a version of the app, and read what came of it — what failed and why, what
 // regressed since the last campaign of the same tests, where each requirement stands — and its
-// results sent to Xray (lib/xray.js).
+// results sent to a tool (lib/connectors: Xray).
 
 import { z } from 'zod';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, formatCampaign, MAX_CONCURRENCY } from '../campaigns.js';
-import { exportToXray, formatXrayExport } from '../xray.js';
+import { connectorsFor, sendResults, formatResults } from '../connectors/index.js';
 
 const text = (t, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: 'text', text: t }] });
 
@@ -72,26 +72,25 @@ export function registerCampaignTools(server, { sendCommand }) {
     }
   );
 
-  // --- Tool: export_to_xray ---
+  // --- Tool: send_results ---
+  const takers = connectorsFor('results');
   server.tool(
-    'export_to_xray',
+    'send_results',
     [
-      'Send a campaign\'s results to Xray (the API key set in the dashboard, Settings → Xray): a Test Execution in a Jira',
-      'project (default: the project of the Jira stories its tests cover), in a Test Plan when given one. Each IziTest test is',
-      'a Generic test of Xray — created the first time, found again by its definition "izitest:<name>" after —, linked to the',
-      'stories it covers, so Xray shows their coverage; passed is PASSED, failed is FAILED with the step and the triage, not',
-      'run is TODO. Sent again, the campaign updates its Test Execution. This WRITES to Jira: by default a dry run that shows',
-      'what would be sent — show it to the user and ask before calling again with dry_run: false.',
+      'Send a campaign\'s results to a tool set in the dashboard (Settings → Connectors) — sent again, what was sent is',
+      'updated. This WRITES to the tool: by default a dry run that shows what would be sent — show it to the user and ask',
+      'before calling again with dry_run: false. The connectors:',
+      ...takers.map((c) => `- ${c.id}: ${c.name}, a ${c.results.what}${c.results.options?.length ? `; options: ${c.results.options.map((o) => `${o.name} (${o.label}, ${o.placeholder})`).join(', ')}` : ''}. ${c.results.note ?? ''}`.trim()),
     ].join('\n'),
     {
+      connector: z.enum(takers.map((c) => c.id)).describe('The tool to send to'),
       id: z.number().int().describe('The campaign'),
-      project_key: z.string().optional().describe('The Jira project of the Test Execution (e.g. "SHOP")'),
-      test_plan_key: z.string().optional().describe('A Test Plan to add the Test Execution to (e.g. "SHOP-40")'),
+      options: z.record(z.string()).optional().describe('The connector\'s options (e.g. { "project_key": "SHOP", "test_plan_key": "SHOP-40" })'),
       dry_run: z.boolean().optional().describe('Default true: show what would be sent, send nothing'),
     },
-    async ({ id, project_key, test_plan_key, dry_run }) => {
+    async ({ connector, id, options, dry_run }) => {
       try {
-        return text(formatXrayExport(await exportToXray(id, { projectKey: project_key, testPlanKey: test_plan_key, dryRun: dry_run !== false })));
+        return text(formatResults(await sendResults(connector, id, { options: options ?? {}, dryRun: dry_run !== false })));
       } catch (err) {
         return text(err.message, true);
       }

@@ -4,10 +4,9 @@ import { useAppDispatch } from '../store/hooks';
 import { showToast } from '../store/slices/uiSlice';
 import { useGetAgentConfigQuery, useUpdateAgentConfigMutation, useTestAgentMutation, useTestApiKeyMutation, useGetModelsQuery } from '../store/services/settingsApi';
 import type { AgentConfig } from '../store/services/settingsApi';
-import { useGetJiraConfigQuery, useGetXrayConfigQuery, useGetHeadlessQuery } from '../store/services/settingsApi';
+import { useGetConnectorsQuery, useGetHeadlessQuery } from '../store/services/settingsApi';
 import { Button } from './Button';
-import { JiraSettings } from './JiraSettings';
-import { XraySettings } from './XraySettings';
+import { ConnectorSettings } from './ConnectorSettings';
 import { HeadlessSettings } from './HeadlessSettings';
 import { Card, PageHeader } from './ui';
 import { Save, Play, Check, X, Terminal, Cloud, Search, Bot } from 'lucide-react';
@@ -34,8 +33,7 @@ function formatPrice(price: string): string {
 
 export function Settings() {
   const dispatch = useAppDispatch();
-  const { data: jira } = useGetJiraConfigQuery();
-  const { data: xray } = useGetXrayConfigQuery();
+  const { data: connectors = [] } = useGetConnectorsQuery();
   const { data: headless } = useGetHeadlessQuery();
   const location = useLocation();
   const [section, setSection] = useState(location.hash.slice(1) || 'agent');
@@ -129,14 +127,14 @@ export function Settings() {
 
   const nav = [
     { id: 'agent', label: 'AI agent', on: true },
-    { id: 'jira', label: 'Jira', on: !!jira },
-    { id: 'xray', label: 'Xray', on: !!xray },
+    // The tools requirements are read from and results written to (mcp-server/lib/connectors).
+    ...connectors.map((c) => ({ id: c.id, label: c.name, on: !!c.config })),
     { id: 'headless', label: 'Headless browser', on: !!headless?.installed },
   ];
 
   return (
     <>
-      <PageHeader title="Settings" subtitle="How IziTest drives the browser, and the Jira site and Xray key it reads from and writes to. Stored on this machine." />
+      <PageHeader title="Settings" subtitle="How IziTest drives the browser, and the tools it reads requirements from and sends results to — its connectors. Stored on this machine." />
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings sections">
           {nav.map((item) => (
@@ -363,8 +361,7 @@ export function Settings() {
       </div>
       </Card>
 
-      <JiraSettings />
-      <XraySettings />
+      {connectors.map((c) => <ConnectorSettings key={c.id} connector={c} />)}
       <HeadlessSettings />
         </div>
       </div>
