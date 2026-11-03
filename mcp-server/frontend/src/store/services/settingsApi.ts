@@ -48,10 +48,23 @@ export interface XrayConfig {
   from?: 'settings' | 'env';
 }
 
+/** Where the headless Chrome stands: installed (which version), being installed, running, connected. */
+export interface HeadlessStatus {
+  installed: { version: string } | null;
+  installing: { downloaded: number; total: number } | null;
+  starting: boolean;
+  running: boolean;
+  connected: boolean;
+  extension_built: boolean;
+  error: string | null;
+  browsers_dir: string;
+  profile_dir: string;
+}
+
 export const settingsApi = createApi({
   reducerPath: 'settingsApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
-  tagTypes: ['AgentConfig', 'JiraConfig', 'XrayConfig'],
+  tagTypes: ['AgentConfig', 'JiraConfig', 'XrayConfig', 'Headless'],
   endpoints: (builder) => ({
 
     getAgentConfig: builder.query<AgentConfig, void>({
@@ -103,6 +116,16 @@ export const settingsApi = createApi({
       query: (body) => ({ url: 'api/settings/xray/test', method: 'POST', body }),
     }),
 
+    // The Chrome without windows tests can run in (mcp-server/lib/headless.js).
+    getHeadless: builder.query<HeadlessStatus, void>({
+      query: () => 'api/headless',
+      transformResponse: (response: { headless: HeadlessStatus }) => response.headless,
+      providesTags: ['Headless'],
+    }),
+    headlessAction: builder.mutation<{ headless: HeadlessStatus }, 'install' | 'start' | 'stop'>({
+      query: (action) => ({ url: `api/headless/${action}`, method: 'POST' }),
+      invalidatesTags: ['Headless'],
+    }),
     getModels: builder.query<OpenRouterModel[], void>({
       query: () => 'api/models',
       transformResponse: (response: { models: OpenRouterModel[] }) => response.models,
@@ -122,4 +145,6 @@ export const {
   useGetXrayConfigQuery,
   useUpdateXrayConfigMutation,
   useTestXrayMutation,
+  useGetHeadlessQuery,
+  useHeadlessActionMutation,
 } = settingsApi;

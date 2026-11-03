@@ -613,6 +613,9 @@ textarea { resize: vertical; line-height: 1.5; }
 .switch input:focus-visible { box-shadow: var(--focus-ring); }
 .switch__text { display: flex; flex-direction: column; }
 .switch__hint { font-size: 12px; color: var(--text-muted); }
+.switch--disabled { cursor: not-allowed; }
+.switch--disabled .switch__text { color: var(--text-muted); }
+.switch input:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── Forms ─── */
 .form { display: flex; flex-direction: column; gap: 14px; }

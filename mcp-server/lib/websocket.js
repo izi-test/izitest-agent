@@ -6,6 +6,9 @@ import { log } from './logger.js';
 import { isExtensionOrigin } from './origin-guard.js';
 
 const profiles = new Map();       // profileId → ws
+// The profiles of a Chrome without windows (lib/headless.js): only for what names them —
+// never the profile a command that names none goes to, whatever connected first.
+const headlessProfiles = new Set();
 
 // What the extension's service worker logged. Its console is otherwise only visible by
 // opening its DevTools by hand, which leaves a test run blind to anything it reports.
@@ -34,6 +37,18 @@ let wss;
 
 export function getProfiles() {
   return profiles;
+}
+
+export function isHeadlessProfile(profileId) {
+  return headlessProfiles.has(profileId);
+}
+
+/** Where a command that names no profile goes: the first Chrome with windows that connected. */
+function defaultWs() {
+  for (const [profileId, ws] of profiles) {
+    if (!headlessProfiles.has(profileId)) return ws;
+  }
+  return undefined;
 }
 
 export function closeWebSocket() {
@@ -82,6 +97,8 @@ export function startWebSocketServer(port) {
         if (msg.type === 'register') {
           registeredProfileId = msg.profileId;
           profiles.set(msg.profileId, ws);
+          if (msg.headless === true) headlessProfiles.add(msg.profileId);
+          else headlessProfiles.delete(msg.profileId);
           profileEvents.emit('connected', msg.profileId);
           log(`Profile registered: ${msg.profileId}`);
         }
@@ -141,18 +158,20 @@ export function startWebSocketServer(port) {
     });
 
     ws.on('close', () => {
-      if (registeredProfileId) {
+      // A register under the same id from a newer socket replaced this one: it stays.
+      if (registeredProfileId && profiles.get(registeredProfileId) === ws) {
         profiles.delete(registeredProfileId);
+        headlessProfiles.delete(registeredProfileId);
         log(`Profile disconnected: ${registeredProfileId}`);
       }
     });
   });
 }
 
-// Wait for at least one browser profile to connect (up to waitMs)
-function waitForProfile(profileId, waitMs = 8000) {
+// Wait for the profile named — or, naming none, a Chrome with windows — to connect (up to waitMs)
+export function waitForProfile(profileId, waitMs = 8000) {
   return new Promise((resolve) => {
-    const getWs = () => profileId ? profiles.get(profileId) : profiles.values().next().value;
+    const getWs = () => profileId ? profiles.get(profileId) : defaultWs();
     const ws = getWs();
     if (ws && ws.readyState === 1) return resolve(ws);
 
@@ -183,7 +202,9 @@ export function sendCommand(profileId, command, params, timeoutMs = 30000, onPro
           reject(new Error(
             profileId
               ? `Profile "${profileId}" not connected. Connected profiles: ${[...profiles.keys()].join(', ') || 'none'}`
-              : 'No browser profiles connected. Make sure Chrome is open with the IziTest Agent extension.'
+              : profiles.size
+                ? `Only the headless browser is connected (${[...profiles.keys()].join(', ')}): name it as the profile to use it, or open Chrome with the IziTest Agent extension.`
+                : 'No browser profiles connected. Make sure Chrome is open with the IziTest Agent extension.'
           ));
           return;
         }
@@ -215,7 +236,7 @@ export function sendCommand(profileId, command, params, timeoutMs = 30000, onPro
 
 /** Fire-and-forget message to one extension. Returns false when it is not connected. */
 export function sendToProfile(profileId, message) {
-  const ws = profileId ? profiles.get(profileId) : profiles.values().next().value;
+  const ws = profileId ? profiles.get(profileId) : defaultWs();
   if (!ws || ws.readyState !== 1) return false;
   ws.send(JSON.stringify(message));
   return true;
@@ -263,7 +284,7 @@ export function waitForProfileReregister(timeoutMs) {
 }
 
 export function pushOverlayState(profileId, state, tabId = null) {
-  const ws = getProfiles().get(profileId) || getProfiles().values().next().value;
+  const ws = getProfiles().get(profileId) || defaultWs();
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'set_overlay_state', state, tabId }));
   }

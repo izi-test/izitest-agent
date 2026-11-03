@@ -655,6 +655,35 @@ du triage est le `type` de chaque `failure`, et les exigences d'un test sont ses
 name="requirement"`. Une campagne laissée en cours par un serveur arrêté est marquée `interrupted` au
 redémarrage.
 
+#### Rejouer sans fenêtre : le Chrome headless
+
+Un rejeu ouvre sa fenêtre **sans lui donner le focus** : la fenêtre où l'on est le garde, et la page
+rejouée se croit au premier plan quand même (focus émulé par le debugger, captures d'écran faites par
+lui, qui dessine un onglet caché). Une campagne ouvre donc ses fenêtres sans en voler aucune.
+
+Pour ne plus les voir du tout, un **Chrome sans fenêtre** : Chrome for Testing (le Chrome de Google
+n'accepte plus d'extension chargée par la ligne de commande), installé une fois depuis le tableau de bord
+(**Settings → Headless browser → Install**, ~150 Mo dans `~/.izitest/browsers`), lancé avec l'extension
+du dépôt et un profil à lui (`~/.izitest/profiles/headless`). Il démarre au premier rejeu demandé
+headless et s'arrête avec le serveur. Son extension s'annonce comme le profil **`headless`** : une
+commande qui ne nomme pas de profil n'y va **jamais**, même s'il s'est connecté le premier (`list_profiles`
+le signale) ; un agent ne s'en sert qu'en le nommant (`profile: "headless"`). Ses pages voient un Chrome
+ordinaire (sans « HeadlessChrome » dans le user agent).
+
+- **Tableau de bord** : l'option « Headless — no window » (menu du bouton Run d'un test, formulaire de
+  campagne, Settings), une seule préférence retenue ; « Run as campaign » et « Run its tests » la
+  suivent ; « Run again » refait comme la campagne d'origine. Pas en debug ni avec « Use Agent » : le
+  premier se regarde pas à pas, le second répare dans le Chrome de l'utilisateur. La fenêtre d'un rejeu
+  headless est fermée après.
+- **MCP** : `run_campaign(…, headless: true)`.
+- **CI** : `node mcp-server/bin/campaign.js --project 3 --headless`.
+- **API** : `GET /api/headless` (installé, en cours d'installation, lancé, connecté), `POST
+  /api/headless/install|start|stop` ; `headless: true` dans `POST /api/tests/:name/execute` et `POST
+  /api/campaigns`.
+
+Son profil est le sien : cookies, sessions et stockage ne sont pas ceux du Chrome de l'utilisateur. Un
+test d'une appli derrière une connexion se connecte lui-même.
+
 #### Envoyer une campagne à Xray : `export_to_xray`
 
 La clé d'API de Xray se règle dans le tableau de bord (**Settings → Xray**) : son client id et son secret,

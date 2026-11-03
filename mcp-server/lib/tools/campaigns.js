@@ -31,11 +31,12 @@ export function registerCampaignTools(server, { sendCommand }) {
       name: z.string().optional().describe('Default: the project\'s or the requirement\'s name'),
       concurrency: z.number().int().min(1).max(MAX_CONCURRENCY).optional().describe('Tests run at a time (default 3)'),
       wait: z.boolean().optional().describe('Wait for the end and answer with the report (default true); false answers at once'),
+      headless: z.boolean().optional().describe('Run in the Chrome without windows the server starts (its own profile: no login of the user\'s Chrome), out of the user\'s sight. Installed from the dashboard: Settings → Headless browser'),
     },
-    async ({ project_id, requirement, tests, version, name, concurrency, wait }) => {
+    async ({ project_id, requirement, tests, version, name, concurrency, wait, headless }) => {
       let started;
       try {
-        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency }, { sendCommand });
+        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true }, { sendCommand });
       } catch (err) {
         return text(err.message, true);
       }

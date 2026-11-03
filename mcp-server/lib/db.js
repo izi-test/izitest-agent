@@ -345,6 +345,11 @@ export function initDatabase() {
       db.exec('ALTER TABLE test_executions ADD COLUMN campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL');
     }
     db.exec('CREATE INDEX IF NOT EXISTS idx_executions_campaign ON test_executions(campaign_id)');
+    // Run in the Chrome without windows (lib/headless.js): "Run again" does it again.
+    const campaignCols = db.prepare('PRAGMA table_info(campaigns)').all().map(c => c.name);
+    if (!campaignCols.includes('headless')) {
+      db.exec('ALTER TABLE campaigns ADD COLUMN headless INTEGER NOT NULL DEFAULT 0');
+    }
   } catch (err) {
     log(`Migration warning (campaigns): ${err.message}`);
   }

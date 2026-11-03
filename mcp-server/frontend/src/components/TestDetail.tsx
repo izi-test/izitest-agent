@@ -34,6 +34,8 @@ import { ExecutionHistory } from './ExecutionHistory';
 import { LiveExecutionModal } from './LiveExecutionModal';
 import { GherkinEditor } from './GherkinEditor';
 import { CodePanel } from './CodePanel';
+import { HeadlessSwitch } from './HeadlessSwitch';
+import { useRunHeadless } from '../headless';
 import { Card, EmptyState, KeyChip, Menu, ProjectChip, ResultBar, StatusPill } from './ui';
 import { dateTime, formatDuration, relativeTime } from '../format';
 import {
@@ -76,6 +78,7 @@ export function TestDetail({ testName }: TestDetailProps) {
   const go = useGo();
   const back = useBack('/tests', 'Tests');
   const scope = useAppSelector(state => state.ui.selectedProjectId);
+  const runHeadless = useRunHeadless();
 
   // Redux state
   const {
@@ -257,6 +260,8 @@ export function TestDetail({ testName }: TestDetailProps) {
       variables: variableOverrides,
       debug: useDebug,
       breakpoints: [],
+      // Debug is watched step by step: it keeps a window.
+      headless: runHeadless && !useDebug,
     }));
   };
 
@@ -346,7 +351,8 @@ CRITICAL RULES:
   const variableCount = test.variables ? Object.keys(test.variables).length : 0;
   const project = projects.find((p) => p.id === projectId) ?? null;
   const lastRun = runs[0];
-  const optionsChanged = !executeNewWindow || useAgent || useDebug || !!viewport;
+  const headlessRun = runHeadless && !useDebug && !useAgent;
+  const optionsChanged = headlessRun || !executeNewWindow || useAgent || useDebug || !!viewport;
   const withSide = activeTab === 'steps' || activeTab === 'data';
 
   const tabs: Array<{ id: typeof activeTab; label: string; icon: typeof List; count?: number }> = [
@@ -372,7 +378,7 @@ CRITICAL RULES:
           <div className="detail-head__actions">
             <div className="split-button" ref={runOptionsRef}>
               <Button icon={isExecuting ? Loader2 : Play} onClick={handleExecute} disabled={isExecuting}>
-                {isExecuting ? 'Running…' : useAgent ? 'Run with agent' : useDebug ? 'Debug' : 'Run'}
+                {isExecuting ? 'Running…' : useAgent ? 'Run with agent' : useDebug ? 'Debug' : runHeadless ? 'Run headless' : 'Run'}
               </Button>
               <Button aria-label="Run options" title="Run options" onClick={() => setRunOptionsOpen(!runOptionsOpen)}>
                 <ChevronDown size={16} />
@@ -380,9 +386,10 @@ CRITICAL RULES:
               {runOptionsOpen && (
                 <div className="popover run-options">
                   <div className="popover__title">Run options</div>
-                  <label className="switch">
-                    <input type="checkbox" checked={executeNewWindow} onChange={e => dispatch(setExecuteNewWindow(e.target.checked))} />
-                    <span className="switch__text">Open in a new window<span className="switch__hint">The run does not touch the tab you are in.</span></span>
+                  <HeadlessSwitch disabledReason={useDebug ? 'Debug runs in a window: it is watched step by step.' : useAgent ? 'The agent repairs in your Chrome: it runs there.' : undefined} />
+                  <label className={`switch ${runHeadless && !useDebug && !useAgent ? 'switch--disabled' : ''}`}>
+                    <input type="checkbox" checked={executeNewWindow || (runHeadless && !useDebug && !useAgent)} disabled={runHeadless && !useDebug && !useAgent} onChange={e => dispatch(setExecuteNewWindow(e.target.checked))} />
+                    <span className="switch__text">Open in a new window<span className="switch__hint">Without the focus: the window you are in keeps it.</span></span>
                   </label>
                   <label className="switch">
                     <input type="checkbox" checked={useAgent} onChange={e => dispatch(setUseAgent(e.target.checked))} />
@@ -441,7 +448,8 @@ CRITICAL RULES:
           <span className="meta-item"><Clock size={14} />Updated {dateTime(test.updated_at)}</span>
           {optionsChanged && (
             <span className="meta-item" title="Run options">
-              {!executeNewWindow && <span className="tag">same window</span>}
+              {headlessRun && <span className="tag tag--blue">headless</span>}
+              {!executeNewWindow && !headlessRun && <span className="tag">same window</span>}
               {useAgent && <span className="tag tag--blue">agent</span>}
               {useDebug && <span className="tag tag--amber">debug</span>}
               {viewport && <span className="tag">{viewportToString(viewport)}</span>}

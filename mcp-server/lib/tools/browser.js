@@ -10,6 +10,7 @@ const liveSessionIds = () => listSessions().map((s) => s.id);
 import { recordAction, selectParams } from '../recording.js';
 import { absolutePaths, readUploadFiles } from '../upload-files.js';
 import { captureActionFrame, LIVE_ACTIONS } from '../live.js';
+import { isHeadlessProfile } from '../websocket.js';
 
 // How text is typed into fields. Default is per-character key events (human-like, slow:
 // ~2 CDP round trips per character). IZITEST_TYPING=insert makes one-shot insertion
@@ -79,7 +80,8 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
     'List all connected browser profiles',
     {},
     async () => {
-      const list = [...getProfiles().keys()];
+      // The headless one is said so: a command naming no profile never goes to it.
+      const list = [...getProfiles().keys()].map((id) => (isHeadlessProfile(id) ? `${id} (headless: only when named)` : id));
       return {
         content: [{
           type: 'text',

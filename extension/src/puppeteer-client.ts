@@ -5,6 +5,7 @@ import {
   Page,
   Dialog
 } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import { isHeadless, pageUserAgent } from './headless';
 
 const connectedBrowsers = new Map<number, Browser>();
 const connectedPages = new Map<number, Page>();
@@ -124,9 +125,24 @@ export async function getPage(tabId: number): Promise<Page> {
   if (!page) {
     throw new Error('No page found for tab ' + tabId);
   }
-  
+
   connectedPages.set(tabId, page);
+  await emulateForeground(page);
   return page;
+}
+
+/**
+ * A replay's window is opened without the focus, and a headless one has none to give: the page
+ * is told it has it (document.hasFocus(), focus and blur events, :focus styles), as in a window
+ * in front. In a Chrome without windows, it is also told the browser's usual name.
+ */
+async function emulateForeground(page: Page): Promise<void> {
+  try {
+    await page.emulateFocusedPage(true);
+    if (isHeadless()) await page.setUserAgent(pageUserAgent());
+  } catch (err) {
+    console.warn('[IziTest] Could not emulate the focus:', err instanceof Error ? err.message : String(err));
+  }
 }
 
 export function detachBrowser(tabId: number): void {

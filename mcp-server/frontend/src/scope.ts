@@ -28,10 +28,11 @@ export function initialScope(): number | null {
 
 /** A path with the project in scope in its query, unless it names one already. */
 export function withScope(path: string, projectId: number | null): string {
-  const [pathname, query = ''] = path.split('?');
+  const [withoutHash, hash = ''] = path.split('#');
+  const [pathname, query = ''] = withoutHash.split('?');
   const params = new URLSearchParams(query);
   if (!params.has('project')) params.set('project', projectId == null ? 'all' : String(projectId));
-  return `${pathname}?${params}`;
+  return `${pathname}?${params}${hash ? `#${hash}` : ''}`;
 }
 
 /** The list a page belongs to: a test's is Tests. Switching project from a detail goes there. */

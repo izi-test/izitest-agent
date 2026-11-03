@@ -10,6 +10,7 @@ import { useGo, useUrlState } from '../navigation';
 import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
 import { MoveToProjectDialog } from './ProjectSelector';
+import { useRunHeadless } from '../headless';
 import { Card, EmptyState, KeyChip, Menu, PageHeader, ProjectChip, Segmented, StatusPill } from './ui';
 import { relativeTime, shortDate } from '../format';
 import type { Test } from '../types';
@@ -40,6 +41,7 @@ export function TestList() {
   const { data: requirements = [] } = useGetRequirementsQuery(scope);
   const [deleteTest] = useDeleteTestMutation();
   const [startCampaign, { isLoading: starting }] = useStartCampaignMutation();
+  const headless = useRunHeadless();
 
   const [search, setSearch] = useUrlState('q');
   const [status, setStatus] = useUrlState('status', 'all') as [Status, (v: string) => void];
@@ -84,7 +86,7 @@ export function TestList() {
 
   const runAsCampaign = async (names: string[]) => {
     try {
-      const { campaign } = await startCampaign({ tests: names }).unwrap();
+      const { campaign } = await startCampaign({ tests: names, headless }).unwrap();
       setSelected(new Set());
       go(`/campaigns/${campaign.id}`, { from: 'Tests' });
     } catch (err) {
@@ -151,7 +153,9 @@ export function TestList() {
           <div className="bulk-bar">
             <span className="bulk-bar__count">{chosen.length} selected</span>
             <span className="spacer" />
-            <Button size="sm" icon={Play} disabled={starting} onClick={() => runAsCampaign(chosen)}>Run as campaign</Button>
+            <Button size="sm" icon={Play} disabled={starting} onClick={() => runAsCampaign(chosen)} title={headless ? 'In the headless Chrome (Settings → Headless browser)' : undefined}>
+              {headless ? 'Run as campaign, headless' : 'Run as campaign'}
+            </Button>
             <Button size="sm" variant="secondary" icon={FolderInput} onClick={() => setMoving(chosen)}>Move to project…</Button>
             <Button size="sm" variant="ghost" className="btn--danger-text" icon={Trash2} onClick={() => setDeleting(chosen)}>Delete</Button>
             <Button size="sm" variant="ghost" icon={X} onClick={() => setSelected(new Set())}>Clear</Button>

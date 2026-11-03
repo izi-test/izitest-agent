@@ -8,6 +8,7 @@
 
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
+import { ensureHeadless, inHeadless } from './headless.js';
 import { createAdHocSession, destroySession, runInSession, listSessions } from './session.js';
 import { getRequirement, coverageOf, requirementsOfTest } from './requirements.js';
 
@@ -56,10 +57,11 @@ function defaultName(scope, projectId, names) {
 
 /**
  * Start a campaign: its tests replayed `concurrency` at a time, each in a new window closed
- * after. `sendCommand` is the extension's, unscoped: the campaign runs in a session of its
- * own. The campaign as it starts, and `finished`, settled once its last test ran.
+ * after — of the headless Chrome with `headless` (lib/headless.js), started if it is not.
+ * `sendCommand` is the extension's, unscoped: the campaign runs in a session of its own. The
+ * campaign as it starts, and `finished`, settled once its last test ran.
  */
-export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3 }, { sendCommand }) {
+export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false }, { sendCommand }) {
   const scope = tests?.length ? { tests: [...new Set(tests)] }
     : requirement ? { requirement: getRequirement(requirement)?.key ?? String(requirement) }
       : { project_id: projectId };
@@ -69,21 +71,30 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
   // Chosen tests all of one project belong to it: the campaign is listed with the project's.
   const project = projectId ?? (scope.requirement ? getRequirement(scope.requirement).project_id : projectOfTests(names));
   const { id } = db.prepare(
-    `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency)
-     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`
+    `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency, headless)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
   ).get(name?.trim() || defaultName(scope, project, names), project, JSON.stringify(scope), scopeKeyOf(scope, names),
-    version?.trim() || null, JSON.stringify(names), lanes);
+    version?.trim() || null, JSON.stringify(names), lanes, headless ? 1 : 0);
   const state = { stop: false };
   running.set(id, state);
   log(`Campaign #${id} started: ${names.length} test(s), ${lanes} at a time${version ? `, version ${version}` : ''}`);
-  const finished = runCampaign(id, names, lanes, state, sendCommand)
+  const finished = runCampaign(id, names, lanes, state, headless ? inHeadless(sendCommand) : sendCommand, headless)
     .catch((err) => log(`Campaign #${id} failed: ${err.message}`))
     .finally(() => running.delete(id));
   return { campaign: getCampaign(id), finished };
 }
 
-async function runCampaign(id, names, lanes, state, dispatch) {
+async function runCampaign(id, names, lanes, state, dispatch, headless) {
   const { executeTest } = await import('./test-execute.js');
+  if (headless) {
+    // No headless Chrome to run in: every test is told why it did not run.
+    try {
+      await ensureHeadless();
+    } catch (err) {
+      for (const name of names) noteError(id, name, `Not run: ${err.message}`);
+      names = [];
+    }
+  }
   const session = createAdHocSession(`campaign-${id}`);
   const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, session.scope(params), ...rest);
   let next = 0;
@@ -216,7 +227,7 @@ export function getCampaign(id) {
   }
   const project = row.project_id ? db.prepare('SELECT name FROM projects WHERE id = ?').get(row.project_id)?.name ?? null : null;
   return {
-    ...row, scope: parseJson(row.scope), tests: undefined, errors: undefined, project,
+    ...row, scope: parseJson(row.scope), tests: undefined, errors: undefined, project, headless: !!row.headless,
     running: running.has(row.id), totals, total: tests.length,
     duration_ms: row.finished_at ? Date.parse(row.finished_at) - Date.parse(row.created_at) : null,
     changes, requirements: requirementsOf(tests),
@@ -249,7 +260,7 @@ export function formatCampaign(c) {
   const { totals } = c;
   const counts = STATUSES.filter((s) => totals[s]).map((s) => `${totals[s]} ${s}`).join(', ');
   const lines = [
-    `Campaign #${c.id} "${c.name}"${c.version ? ` — version ${c.version}` : ''} — ${c.running ? 'RUNNING' : c.status}: ${counts} (${c.total} test(s), ${c.concurrency} at a time${c.duration_ms != null ? `, ${seconds(c.duration_ms)}` : ''})`,
+    `Campaign #${c.id} "${c.name}"${c.version ? ` — version ${c.version}` : ''} — ${c.running ? 'RUNNING' : c.status}: ${counts} (${c.total} test(s), ${c.concurrency} at a time${c.headless ? ', headless' : ''}${c.duration_ms != null ? `, ${seconds(c.duration_ms)}` : ''})`,
   ];
   if (c.changes) {
     const { since, regressed, fixed } = c.changes;
@@ -358,7 +369,7 @@ export function htmlReport(c) {
 </style></head>
 <body><main>
 <h1>Campaign #${c.id} — ${html(c.name)}</h1>
-<div class="meta">${c.version ? `Version ${html(c.version)} · ` : ''}${html(when)} · ${c.total} test(s), ${c.concurrency} at a time${c.duration_ms != null ? ` · ${seconds(c.duration_ms)}` : ''} · ${html(c.running ? 'running' : c.status)}</div>
+<div class="meta">${c.version ? `Version ${html(c.version)} · ` : ''}${html(when)} · ${c.total} test(s), ${c.concurrency} at a time${c.headless ? ', headless' : ''}${c.duration_ms != null ? ` · ${seconds(c.duration_ms)}` : ''} · ${html(c.running ? 'running' : c.status)}</div>
 <div class="totals">${STATUSES.filter((s) => totals[s]).map((s) => `<div style="color:${STATUS_COLORS[s]}">${totals[s]}<span>${s}</span></div>`).join('')}</div>
 ${c.non_conformities.length ? `<section><h2 class="bad">Non-conformities</h2><p>The app does not do what the requirement says: ${c.non_conformities.map(html).join(', ')}.</p></section>` : ''}
 ${changes}

@@ -1,12 +1,14 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAppDispatch } from '../store/hooks';
 import { showToast } from '../store/slices/uiSlice';
 import { useGetAgentConfigQuery, useUpdateAgentConfigMutation, useTestAgentMutation, useTestApiKeyMutation, useGetModelsQuery } from '../store/services/settingsApi';
 import type { AgentConfig } from '../store/services/settingsApi';
-import { useGetJiraConfigQuery, useGetXrayConfigQuery } from '../store/services/settingsApi';
+import { useGetJiraConfigQuery, useGetXrayConfigQuery, useGetHeadlessQuery } from '../store/services/settingsApi';
 import { Button } from './Button';
 import { JiraSettings } from './JiraSettings';
 import { XraySettings } from './XraySettings';
+import { HeadlessSettings } from './HeadlessSettings';
 import { Card, PageHeader } from './ui';
 import { Save, Play, Check, X, Terminal, Cloud, Search, Bot } from 'lucide-react';
 
@@ -34,9 +36,16 @@ export function Settings() {
   const dispatch = useAppDispatch();
   const { data: jira } = useGetJiraConfigQuery();
   const { data: xray } = useGetXrayConfigQuery();
-  const [section, setSection] = useState('agent');
+  const { data: headless } = useGetHeadlessQuery();
+  const location = useLocation();
+  const [section, setSection] = useState(location.hash.slice(1) || 'agent');
 
   const { data: serverConfig, isLoading } = useGetAgentConfigQuery();
+  // A link to a section (Settings#headless) lands on it, once the page is there.
+  useEffect(() => {
+    if (!location.hash || isLoading) return;
+    document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: 'start' });
+  }, [location.hash, isLoading]);
   const [updateConfig] = useUpdateAgentConfigMutation();
   const [testAgentMut] = useTestAgentMutation();
   const [testApiKeyMut] = useTestApiKeyMutation();
@@ -122,6 +131,7 @@ export function Settings() {
     { id: 'agent', label: 'AI agent', on: true },
     { id: 'jira', label: 'Jira', on: !!jira },
     { id: 'xray', label: 'Xray', on: !!xray },
+    { id: 'headless', label: 'Headless browser', on: !!headless?.installed },
   ];
 
   return (
@@ -355,6 +365,7 @@ export function Settings() {
 
       <JiraSettings />
       <XraySettings />
+      <HeadlessSettings />
         </div>
       </div>
     </>

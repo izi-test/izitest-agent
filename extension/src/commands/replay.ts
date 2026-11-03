@@ -65,14 +65,13 @@ export async function cmdReplaySequence(
   const totalSteps = steps.length;
   const executionStartedAt = Date.now();
 
-  // When a tabId is provided (e.g. debug step-by-step mode), ensure the target
-  // tab is focused before executing. The user may have clicked Resume/Step in
-  // the IziTest Agent UI, shifting focus away from the test target window.
+  // When a tabId is provided (e.g. debug step-by-step mode), make the target tab the
+  // active one of its window. Its window is not brought to the front: the user clicking
+  // Resume/Step in the dashboard stays there, and the page is told it has the focus anyway
+  // (getPage emulates it).
   if (currentTabId) {
     try {
-      const tab = await chrome.tabs.get(currentTabId);
       await chrome.tabs.update(currentTabId, { active: true });
-      await chrome.windows.update(tab.windowId, { focused: true });
       await delay(100);
     } catch (focusErr) {
       console.warn(`⚠️ Could not refocus tab ${currentTabId}: ${focusErr instanceof Error ? focusErr.message : String(focusErr)}`);

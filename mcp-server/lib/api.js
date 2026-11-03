@@ -31,6 +31,8 @@ import { xrayConfig, maskedXrayConfig, saveXrayConfig, xrayClient, testXray, exp
 import { complete, agentName } from './agent/complete.js';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport } from './campaigns.js';
 import { generateTestCode } from './codegen/index.js';
+import { listSessions } from './session.js';
+import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless } from './headless.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
 // How long to wait for a reloaded extension to register again. A reload drops the socket
@@ -306,11 +308,19 @@ export async function apiRouter(req, res, url) {
         }
       });
 
+      // Out of sight, in the Chrome without windows (lib/headless.js) — started if it is not —,
+      // and its window closed after: nobody looks at it. Not in debug: that one is watched.
+      const headless = body.headless === true && !body.debug;
+      const run = headless ? inHeadless(sendCommand) : sendCommand;
+      let tabId = null;
       try {
-        const newWindow = body.new_window !== undefined ? body.new_window : true;
-        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, sendCommand, 'manual', onProgress, debugController);
+        if (headless) await ensureHeadless();
+        const newWindow = headless || (body.new_window !== undefined ? body.new_window : true);
+        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, run, 'manual', onProgress, debugController);
+        tabId = resObj?.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
         res.write(`data: ${JSON.stringify({ type: 'execution_completed', result: resObj })}\n\n`);
       } catch (err) {
+        tabId = err.tabId ?? null;
         res.write(`data: ${JSON.stringify({
           type: 'execution_error',
           error: err.message,
@@ -327,6 +337,7 @@ export async function apiRouter(req, res, url) {
         })}\n\n`);
       } finally {
         res.end();
+        if (headless && tabId) run(undefined, 'close_window', { tabId, liveSessions: listSessions().map((s) => s.id) }).catch(() => {});
       }
       return;
     }
@@ -680,6 +691,7 @@ export async function apiRouter(req, res, url) {
         const { campaign } = startCampaign({
           name: body.name, tests: Array.isArray(body.tests) ? body.tests : undefined, requirement: body.requirement || undefined,
           projectId: body.project_id ?? null, version: body.version ?? null, concurrency: body.concurrency ?? 3,
+          headless: body.headless === true,
         }, { sendCommand });
         return json(res, 201, { campaign });
       } catch (err) {
@@ -1127,6 +1139,32 @@ export async function apiRouter(req, res, url) {
       ).run(projectId || null, test.id);
 
       return json(res, 200, { success: true });
+    }
+
+    // ── The Chrome without windows tests can run in (lib/headless.js) ──
+
+    // GET /api/headless — installed (which version), being installed, running, connected
+    if (method === 'GET' && path === '/api/headless') {
+      return json(res, 200, { headless: await headlessStatus() });
+    }
+
+    // POST /api/headless/install — downloads Chrome for Testing (~150 MB): answers at once,
+    // GET /api/headless says how far it is
+    if (method === 'POST' && path === '/api/headless/install') {
+      installHeadless().catch(() => {});
+      return json(res, 202, { headless: await headlessStatus() });
+    }
+
+    // POST /api/headless/start | stop
+    params = matchRoute(path, '/api/headless/:action');
+    if (method === 'POST' && params && (params.action === 'start' || params.action === 'stop')) {
+      try {
+        if (params.action === 'start') await startHeadless();
+        else await stopHeadless();
+      } catch (err) {
+        return json(res, 409, { error: err.message, headless: await headlessStatus() });
+      }
+      return json(res, 200, { headless: await headlessStatus() });
     }
 
     // ── GET /api/settings/agent ──

@@ -12,7 +12,18 @@ interface UiState {
   searchQuery: string;
   /** The "New test" window, opened from the top bar or from a page. */
   createTestOpen: boolean;
+  /** Runs and campaigns started here go to the Chrome without windows. */
+  runHeadless: boolean;
 }
+
+const HEADLESS_KEY = 'izitest.headless';
+const storedHeadless = () => {
+  try {
+    return localStorage.getItem(HEADLESS_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
 
 const initialState: UiState = {
   toast: { message: null, type: 'success' },
@@ -20,6 +31,7 @@ const initialState: UiState = {
   selectedProjectId: initialScope(),
   searchQuery: '',
   createTestOpen: false,
+  runHeadless: storedHeadless(),
 };
 
 const uiSlice = createSlice({
@@ -42,6 +54,14 @@ const uiSlice = createSlice({
     setCreateTestOpen(state, action: PayloadAction<boolean>) {
       state.createTestOpen = action.payload;
     },
+    setRunHeadless(state, action: PayloadAction<boolean>) {
+      state.runHeadless = action.payload;
+      try {
+        localStorage.setItem(HEADLESS_KEY, action.payload ? '1' : '0');
+      } catch {
+        // Private window: the choice lasts as long as the tab.
+      }
+    },
   },
 });
 
@@ -51,6 +71,7 @@ export const {
   setSelectedProjectId,
   setSearchQuery,
   setCreateTestOpen,
+  setRunHeadless,
 } = uiSlice.actions;
 
 export default uiSlice.reducer;

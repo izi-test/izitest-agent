@@ -9,6 +9,8 @@ export interface CampaignInput {
   version?: string;
   name?: string;
   concurrency?: number;
+  /** In the Chrome without windows. */
+  headless?: boolean;
 }
 
 // Campaigns: tests replayed together for a version of the app (mcp-server/lib/campaigns.js).

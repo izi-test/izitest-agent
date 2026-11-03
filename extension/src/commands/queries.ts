@@ -9,7 +9,7 @@ import type {
   ScreenshotParams, ExecuteJsParams, WaitParams,
   GetCookiesParams, CloseTabParams, CloseWindowParams, SnapshotResult
 } from '../types';
-import { getPage } from '../puppeteer-client';
+import { getPage, isBrowserAttached } from '../puppeteer-client';
 import { isOwnedWindow, forgetOwnedWindow, getWindowOwner, listOwnedWindows, listPopupWindows, popupParent, popupsOf } from '../owned-windows';
 import { detachBrowser } from '../puppeteer-client';
 
@@ -125,6 +125,25 @@ function logScreenshotPreview(dataUrl: string): void {
   );
 }
 
+/**
+ * The tab as it shows. A tab a test or an agent works in is under the debugger: Chrome draws
+ * it for the capture wherever its window is — behind others, without the focus, in a Chrome
+ * without windows. Any other tab is captured as the screen shows it.
+ */
+async function captureTab(tabId: number, format: 'png' | 'jpeg', quality: number): Promise<string> {
+  if (isBrowserAttached(tabId)) {
+    try {
+      const page = await getPage(tabId);
+      const cdp = (page as unknown as { _client(): { send(method: string, params: object): Promise<{ data: string }> } })._client();
+      const shot = await cdp.send('Page.captureScreenshot', { format, ...(format === 'jpeg' ? { quality } : {}) });
+      return `data:image/${format};base64,${shot.data}`;
+    } catch (err) {
+      console.warn('[IziTest] Debugger capture failed, capturing the screen instead:', err instanceof Error ? err.message : String(err));
+    }
+  }
+  return captureTabScreenshot(tabId, { format, quality });
+}
+
 export async function cmdScreenshot({ tabId, sessionId, annotate, format, quality }: ScreenshotParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
   
@@ -144,7 +163,7 @@ export async function cmdScreenshot({ tabId, sessionId, annotate, format, qualit
     await delay(100);
   }
 
-  const dataUrl = await captureTabScreenshot(resolvedTabId, { format: format ?? 'png', quality: quality ?? 90 });
+  const dataUrl = await captureTab(resolvedTabId, format ?? 'png', quality ?? 90);
 
   if (annotate) {
     for (const frameId of [TOP_FRAME, ...frames]) {

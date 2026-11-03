@@ -287,8 +287,10 @@ export async function cmdNavigate(
   if (tabId) {
     targetTabId = tabId;
   } else if (newWindow) {
-    // Chrome window chrome (title bar, borders) adds ~80px height and ~0-16px width
-    const windowOpts: chrome.windows.CreateData = { url: 'about:blank' };
+    // Chrome window chrome (title bar, borders) adds ~80px height and ~0-16px width.
+    // Inactive: the window the user is in keeps the focus — a campaign opens one per test.
+    // The page is told it has the focus all the same (getPage emulates it).
+    const windowOpts: chrome.windows.CreateData = { url: 'about:blank', focused: false };
     if (viewportWidth) windowOpts.width = viewportWidth + 16;
     if (viewportHeight) windowOpts.height = viewportHeight + 88;
     const newWin = await chrome.windows.create(windowOpts);

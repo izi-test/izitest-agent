@@ -318,6 +318,8 @@ export interface Campaign {
   runs: CampaignRun[];
   /** The Test Execution of Xray its results were sent to. */
   xray_execution_key: string | null;
+  /** Run in the Chrome without windows (mcp-server/lib/headless.js). */
+  headless: boolean;
 }
 
 /** A campaign's results as sent (or to be sent) to Xray (mcp-server/lib/xray.js). */

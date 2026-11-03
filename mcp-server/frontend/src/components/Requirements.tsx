@@ -21,6 +21,7 @@ import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
 import { ProjectField } from './ProjectSelector';
 import { CreateTestModal, type CreateMode, type CreateTestPreset } from './CreateTestModal';
+import { useRunHeadless } from '../headless';
 import { Card, Dialog, EmptyState, KeyChip, Menu, PageHeader, ProjectChip, ResultBar, Segmented, StatusPill } from './ui';
 import { dateTime, relativeTime } from '../format';
 import type { Requirement, RequirementCase, RequirementDesign, DesignedScenario, ScenarioResolution, Technique } from '../types';
@@ -284,6 +285,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
   const [update, { isLoading: saving }] = useUpdateRequirementMutation();
   const [remove] = useDeleteRequirementMutation();
   const [startCampaign, { isLoading: launching }] = useStartCampaignMutation();
+  const headless = useRunHeadless();
   const design = requirement.design;
   const missing = (design?.missing ?? []).filter((m) => !criteria.some((c) => sameText(c.text, m)));
   const dirty = title !== requirement.title || description !== requirement.description || priority !== requirement.priority
@@ -324,7 +326,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
   const runTests = async () => {
     setError(null);
     try {
-      const { campaign } = await startCampaign({ requirement: requirement.key }).unwrap();
+      const { campaign } = await startCampaign({ requirement: requirement.key, headless }).unwrap();
       go(`/campaigns/${campaign.id}`, { from: requirement.key });
     } catch (err) {
       setError(errorOf(err));

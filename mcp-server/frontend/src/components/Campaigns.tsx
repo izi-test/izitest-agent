@@ -15,6 +15,8 @@ import { withScope } from '../scope';
 import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
 import { CampaignWriteBack } from './CampaignWriteBack';
+import { HeadlessSwitch } from './HeadlessSwitch';
+import { useRunHeadless } from '../headless';
 import { Card, Dialog, EmptyState, KeyChip, Menu, PageHeader, Pill, ProjectChip, ResultBar, Segmented, StatusPill } from './ui';
 import { dateTime, formatDuration } from '../format';
 import { CAUSE_LABELS } from '../triage-labels';
@@ -105,7 +107,7 @@ export function CampaignsPage() {
                     <td className="mono cell-muted">#{c.id}</td>
                     <td>
                       <div className="cell-title">{c.name}{c.version && <span className="campaign-version">v{c.version}</span>}</div>
-                      <div className="cell-sub">{scopeLabel(c)}</div>
+                      <div className="cell-sub">{scopeLabel(c)}{c.headless && ' · headless'}</div>
                     </td>
                     {projectId === null && <td><ProjectChip project={projects.find((p) => p.id === c.project_id)} /></td>}
                     <td className="cell-muted">{dateTime(c.created_at)}</td>
@@ -153,6 +155,7 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
   const [concurrency, setConcurrency] = useState(3);
   const [error, setError] = useState<string | null>(null);
   const [start, { isLoading }] = useStartCampaignMutation();
+  const headless = useRunHeadless();
 
   const scope: CampaignInput | null = kind === 'project' ? (project ? { project_id: project } : null)
     : kind === 'requirement' ? (requirement ? { requirement } : null)
@@ -163,7 +166,7 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
     if (!scope) return;
     setError(null);
     try {
-      const { campaign } = await start({ ...scope, version: version.trim() || undefined, name: name.trim() || undefined, concurrency }).unwrap();
+      const { campaign } = await start({ ...scope, version: version.trim() || undefined, name: name.trim() || undefined, concurrency, headless }).unwrap();
       onStarted(campaign.id);
     } catch (err) {
       setError(errorOf(err));
@@ -224,10 +227,11 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
           </select>
         </label>
       </div>
+      <HeadlessSwitch />
       {error && <div className="alert alert--error">{error}</div>}
       <div className="form__actions">
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" icon={Play} disabled={!scope || isLoading}>Start</Button>
+        <Button type="submit" icon={Play} disabled={!scope || isLoading}>{headless ? 'Start headless' : 'Start'}</Button>
       </div>
     </form>
   );
@@ -267,7 +271,7 @@ export function CampaignPage({ id }: { id: number }) {
     setError(null);
     try {
       const scope = c.scope.requirement ? { requirement: c.scope.requirement } : c.scope.project_id ? { project_id: c.scope.project_id } : { tests: c.scope.tests };
-      const { campaign: next } = await start({ ...scope, version: c.version ?? undefined, concurrency: c.concurrency }).unwrap();
+      const { campaign: next } = await start({ ...scope, version: c.version ?? undefined, concurrency: c.concurrency, headless: c.headless }).unwrap();
       navigate(withScope(`/campaigns/${next.id}`, c.project_id), { replace: true, state: back.state });
     } catch (err) {
       setError(errorOf(err));
@@ -297,6 +301,7 @@ export function CampaignPage({ id }: { id: number }) {
               <span className="meta-sep" />
               <span className="meta-item">{dateTime(c.created_at)}</span>
               <span className="meta-item">· {c.concurrency} at a time</span>
+              {c.headless && <span className="tag tag--blue">headless</span>}
               {c.duration_ms != null && <span className="meta-item">· {formatDuration(c.duration_ms)}</span>}
             </div>
           </div>

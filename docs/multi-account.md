@@ -40,7 +40,9 @@ Claude will automatically include the `profile` parameter in MCP tool calls if y
 - `"Sur le profil youtube-work, va sur youtube.com/studio"`
 - `"Remplis le formulaire sur le profil youtube-personal"`
 
-If you don't specify a profile, IziTest Agent will default to the first one that connected to the bridge.
+If you don't specify a profile, IziTest Agent will default to the first one that connected to the bridge — never the
+`headless` one, the Chrome without windows the server starts to replay tests out of sight (see
+[MCP Tools Reference → Rejouer sans fenêtre](mcp-tools.md)): it is used only when named.
 
 ---
 

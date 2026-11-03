@@ -9,6 +9,7 @@
 //   node bin/campaign.js --project 3 --version 1.4.0 --junit reports/junit.xml
 //   node bin/campaign.js --requirement REQ-12 --html reports/campaign.html
 //   node bin/campaign.js --tests login,checkout --concurrency 2
+//   node bin/campaign.js --project 3 --headless      (in the server's Chrome without windows)
 //
 // The token is read from IZITEST_TOKEN, the server from IZITEST_URL (default
 // http://127.0.0.1:3467). Exit code 0: every test passed; 1: a test failed or did not run;
@@ -48,6 +49,7 @@ try {
     version: option('version'),
     name: option('name'),
     concurrency: option('concurrency') ? Number(option('concurrency')) : undefined,
+    headless: args.includes('--headless'),
   });
   console.log(`Campaign #${started.id} "${started.name}": ${started.total} test(s)`);
 

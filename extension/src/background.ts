@@ -13,6 +13,7 @@ import { cmdNetworkRequests, cmdNetworkResponse, cmdNetworkSearch } from './comm
 import { cmdConsoleMessages, cmdCheckLinks, cmdRunAxe } from './commands/checks';
 
 import { restoreOwnedWindows } from './owned-windows';
+import { HEADLESS_PROFILE, isHeadless } from './headless';
 import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecordStart, cmdLiveRecordStop, cmdLiveRecordList, setLiveSink } from './live';
 
 // Importing puppeteer-client to register its lifecycle listeners
@@ -158,11 +159,14 @@ function connect(): void {
   websocket.onopen = () => {
     isConnected = true;
     chrome.storage.local.get(['profileId'], (result) => {
-      profileId = result.profileId || `profile-${Date.now()}`;
+      // The Chrome without windows the server starts is always the "headless" profile: runs
+      // asked out of sight go to it, and never an agent's commands that name no profile.
+      profileId = isHeadless() ? HEADLESS_PROFILE : result.profileId || `profile-${Date.now()}`;
       chrome.storage.local.set({ profileId });
       websocket!.send(JSON.stringify({
         type: 'register',
         profileId,
+        headless: isHeadless(),
         userAgent: navigator.userAgent
       }));
     });
