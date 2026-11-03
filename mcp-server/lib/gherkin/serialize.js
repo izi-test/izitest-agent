@@ -70,7 +70,8 @@ export function scenarioPhrases(test, definitions, { singleStep = (step) => step
     // Try composite match first — check if next N steps match a composite definition.
     const composite = tryMatchComposite(steps, i, sortedComposites);
     if (composite) {
-      phrases.push({ keyword: composite.keyword, phrase: composite.phrase, steps: steps.slice(i, i + composite.consumed) });
+      // `business`: the business step it reads as (business-steps.js tells its proposals apart by it).
+      phrases.push({ keyword: composite.keyword, phrase: composite.phrase, steps: steps.slice(i, i + composite.consumed), business: composite.id });
       i += composite.consumed;
       continue;
     }
@@ -94,6 +95,7 @@ function tryMatchComposite(steps, startIndex, composites) {
       const args = extractCompositeArgs(steps, startIndex, tpls);
       if (args) {
         return {
+          id: def.id,
           keyword: def.keyword,
           phrase: renderPattern(def.pattern, args),
           consumed: tpls.length,
@@ -106,6 +108,7 @@ function tryMatchComposite(steps, startIndex, composites) {
     if (!args) continue;
 
     return {
+      id: def.id,
       keyword: def.keyword,
       phrase: renderPattern(def.pattern, args),
       consumed: tpls.length,

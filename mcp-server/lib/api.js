@@ -20,6 +20,7 @@ import {
 import { serializeTestToFeature } from './gherkin/serialize.js';
 import { stepsForEditedFeature } from './gherkin/reconcile.js';
 import { withElementNames, elementTargets, listElements, renameElement, deleteElement } from './element-store.js';
+import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
@@ -256,6 +257,33 @@ export async function apiRouter(req, res, url) {
 
       saveTest({ ...existing, steps });
       return json(res, 200, { success: true, step_count: steps.length });
+    }
+
+    // ── Business steps the agent proposes for a test (lib/business-steps.js) ──
+    // GET: the proposals kept, or whether they are being worked out. DELETE: all dismissed.
+    params = matchRoute(path, '/api/tests/:name/business-steps');
+    if (method === 'GET' && params) return json(res, 200, proposalsOf(params.name));
+    if (method === 'DELETE' && params) {
+      const result = dismissProposal(params.name);
+      return result.error ? json(res, result.status, { error: result.error }) : json(res, 200, result);
+    }
+    // POST …/propose: asked of the agent set in Settings, in the background (a few minutes at most).
+    params = matchRoute(path, '/api/tests/:name/business-steps/propose');
+    if (method === 'POST' && params) {
+      const result = startProposals(params.name, { complete, agent: agentName() });
+      return result.error ? json(res, result.status, { error: result.error }) : json(res, 202, result);
+    }
+    // POST …/:id/accept — { pattern?, keyword? }: the phrase as the user left it becomes a business step.
+    params = matchRoute(path, '/api/tests/:name/business-steps/:id/accept');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      const result = acceptProposal(params.name, params.id, { pattern: body.pattern, keyword: body.keyword });
+      return result.error ? json(res, result.status, { error: result.error }) : json(res, 200, result);
+    }
+    params = matchRoute(path, '/api/tests/:name/business-steps/:id');
+    if (method === 'DELETE' && params) {
+      const result = dismissProposal(params.name, params.id);
+      return result.error ? json(res, result.status, { error: result.error }) : json(res, 200, result);
     }
 
     // ── GET /api/tests/:name/codegen?framework=... ──

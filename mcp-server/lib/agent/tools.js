@@ -17,7 +17,7 @@ import {
 } from '../gherkin/step-definition-store.js';
 import { log } from '../logger.js';
 import { CODEGEN_FRAMEWORKS, generateTestCode, formatCodeFiles } from '../codegen/index.js';
-import { buildBusinessStep } from '../gherkin/business-step.js';
+import { addBusinessStep } from '../business-steps.js';
 import { addTestVariable } from '../test-variable.js';
 import { linkRecorded, requirementsOfTest } from '../requirements.js';
 
@@ -267,34 +267,15 @@ export const AGENT_TOOLS = [
         return { error: `Project ${project_id} not found` };
       }
 
-      const built = buildBusinessStep(test, { from_step, to_step, pattern, args });
-      if (built.error) return { error: built.error };
-
-      try {
-        const def = createStepDefinition(project_id, {
-          keyword,
-          pattern,
-          command: 'composite',
-          params_template: {},
-          steps_template: built.steps_template,
-        });
-        if (!test.project_id) {
-          db.prepare('UPDATE tests SET project_id = ? WHERE name = ?').run(project_id, test_name);
-        }
-        log(`[Agent Tool] Created business step "${pattern}" from steps ${from_step}-${to_step} of "${test_name}"`);
-        return {
-          data: {
-            step_definition_id: def.id,
-            steps_grouped: built.steps_template.length,
-            feature: serializeTestToFeatureWith(withElementNames({ ...test, project_id }), projectDefinitions(project_id)),
-          },
-        };
-      } catch (err) {
-        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-          return { error: `Step definition with pattern "${pattern}" already exists` };
-        }
-        return { error: err.message };
-      }
+      const added = addBusinessStep(project_id, test, { from_step, to_step, keyword, pattern, args });
+      if (added.error) return { error: added.error };
+      return {
+        data: {
+          step_definition_id: added.definition.id,
+          steps_grouped: added.steps_grouped,
+          feature: serializeTestToFeatureWith(withElementNames({ ...test, project_id }), projectDefinitions(project_id)),
+        },
+      };
     },
   },
 

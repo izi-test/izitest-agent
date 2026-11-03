@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Test, TestCampaign } from '../../types';
+import type { BusinessProposals, Test, TestCampaign } from '../../types';
 
 interface TestsResponse {
   tests: Test[];
@@ -129,6 +129,28 @@ export const testsApi = createApi({
       providesTags: (_result, _error, name) => [{ type: 'Test', id: name }],
     }),
 
+    // The business steps the agent proposes for a test (mcp-server/lib/business-steps.js).
+    getBusinessProposals: builder.query<BusinessProposals, string>({
+      query: (name) => `api/tests/${encodeURIComponent(name)}/business-steps`,
+      providesTags: (_result, _error, name) => [{ type: 'Test', id: `${name}#business` }],
+    }),
+
+    proposeBusinessSteps: builder.mutation<BusinessProposals, string>({
+      query: (name) => ({ url: `api/tests/${encodeURIComponent(name)}/business-steps/propose`, method: 'POST' }),
+      invalidatesTags: (_result, _error, name) => [{ type: 'Test', id: `${name}#business` }],
+    }),
+
+    // Accepted, it is a phrase of the project: every test acting on the same elements reads with it.
+    acceptBusinessStep: builder.mutation<{ definition_id: number; feature: string }, { testName: string; id: string; pattern: string }>({
+      query: ({ testName, id, pattern }) => ({ url: `api/tests/${encodeURIComponent(testName)}/business-steps/${id}/accept`, method: 'POST', body: { pattern } }),
+      invalidatesTags: ['Test'],
+    }),
+
+    dismissBusinessStep: builder.mutation<BusinessProposals, { testName: string; id?: string }>({
+      query: ({ testName, id }) => ({ url: `api/tests/${encodeURIComponent(testName)}/business-steps${id ? `/${id}` : ''}`, method: 'DELETE' }),
+      invalidatesTags: (_result, _error, { testName }) => [{ type: 'Test', id: `${testName}#business` }],
+    }),
+
     putTestFeature: builder.mutation<{ success: boolean; step_count: number }, { testName: string; feature: string }>({
       query: ({ testName, feature }) => ({
         url: `api/tests/${encodeURIComponent(testName)}/feature`,
@@ -164,4 +186,8 @@ export const {
   useGetTestFeatureQuery,
   usePutTestFeatureMutation,
   useGetTestCodegenQuery,
+  useGetBusinessProposalsQuery,
+  useProposeBusinessStepsMutation,
+  useAcceptBusinessStepMutation,
+  useDismissBusinessStepMutation,
 } = testsApi;

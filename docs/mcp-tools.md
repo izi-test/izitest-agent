@@ -311,6 +311,30 @@ stables qui diffèrent restent deux éléments, et l'attribut `name` d'une case 
 groupe, ne compte pas. Les autres paramètres (état coché, valeur saisie…) doivent toujours correspondre.
 Une étape métier créée sans locators (avant `create_business_step`) demande toujours le sélecteur exact.
 
+### Étapes métier proposées par l'IA
+
+Après la création d'un test par l'IA, l'agent réglé dans Settings propose ses étapes métier, en
+arrière-plan ; l'onglet Gherkin du test les montre, et le bouton « Propose business steps » les demande
+pour n'importe quel test d'un projet. Rien n'est créé sans l'accord de l'utilisateur : chaque
+proposition s'accepte, avec sa phrase telle qu'il l'a laissée, ou s'écarte.
+
+L'agent lit le test étape par étape, par le nom de ses éléments, avec ses variables et les étapes métier
+que le projet a déjà ; ce qu'une étape métier regroupe déjà s'affiche comme elle et n'est pas proposé à
+nouveau. Il propose des suites de 2 à 12 étapes consécutives qui font ensemble une chose qu'un
+utilisateur veut dire (« j'enregistre mon profil avec le nom {string} … »), dans la langue des étapes
+métier du projet, chaque valeur qui change d'un scénario à l'autre en paramètre. Chaque proposition est
+vérifiée avant d'être montrée : elle ne coupe pas une phrase, ne chevauche ni une autre ni une étape
+métier, sa phrase est nouvelle et sans `( )` ni `/`, et chaque variable des étapes regroupées a son
+paramètre. Elle dit comment le test se lira, les phrases qu'elle remplace, et les autres tests du projet
+qui se liront avec elle (les mêmes étapes, sur les mêmes éléments).
+
+| Route | Rôle |
+| :--- | :--- |
+| `GET /api/tests/:name/business-steps` | Les propositions gardées pour le test, ou qu'elles sont en cours (`status` : `none`, `running`, `ready`, `failed`) |
+| `POST /api/tests/:name/business-steps/propose` | Les demande à l'agent, en arrière-plan (202) ; une seule demande à la fois |
+| `POST /api/tests/:name/business-steps/:id/accept` | Crée l'étape métier (`{ pattern }` : la phrase modifiée) ; 422 si elle ne convient pas |
+| `DELETE /api/tests/:name/business-steps/:id` | Écarte une proposition ; sans `:id`, toutes |
+
 ### Variable Support
 When saving a test (via `stop_recording`), IziTest Agent automatically identifies variables (e.g., input values or list selections). You can override these during `run_test`:
 

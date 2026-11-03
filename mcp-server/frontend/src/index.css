@@ -3079,3 +3079,21 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 }
 .element-chip:hover { background: var(--primary-tint-strong); }
 .field__error { color: var(--red); font-size: 12px; }
+
+/* Business steps the AI agent proposes (BusinessStepProposals.tsx). */
+.business-proposals { margin-bottom: 16px; }
+.business-proposals__list { display: flex; flex-direction: column; gap: 12px; }
+.business-proposals__footer { display: flex; justify-content: flex-end; margin-top: 8px; }
+.business-proposal { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.business-proposal__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.business-proposal__keyword { font-family: var(--mono); font-size: 13px; color: var(--primary-hover); font-weight: 600; }
+.business-proposal__pattern { flex: 1; min-width: 240px; height: 32px; font-size: 14px; }
+.business-proposal__body { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.business-proposal__reads { color: var(--text); }
+.business-proposal__replaces { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 2px solid var(--border); font-size: 12px; color: var(--text-muted); }
+.business-proposal__actions { display: flex; gap: 8px; }
+.business-notice {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 12px;
+  border: 1px solid var(--primary-tint-border); border-radius: 8px; background: var(--primary-tint); color: var(--primary-hover); font-size: 13px;
+}
+.business-notice .link-btn { margin-left: auto; }

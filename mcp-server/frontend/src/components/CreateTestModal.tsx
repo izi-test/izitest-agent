@@ -9,6 +9,7 @@ import {
   useAssignToProjectMutation,
   useCreateTestMutation,
   usePutTestFeatureMutation,
+  useProposeBusinessStepsMutation,
 } from '../store/services/testsApi';
 
 export type CreateMode = 'ai' | 'gherkin';
@@ -83,6 +84,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   const [addCase] = useAddCaseMutation();
   const [createTest] = useCreateTestMutation();
   const [putTestFeature] = usePutTestFeatureMutation();
+  const [proposeBusinessSteps] = useProposeBusinessStepsMutation();
 
   const [mode, setMode] = useState<CreateMode>('ai');
   const [name, setName] = useState('');
@@ -247,6 +249,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
                       setError(`Warning: Test was created but could not be assigned to project (${assignErr.message}). You can manually assign it later.`);
                     }
                   }
+                  // The agent then proposes its business steps, in the background: the test page shows them.
+                  if (projectId) proposeBusinessSteps(name.trim());
                   setAgentStatus('done');
                   onTestCreated(name.trim(), projectId ?? null);
                 } catch {

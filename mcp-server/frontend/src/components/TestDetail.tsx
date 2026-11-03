@@ -33,6 +33,7 @@ import { Button } from './Button';
 import { ExecutionHistory } from './ExecutionHistory';
 import { LiveExecutionModal } from './LiveExecutionModal';
 import { GherkinEditor } from './GherkinEditor';
+import { BusinessStepProposals, BusinessStepsNotice } from './BusinessStepProposals';
 import { CodePanel } from './CodePanel';
 import { HeadlessSwitch } from './HeadlessSwitch';
 import { useRunHeadless } from '../headless';
@@ -526,6 +527,7 @@ CRITICAL RULES:
                   <Button variant="secondary" size="sm" icon={ShieldCheck} onClick={() => dispatch(openAssertionModal(null))}>Add assertion</Button>
                 </div>
               </div>
+              {test.project_id != null && <BusinessStepsNotice testName={test.name} />}
 
               {steps.length === 0 ? (
                 <Card><EmptyState icon={List} title="No step yet">Add steps to build the test, then assertions to check what it does.</EmptyState></Card>
@@ -617,7 +619,10 @@ CRITICAL RULES:
               />
             </>
           ) : activeTab === 'gherkin' ? (
-            <Card><GherkinEditor testName={test.name} /></Card>
+            <>
+              {test.project_id != null && <BusinessStepProposals testName={test.name} />}
+              <Card><GherkinEditor testName={test.name} /></Card>
+            </>
           ) : activeTab === 'code' ? (
             <Card><CodePanel testName={test.name} /></Card>
           ) : activeTab === 'campaigns' ? (

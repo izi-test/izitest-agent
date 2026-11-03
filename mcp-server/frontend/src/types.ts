@@ -383,3 +383,28 @@ export interface RequirementImport {
   changed: number;
   unchanged: number;
 }
+
+/** A business step the agent proposes for a test: a run of its steps made one phrase (mcp-server/lib/business-steps.js). */
+export interface BusinessProposal {
+  id: string;
+  from_step: number;
+  to_step: number;
+  keyword: 'Given' | 'When' | 'Then';
+  /** The phrase, as a Cucumber expression: je renseigne mon profil avec le nom {string}. */
+  pattern: string;
+  args: Array<{ variable?: string; step?: number; param?: string; value?: string }>;
+  /** How the test reads with it. */
+  reads: string;
+  /** The phrases it stands for. */
+  replaces: string[];
+  reason: string | null;
+  /** The other tests of the project it would read in too. */
+  also_in: string[];
+}
+
+export interface BusinessProposals {
+  status: 'none' | 'running' | 'ready' | 'failed';
+  proposals: BusinessProposal[];
+  error?: string | null;
+  agent?: string | null;
+}

@@ -386,6 +386,18 @@ export function initDatabase() {
     log(`Migration warning (elements): ${err.message}`);
   }
 
+  // The business steps the agent proposes for a test, until accepted or dismissed (lib/business-steps.js).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS business_proposals (
+      test_id INTEGER PRIMARY KEY REFERENCES tests(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      proposals TEXT NOT NULL DEFAULT '[]',
+      error TEXT,
+      agent TEXT,
+      updated_at TEXT
+    );
+  `);
+
   log('SQLite database initialized');
 }
 
