@@ -400,6 +400,30 @@ export function initDatabase() {
     log(`Migration warning (language): ${err.message}`);
   }
 
+  // The datasets of a project (lib/datasets.js): a test bound to one runs once per row; a run
+  // says which row it played.
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS datasets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        source TEXT,
+        columns TEXT NOT NULL DEFAULT '[]',
+        rows TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        UNIQUE(project_id, name)
+      );
+    `);
+    const testCols = db.prepare('PRAGMA table_info(tests)').all().map(c => c.name);
+    if (!testCols.includes('dataset_id')) db.exec('ALTER TABLE tests ADD COLUMN dataset_id INTEGER REFERENCES datasets(id) ON DELETE SET NULL');
+    const executionCols = db.prepare('PRAGMA table_info(test_executions)').all().map(c => c.name);
+    if (!executionCols.includes('data_row')) db.exec('ALTER TABLE test_executions ADD COLUMN data_row INTEGER DEFAULT NULL');
+  } catch (err) {
+    log(`Migration warning (datasets): ${err.message}`);
+  }
+
   // The business steps the agent proposes for a test, until accepted or dismissed (lib/business-steps.js).
   db.exec(`
     CREATE TABLE IF NOT EXISTS business_proposals (

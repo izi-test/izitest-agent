@@ -10,6 +10,7 @@ import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 import { ensureHeadless, inHeadless } from './headless.js';
 import { createAdHocSession, destroySession, runInSession, listSessions } from './session.js';
+import { datasetOfTest } from './datasets.js';
 import { getRequirement, coverageOf, requirementsOfTest } from './requirements.js';
 
 // The campaigns running now, and whether each was asked to stop.
@@ -67,6 +68,11 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
       : { project_id: projectId };
   const names = testsOfScope({ tests, requirement, projectId });
   if (!names.length) throw new Error('No test to run: none in that scope');
+  // A test bound to a dataset (lib/datasets.js) runs once per row.
+  const entries = names.flatMap((name) => {
+    const dataset = datasetOfTest(name);
+    return dataset ? dataset.rows.map((_, i) => ({ test: name, row: i + 1 })) : [name];
+  });
   const lanes = Math.min(Math.max(1, Math.floor(Number(concurrency)) || 3), MAX_CONCURRENCY);
   // Chosen tests all of one project belong to it: the campaign is listed with the project's.
   const project = projectId ?? (scope.requirement ? getRequirement(scope.requirement).project_id : projectOfTests(names));
@@ -74,47 +80,55 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
     `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency, headless)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
   ).get(name?.trim() || defaultName(scope, project, names), project, JSON.stringify(scope), scopeKeyOf(scope, names),
-    version?.trim() || null, JSON.stringify(names), lanes, headless ? 1 : 0);
+    version?.trim() || null, JSON.stringify(entries), lanes, headless ? 1 : 0);
   const state = { stop: false };
   running.set(id, state);
-  log(`Campaign #${id} started: ${names.length} test(s), ${lanes} at a time${version ? `, version ${version}` : ''}`);
-  const finished = runCampaign(id, names, lanes, state, headless ? inHeadless(sendCommand) : sendCommand, headless)
+  log(`Campaign #${id} started: ${entries.length} run(s) of ${names.length} test(s), ${lanes} at a time${version ? `, version ${version}` : ''}`);
+  const finished = runCampaign(id, entries.map(entryOf), lanes, state, headless ? inHeadless(sendCommand) : sendCommand, headless)
     .catch((err) => log(`Campaign #${id} failed: ${err.message}`))
     .finally(() => running.delete(id));
   return { campaign: getCampaign(id), finished };
 }
 
-async function runCampaign(id, names, lanes, state, dispatch, headless) {
+/** A campaign's entry: a test, or a row of the dataset of one. */
+function entryOf(entry) {
+  return typeof entry === 'string' ? { name: entry, row: null } : { name: entry.test, row: entry.row ?? null };
+}
+
+/** How a run of a campaign is told apart: its test, and its row when it plays one. */
+export const labelOf = ({ name, row }) => (row ? `${name} [row ${row}]` : name);
+
+async function runCampaign(id, entries, lanes, state, dispatch, headless) {
   const { executeTest } = await import('./test-execute.js');
   if (headless) {
     // No headless Chrome to run in: every test is told why it did not run.
     try {
       await ensureHeadless();
     } catch (err) {
-      for (const name of names) noteError(id, name, `Not run: ${err.message}`);
-      names = [];
+      for (const entry of entries) noteError(id, labelOf(entry), `Not run: ${err.message}`);
+      entries = [];
     }
   }
   const session = createAdHocSession(`campaign-${id}`);
   const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, session.scope(params), ...rest);
   let next = 0;
   const lane = async () => {
-    while (next < names.length && !state.stop) {
-      const name = names[next++];
+    while (next < entries.length && !state.stop) {
+      const entry = entries[next++];
       let tabId = null;
       try {
-        const result = await executeTest(name, null, null, null, true, sendCommand, 'campaign', null, null, { campaignId: id });
+        const result = await executeTest(entry.name, null, null, null, true, sendCommand, 'campaign', null, null, { campaignId: id, ...(entry.row ? { row: entry.row } : {}) });
         tabId = result.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
       } catch (err) {
         tabId = err.tabId ?? null;
         // A failed run is kept with its execution; one that never started is told here.
-        if (!err.executionId) noteError(id, name, err.message);
+        if (!err.executionId) noteError(id, labelOf(entry), err.message);
       }
       if (tabId) await sendCommand(undefined, 'close_window', { tabId, liveSessions: listSessions().map((s) => s.id) }).catch(() => {});
     }
   };
   try {
-    await runInSession(session, {}, () => Promise.all(Array.from({ length: Math.min(lanes, names.length) }, lane)));
+    await runInSession(session, {}, () => Promise.all(Array.from({ length: Math.min(lanes, entries.length) }, lane)));
   } finally {
     destroySession(session.id);
     db.prepare(`UPDATE campaigns SET status = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
@@ -147,19 +161,21 @@ export function closeInterruptedCampaigns() {
 function testsOf(row) {
   const errors = parseJson(row.errors) ?? {};
   const runs = new Map(db.prepare(
-    `SELECT id, test_name, status, failed_step, total_steps, error, duration_ms, triage, assertions_total, assertions_failed
+    `SELECT id, test_name, data_row, status, failed_step, total_steps, error, duration_ms, triage, assertions_total, assertions_failed
      FROM test_executions WHERE campaign_id = ? ORDER BY id`
-  ).all(row.id).map((run) => [run.test_name, run]));
+  ).all(row.id).map((run) => [labelOf({ name: run.test_name, row: run.data_row }), run]));
   const live = running.has(row.id);
-  return parseJson(row.tests).map((name) => {
-    const run = runs.get(name);
+  return parseJson(row.tests).map((entry) => {
+    const { name, row: dataRow } = entryOf(entry);
+    const label = labelOf({ name, row: dataRow });
+    const run = runs.get(label);
     const triage = parseJson(run?.triage);
     const status = run ? ({ success: 'passed', failed: 'failed' }[run.status] ?? 'running')
-      : errors[name] ? 'error' : live ? 'pending' : 'skipped';
+      : errors[label] ? 'error' : live ? 'pending' : 'skipped';
     return {
-      name, status, execution_id: run?.id ?? null, duration_ms: run?.duration_ms ?? null,
+      name, row: dataRow, label, status, execution_id: run?.id ?? null, duration_ms: run?.duration_ms ?? null,
       failed_step: run?.failed_step ?? null, total_steps: run?.total_steps ?? null,
-      error: status === 'failed' || status === 'error' ? (run?.error ?? errors[name]) : null,
+      error: status === 'failed' || status === 'error' ? (run?.error ?? errors[label]) : null,
       triage: triage ? { cause: triage.cause, confidence: triage.confidence, summary: triage.summary } : null,
     };
   });
@@ -174,11 +190,18 @@ const STATUSES = ['passed', 'failed', 'error', 'running', 'pending', 'skipped'];
  */
 function requirementsOf(tests) {
   if (!tests.length) return [];
-  const statusOf = new Map(tests.map((t) => [t.name, t.status]));
+  // A test played on several rows failed when one of them did, passed when all of them did.
+  const statusOf = new Map();
+  for (const t of tests) {
+    const before = statusOf.get(t.name);
+    if (before === undefined) statusOf.set(t.name, t.status);
+    else if (before === 'failed' || t.status === 'failed') statusOf.set(t.name, 'failed');
+    else if (before === 'passed') statusOf.set(t.name, t.status);
+  }
   const ids = db.prepare(
     `SELECT DISTINCT c.requirement_id AS id FROM requirement_cases c JOIN tests t ON t.id = c.test_id
-     WHERE t.name IN (${tests.map(() => '?').join(',')}) ORDER BY c.requirement_id`
-  ).all(...tests.map((t) => t.name)).map((r) => r.id);
+     WHERE t.name IN (${[...statusOf.keys()].map(() => '?').join(',')}) ORDER BY c.requirement_id`
+  ).all(...[...statusOf.keys()]).map((r) => r.id);
   return ids.map((id) => {
     const requirement = getRequirement(id);
     const asRun = (c) => {
@@ -218,11 +241,11 @@ export function getCampaign(id) {
   const previous = previousOf(row);
   let changes = null;
   if (previous) {
-    const before = new Map(testsOf(previous).map((t) => [t.name, t.status]));
+    const before = new Map(testsOf(previous).map((t) => [t.label, t.status]));
     changes = {
       since: { id: previous.id, version: previous.version, created_at: previous.created_at },
-      regressed: tests.filter((t) => t.status === 'failed' && before.get(t.name) === 'passed').map((t) => t.name),
-      fixed: tests.filter((t) => t.status === 'passed' && before.get(t.name) === 'failed').map((t) => t.name),
+      regressed: tests.filter((t) => t.status === 'failed' && before.get(t.label) === 'passed').map((t) => t.label),
+      fixed: tests.filter((t) => t.status === 'passed' && before.get(t.label) === 'failed').map((t) => t.label),
     };
   }
   const project = row.project_id ? db.prepare('SELECT name FROM projects WHERE id = ?').get(row.project_id)?.name ?? null : null;
@@ -231,7 +254,7 @@ export function getCampaign(id) {
     running: running.has(row.id), totals, total: tests.length,
     duration_ms: row.finished_at ? Date.parse(row.finished_at) - Date.parse(row.created_at) : null,
     changes, requirements: requirementsOf(tests),
-    non_conformities: tests.filter((t) => t.triage?.cause === 'non_conformity').map((t) => t.name),
+    non_conformities: tests.filter((t) => t.triage?.cause === 'non_conformity').map((t) => t.label),
     runs: tests,
   };
 }
@@ -243,7 +266,7 @@ export function listCampaigns({ projectId, limit = 50 } = {}) {
     : db.prepare('SELECT id FROM campaigns ORDER BY id DESC LIMIT ?').all(limit);
   return rows.map((r) => {
     const { requirements, runs, ...campaign } = getCampaign(r.id);
-    return { ...campaign, failing_requirements: requirements.filter((x) => x.status === 'failing').map((x) => x.key), failed: runs.filter((t) => t.status === 'failed').map((t) => t.name) };
+    return { ...campaign, failing_requirements: requirements.filter((x) => x.status === 'failing').map((x) => x.key), failed: runs.filter((t) => t.status === 'failed').map((t) => t.label) };
   });
 }
 
@@ -270,7 +293,7 @@ export function formatCampaign(c) {
   if (failed.length) {
     lines.push('Failed:');
     for (const t of failed) {
-      lines.push(`  ${t.name}${t.failed_step ? ` — step ${t.failed_step}/${t.total_steps}` : ''}: ${String(t.error ?? '').split('\n')[0].slice(0, 200)}`);
+      lines.push(`  ${t.label ?? t.name}${t.failed_step ? ` — step ${t.failed_step}/${t.total_steps}` : ''}: ${String(t.error ?? '').split('\n')[0].slice(0, 200)}`);
       if (t.triage) lines.push(`    → ${t.triage.cause} (${t.triage.confidence}): ${t.triage.summary.slice(0, 300)}`);
     }
   }
@@ -309,7 +332,7 @@ export function junitReport(c) {
       ? `\n      <failure message="${xml(message)}" type="${xml(t.triage?.cause ?? 'failed')}">${xml([t.triage && `${t.triage.cause} (${t.triage.confidence}): ${t.triage.summary}`, t.error].filter(Boolean).join('\n\n'))}</failure>`
       : t.status === 'error' ? `\n      <error message="${xml(message)}"/>`
         : t.status !== 'passed' ? `\n      <skipped message="${xml(t.status === 'skipped' ? 'not run: the campaign was stopped' : `still ${t.status}`)}"/>` : '';
-    return `    <testcase name="${xml(t.name)}" classname="${xml(c.project ?? 'izitest')}" time="${time(t.duration_ms)}">${properties}${body}${properties || body ? '\n    ' : ''}</testcase>`;
+    return `    <testcase name="${xml(t.label ?? t.name)}" classname="${xml(c.project ?? 'izitest')}" time="${time(t.duration_ms)}">${properties}${body}${properties || body ? '\n    ' : ''}</testcase>`;
   });
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -346,7 +369,7 @@ export function htmlReport(c) {
        <ol>${r.criteria.map((x) => `<li>${html(x.text)} ${chip(x.status.replace('_', ' '), REQUIREMENT_COLORS[x.status])}</li>`).join('')}</ol></div>`).join('')}</section>`
     : '';
   const rows = c.runs.map((t) => `
-    <tr><td>${html(t.name)}</td><td>${chip(t.status, STATUS_COLORS[t.status])}</td><td>${seconds(t.duration_ms)}</td>
+    <tr><td>${html(t.label ?? t.name)}</td><td>${chip(t.status, STATUS_COLORS[t.status])}</td><td>${seconds(t.duration_ms)}</td>
     <td>${t.status === 'failed' || t.status === 'error'
       ? `${t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}${html(String(t.error ?? '').split('\n')[0].slice(0, 300))}${t.triage ? `<div class="why"><strong>${html(t.triage.cause.replace('_', ' '))}</strong> — ${html(t.triage.summary)}</div>` : ''}`
       : ''}</td></tr>`).join('');

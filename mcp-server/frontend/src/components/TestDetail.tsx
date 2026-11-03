@@ -19,9 +19,11 @@ import {
 import { executeTest, executeAgent, closeLiveModal, stopExecution, sendDebugAction, toggleBreakpoint } from '../store/slices/executionSlice';
 import {
   useGetTestQuery, useUpdateTestMutation, useDeleteTestMutation, useDeleteStepMutation, useReorderStepsMutation, useGetTestCampaignsQuery,
+  useBindDatasetMutation,
 } from '../store/services/testsApi';
 import { useGetExecutionsQuery } from '../store/services/executionsApi';
-import { useGetProjectsQuery } from '../store/services/projectsApi';
+import { useGetProjectsQuery, useGetDatasetsQuery } from '../store/services/projectsApi';
+import { useStartCampaignMutation } from '../store/services/campaignsApi';
 import { useGetTestRequirementsQuery } from '../store/services/requirementsApi';
 import { useBack, useFollowProject, useGo, useLeaveGuard } from '../navigation';
 import { withScope } from '../scope';
@@ -43,7 +45,7 @@ import { Card, EmptyState, KeyChip, Menu, ProjectChip, ResultBar, StatusPill } f
 import { dateTime, formatDuration, relativeTime } from '../format';
 import {
   ArrowLeft, Play, Save, Trash2, List, History, ChevronUp, ChevronDown, Pencil, Plus, Database, ShieldCheck, Monitor, FileCode, Code,
-  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight, MousePointerClick,
+  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight, MousePointerClick, Table,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -127,7 +129,12 @@ export function TestDetail({ testName }: TestDetailProps) {
   const [reorderStepsMut] = useReorderStepsMutation();
   // What the variables holding expressions would give now (Data tab).
   const currentValues = Object.fromEntries(Object.entries(test?.variables ?? {}).map(([key, info]) => [key, String(variableOverrides[key] ?? (info as { defaultValue?: string })?.defaultValue ?? '')]));
-  const computedPreview = useComputedPreview(currentValues, projects.find((p) => p.id === test?.project_id)?.language);
+  const computedPreview = useComputedPreview(currentValues, projects.find((p) => p.id === test?.project_id)?.language, test?.project_id);
+  // Bound to a dataset: the row a run plays, and the datasets it may be bound to.
+  const [dataRow, setDataRow] = useState(1);
+  const { data: datasets = [] } = useGetDatasetsQuery(test?.project_id ?? 0, { skip: !test?.project_id });
+  const [bindDataset] = useBindDatasetMutation();
+  const [startCampaign, { isLoading: startingCampaign }] = useStartCampaignMutation();
 
   // Local-only confirm modal state (callback is non-serializable)
   const [confirmData, setConfirmData] = useState<{ isOpen: boolean; title?: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
@@ -264,6 +271,7 @@ export function TestDetail({ testName }: TestDetailProps) {
       testName: test.name,
       newWindow: executeNewWindow,
       variables: variableOverrides,
+      ...(test.dataset ? { row: Math.min(dataRow, test.dataset.row_count) } : {}),
       debug: useDebug,
       breakpoints: [],
       // Debug is watched step by step: it keeps a window.
@@ -392,6 +400,22 @@ CRITICAL RULES:
               {runOptionsOpen && (
                 <div className="popover run-options">
                   <div className="popover__title">Run options</div>
+                  {test.dataset && (
+                    <div className="field">
+                      <span className="field__label"><Table size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Row of {test.dataset.name}</span>
+                      <select value={dataRow} onChange={(e) => setDataRow(Number(e.target.value))}>
+                        {test.dataset.row_labels.map((label, i) => <option key={i} value={i + 1}>{label}</option>)}
+                      </select>
+                      <Button size="sm" variant="secondary" icon={Layers} disabled={startingCampaign} onClick={async () => {
+                        try {
+                          const { campaign } = await startCampaign({ tests: [test.name], headless: runHeadless }).unwrap();
+                          go(`/campaigns/${campaign.id}`, { from: test.name });
+                        } catch (err) {
+                          dispatch(showToast({ message: (err as { data?: { error?: string } })?.data?.error ?? 'The campaign did not start', type: 'error' }));
+                        }
+                      }}>Run every row ({test.dataset.row_count})</Button>
+                    </div>
+                  )}
                   <HeadlessSwitch disabledReason={useDebug ? 'Debug runs in a window: it is watched step by step.' : useAgent ? 'The agent repairs in your Chrome: it runs there.' : undefined} />
                   <label className={`switch ${runHeadless && !useDebug && !useAgent ? 'switch--disabled' : ''}`}>
                     <input type="checkbox" checked={executeNewWindow || (runHeadless && !useDebug && !useAgent)} disabled={runHeadless && !useDebug && !useAgent} onChange={e => dispatch(setExecuteNewWindow(e.target.checked))} />
@@ -475,6 +499,31 @@ CRITICAL RULES:
       <div className={`detail-layout ${withSide ? '' : 'detail-layout--full'}`}>
         <div className="stack">
           {activeTab === 'data' ? (
+            <>
+            {test.project_id != null && (
+              <Card title="Dataset" icon={Table} className="dataset-binding"
+                subtitle="Bound to a dataset of the project, the test runs once per row of it: each column is a variable of the run, over the values below.">
+                <div className="dataset-binding__row">
+                  <select aria-label="Dataset" value={test.dataset?.id ?? ''} onChange={async (e) => {
+                    try {
+                      await bindDataset({ testName: test.name, dataset: e.target.value ? Number(e.target.value) : null }).unwrap();
+                      setDataRow(1);
+                    } catch (err) {
+                      dispatch(showToast({ message: (err as { data?: { error?: string } })?.data?.error ?? 'Not bound', type: 'error' }));
+                    }
+                  }}>
+                    <option value="">None — one run with the values below</option>
+                    {datasets.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.row_count} row{d.row_count === 1 ? '' : 's'}</option>)}
+                  </select>
+                  <button className="link-btn" onClick={() => go('/datasets', { from: test.name })}>{datasets.length ? 'Datasets' : 'Add a dataset'}</button>
+                </div>
+                {test.dataset && (
+                  <p className="field__hint">
+                    Its columns: {test.dataset.columns.map((c) => <span key={c} className="step-var-badge">{`{{${c}}}`}</span>)} — a run plays one row (Run options), a campaign every row.
+                  </p>
+                )}
+              </Card>
+            )}
             <Card title="Variables" subtitle="The values a run uses; change them for the next run, or save them as the defaults."
               actions={(
                 <Button variant="secondary" size="sm" icon={Save} onClick={async () => {
@@ -525,6 +574,7 @@ CRITICAL RULES:
               )}
               <p className="field__hint data-help">{COMPUTED_HELP}</p>
             </Card>
+            </>
           ) : activeTab === 'steps' ? (
             <>
               <div className="section-head">

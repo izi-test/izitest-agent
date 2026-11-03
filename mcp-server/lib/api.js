@@ -23,6 +23,7 @@ import { withElementNames, elementTargets, listElements, renameElement, deleteEl
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { languageOf } from './gherkin/language.js';
 import { computeVariables } from './values.js';
+import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetOfTest, datasetRows, rowLabel } from './datasets.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
@@ -179,10 +180,13 @@ export async function apiRouter(req, res, url) {
       ).all(test.id);
       // Each step with the element it acts on (`element`, its name), when it is known.
       const { steps: named } = withElementNames({ project_id: test.project_id, steps: parseRows(steps, 'params', 'locators', 'variable', 'assertion') });
+      // The dataset it runs the rows of, each row told by its first values.
+      const dataset = datasetOfTest(test.name);
       return json(res, 200, {
         test: {
           ...parseRow(test, 'variables', 'viewport'),
-          steps: named
+          steps: named,
+          dataset: dataset && { id: dataset.id, name: dataset.name, columns: dataset.columns, row_count: dataset.row_count, row_labels: dataset.rows.map((row, i) => rowLabel(row, i + 1)) },
         }
       });
     }
@@ -266,7 +270,8 @@ export async function apiRouter(req, res, url) {
     if (method === 'POST' && path === '/api/values/preview') {
       const body = await readBody(req);
       const raw = Object.fromEntries(Object.entries(body.values ?? {}).map(([name, value]) => [name, String(value ?? '')]));
-      const { values, problems } = computeVariables(raw, { language: languageOf(body.language) });
+      const data = datasetRows(body.project_id ? Number(body.project_id) : null);
+      const { values, problems } = computeVariables(raw, { language: languageOf(body.language), datasets: (name) => data[name] });
       return json(res, 200, { values, problems });
     }
 
@@ -305,7 +310,8 @@ export async function apiRouter(req, res, url) {
       if (!test) return json(res, 404, { error: 'Test not found' });
 
       try {
-        const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name) }, framework, projectDefinitions);
+        // With the datasets of its project, and the one it runs the rows of.
+        const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name), datasets: datasetRows(test.project_id), dataset: datasetOfTest(test.name)?.name ?? null }, framework, projectDefinitions);
         if (result.error) return json(res, result.status, { error: result.error });
         return json(res, 200, { framework, files: result.files });
       } catch (err) {
@@ -360,7 +366,7 @@ export async function apiRouter(req, res, url) {
       try {
         if (headless) await ensureHeadless();
         const newWindow = headless || (body.new_window !== undefined ? body.new_window : true);
-        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, run, 'manual', onProgress, debugController);
+        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, run, 'manual', onProgress, debugController, { row: body.row });
         tabId = resObj?.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
         res.write(`data: ${JSON.stringify({ type: 'execution_completed', result: resObj })}\n\n`);
       } catch (err) {
@@ -1098,6 +1104,34 @@ export async function apiRouter(req, res, url) {
       const result = db.prepare('DELETE FROM projects WHERE id = ?').run(params.id);
       if (result.changes === 0) return json(res, 404, { error: 'Project not found' });
       return json(res, 200, { success: true });
+    }
+
+    // ── Datasets of a project (lib/datasets.js): GET the list; POST a file — { filename, content }
+    // as text, or { filename, content_base64 } (an Excel workbook) — or { name, rows }, as a new one
+    // or the one of that name replaced ──
+    params = matchRoute(path, '/api/projects/:id/datasets');
+    if (method === 'GET' && params) return json(res, 200, { datasets: listDatasets(parseInt(params.id, 10)) });
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      const content = body.content_base64 != null ? Buffer.from(String(body.content_base64), 'base64') : body.content;
+      const result = saveDataset(parseInt(params.id, 10), { name: body.name, filename: body.filename, content, rows: body.rows });
+      return result.error ? json(res, result.status, { error: result.error }) : json(res, 201, result);
+    }
+    // ── GET /api/datasets/:id — with its rows; DELETE — the tests bound to it are no more ──
+    params = matchRoute(path, '/api/datasets/:id');
+    if (method === 'GET' && params) {
+      const dataset = getDataset(parseInt(params.id, 10));
+      return dataset ? json(res, 200, { dataset }) : json(res, 404, { error: 'Dataset not found' });
+    }
+    if (method === 'DELETE' && params) {
+      return deleteDataset(parseInt(params.id, 10)) ? json(res, 200, { deleted: true }) : json(res, 404, { error: 'Dataset not found' });
+    }
+    // ── PUT /api/tests/:name/dataset — { dataset: id or name, or null }: the rows it runs ──
+    params = matchRoute(path, '/api/tests/:name/dataset');
+    if (method === 'PUT' && params) {
+      const body = await readBody(req);
+      const result = bindDataset(params.name, body.dataset ?? null);
+      return result.error ? json(res, result.status, { error: result.error }) : json(res, 200, result);
     }
 
     // ── GET /api/projects/:id/elements — what its steps act on, page by page, with their uses ──

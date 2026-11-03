@@ -16,7 +16,7 @@ export function hasExpression(value: string | undefined): boolean {
 }
 
 /** What a run would compute now for `values`, asked once typing pauses; nothing without an expression. */
-export function useComputedPreview(values: Record<string, string>, language?: string) {
+export function useComputedPreview(values: Record<string, string>, language?: string, projectId?: number | null) {
   const computed = Object.values(values).some(hasExpression);
   const [asked, setAsked] = useState(values);
   const key = JSON.stringify(values);
@@ -24,8 +24,9 @@ export function useComputedPreview(values: Record<string, string>, language?: st
     const timer = setTimeout(() => setAsked(JSON.parse(key)), 400);
     return () => clearTimeout(timer);
   }, [key]);
-  const { data } = usePreviewValuesQuery({ values: asked, language }, { skip: !computed });
+  // With the project: an expression may read one of its datasets ({{users[2].email}}).
+  const { data } = usePreviewValuesQuery({ values: asked, language, project_id: projectId }, { skip: !computed });
   return computed ? data : undefined;
 }
 
-export const COMPUTED_HELP = 'A value can be computed at each run: {{today + 3 days | dd/MM/yyyy}}, {{now | HH:mm}}, user-{{unique}}@example.com, {{random(1000, 9999)}}, {{round(price * 1.2, 2)}}.';
+export const COMPUTED_HELP = 'A value can be computed at each run: {{today + 3 days | dd/MM/yyyy}}, {{now | HH:mm}}, user-{{unique}}@example.com, {{random(1000, 9999)}}, {{round(price * 1.2, 2)}}, or read in a dataset: {{users[2].email}}.';

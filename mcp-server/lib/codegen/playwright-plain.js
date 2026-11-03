@@ -16,7 +16,18 @@ import { hasExpression } from '../values.js';
 export function usesComputedValues(test) {
   return hasExpression(JSON.stringify(test.steps ?? []))
     || Object.values(test.variables ?? {}).some((v) => hasExpression(v?.defaultValue))
-    || (test.steps ?? []).some((step) => step.command === 'capture' || step.command === 'http');
+    || (test.steps ?? []).some((step) => step.command === 'capture' || step.command === 'http')
+    || Object.keys(datasetsUsed(test)).length > 0;
+}
+
+/**
+ * The datasets of its project a test's code carries (`test.datasets`, name → rows): the one it
+ * runs the rows of (`test.dataset`), and those an expression of it reads ({{users[2].email}}).
+ */
+export function datasetsUsed(test) {
+  const text = JSON.stringify([test.steps ?? [], Object.values(test.variables ?? {}).map((v) => v?.defaultValue)]);
+  return Object.fromEntries(Object.entries(test.datasets ?? {})
+    .filter(([name]) => name === test.dataset || new RegExp(`\\b${name}\\s*\\[`).test(text)));
 }
 
 export function generatePlaywrightPlain(test) {
@@ -30,15 +41,32 @@ export function generatePlaywrightPlain(test) {
 
   const vars = test.variables || {};
   const varNames = Object.keys(vars);
-  if (computed) {
-    // Worked out once per run, as IziTest does: the date typed is the one checked.
-    const language = test.language === 'fr' ? 'fr' : 'en';
+  // The datasets it carries; bound to one, the test runs once per row of it.
+  const datasets = datasetsUsed(test);
+  const bound = test.dataset && datasets[test.dataset] ? test.dataset : null;
+  const language = test.language === 'fr' ? 'fr' : 'en';
+  const options = `{ language: '${language}'${Object.keys(datasets).length ? ', datasets: (name) => DATASETS[name]' : ''} }`;
+  // Worked out once per run, as IziTest does: the date typed is the one checked. The values the
+  // test keeps as it runs (capture) are in VARS too.
+  const computing = (defaults) => [
+    `const { values: VARS, context: RUN } = computeVariables(${defaults}, ${options});`,
+    'RUN.lookup = (name) => VARS[name];',
+    'const value = (text) => resolveValues(text, RUN).text;',
+  ];
+  if (Object.keys(datasets).length) {
+    lines.push(`const DATASETS = ${JSON.stringify(datasets, null, 2)};`);
+    lines.push('');
+  }
+  if (bound) {
+    lines.push('const DEFAULTS = {');
+    for (const key of varNames) lines.push(`  ${safeKey(key)}: ${jsStringLiteral(String(vars[key]?.defaultValue ?? ''))},`);
+    lines.push('};');
+    lines.push('');
+  } else if (computed) {
     lines.push(`const { values: VARS, context: RUN } = computeVariables({`);
     for (const key of varNames) lines.push(`  ${safeKey(key)}: ${jsStringLiteral(String(vars[key]?.defaultValue ?? ''))},`);
-    lines.push(`}, { language: '${language}' });`);
-    // The values the test keeps as it runs (capture) are in VARS too.
-    lines.push('RUN.lookup = (name) => VARS[name];');
-    lines.push('const value = (text) => resolveValues(text, RUN).text;');
+    lines.push(`}, ${options});`);
+    lines.push(...computing('').slice(1));
     lines.push('');
   } else if (varNames.length > 0) {
     lines.push('const VARS = {');
@@ -62,31 +90,39 @@ export function generatePlaywrightPlain(test) {
   const tags = requirementTags(test);
   // An API called by the test (http) goes through Playwright's request fixture.
   const calls = steps.some((step) => step.command === 'http');
-  lines.push(`test(${jsLiteral(test.name || 'untitled')}, ${tags.length ? `{ tag: [${tags.map(jsLiteral).join(', ')}] }, ` : ''}async ({ page${calls ? ', request' : ''} }) => {`);
-  if (calls) lines.push('  let RESPONSE = null;');
+  // Bound to a dataset: a test per row, the row's values over the defaults.
+  const head = bound
+    ? `test(\`${String(test.name || 'untitled').replace(/[`\\$]/g, '\\$&')} — row \${index + 1}\`, ${tags.length ? `{ tag: [${tags.map(jsLiteral).join(', ')}] }, ` : ''}async ({ page${calls ? ', request' : ''} }) => {`
+    : `test(${jsLiteral(test.name || 'untitled')}, ${tags.length ? `{ tag: [${tags.map(jsLiteral).join(', ')}] }, ` : ''}async ({ page${calls ? ', request' : ''} }) => {`;
+  if (bound) lines.push(`for (const [index, ROW] of DATASETS[${jsStringLiteral(bound)}].entries()) {`);
+  const push = (line) => lines.push(bound ? (line ? `  ${line}` : line) : line);
+  push(head);
+  if (bound) for (const line of computing('{ ...DEFAULTS, ...ROW }')) push(`  ${line}`);
+  if (calls) push('  let RESPONSE = null;');
   for (const requirement of test.requirements ?? []) {
     const criteria = requirement.criteria?.length ? `: criterion ${requirement.criteria.map((c) => c.number).join(', ')}` : '';
-    lines.push(`  // Checks ${requirement.key} — ${requirement.title}${criteria}`);
+    push(`  // Checks ${requirement.key} — ${requirement.title}${criteria}`);
   }
 
   if (test.description) {
     for (const descLine of String(test.description).split('\n')) {
-      lines.push(`  // ${descLine}`);
+      push(`  // ${descLine}`);
     }
   }
 
   // Console errors and failed requests are caught as they happen: listening from the start.
-  if (needsCollectors(steps)) for (const line of collectorLines()) lines.push(`  ${line}`);
+  if (needsCollectors(steps)) for (const line of collectorLines()) push(`  ${line}`);
 
   for (const step of steps) {
     const rendered = renderStep(step);
     if (!rendered) continue;
     for (const body of rendered.split('\n')) {
-      lines.push(`  ${body}`);
+      push(`  ${body}`);
     }
   }
 
-  lines.push('});');
+  push('});');
+  if (bound) lines.push('}');
   return lines.join('\n') + '\n';
 }
 

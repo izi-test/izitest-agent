@@ -580,6 +580,35 @@ l'exécution avant le navigateur, en disant laquelle et pourquoi. Une valeur pas
   (`this.values(...)`) et les colonnes de l'Outline gardent l'expression.
 
 
+### Jeux de données
+
+Un projet a des jeux de données (`lib/datasets.js`) : des tables de valeurs, déposées depuis un CSV
+(`,` `;` ou tabulation), une liste JSON ou la première feuille d'un Excel `.xlsx`, leur première ligne
+nommant les colonnes. Chaque colonne devient un nom de variable (`E-mail` → `e_mail`), chaque valeur un
+texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fichier du même nom le remplace.
+2 000 lignes au plus, 5 Mo.
+
+- **Un test lié à un jeu** (onglet Data, ou `bind_dataset`) joue une ligne par exécution : ses colonnes
+  sont des variables de l'exécution, par-dessus les valeurs par défaut du test (une valeur passée à
+  l'exécution passe devant). Une exécution joue la première ligne, ou celle choisie (« Row » dans les
+  options de Run, `run_test(row)`) ; l'exécution note laquelle.
+- **Une campagne** joue toutes les lignes d'un test lié, chacune à part : `login [row 2]` dans les
+  résultats, les rapports JUnit et HTML, les régressions. Une exigence voit son test échouer si une
+  ligne échoue. « Run every row » dans les options de Run lance la campagne de ce seul test.
+- **Une expression** lit une valeur d'un jeu du projet : `{{users[2].email}}`, lignes numérotées à
+  partir de 1, dans n'importe quel test.
+- **L'export** emporte les jeux utilisés : en Playwright, un test par ligne (`for … of
+  DATASETS['users']`) ; en Cucumber, une ligne d'`Examples` par ligne du jeu, et
+  `features/support/datasets.js` pour les expressions.
+
+| Route ou outil | Rôle |
+| :--- | :--- |
+| `GET /api/projects/:id/datasets` | Les jeux du projet : colonnes, nombre de lignes, tests liés |
+| `POST /api/projects/:id/datasets` | Dépose un fichier (`filename`, `content` texte ou `content_base64` pour un Excel) ou des lignes (`name`, `rows`) |
+| `GET /api/datasets/:id`, `DELETE /api/datasets/:id` | Un jeu avec ses lignes ; sa suppression (les tests liés jouent alors une seule fois) |
+| `PUT /api/tests/:name/dataset` | Lie un test à un jeu (`{ dataset: id ou nom }`) ou le délie (`null`) |
+| `save_dataset`, `bind_dataset` | Les mêmes, pour un agent (CSV en texte ou lignes) ; `get_project_context` liste les jeux |
+
 ### Étapes serveur : garder une valeur, appeler une API
 
 Deux sortes d'étapes s'exécutent sur le serveur, entre celles que joue le navigateur

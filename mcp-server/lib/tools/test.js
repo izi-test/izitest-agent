@@ -322,9 +322,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       start_step: z.number().optional().describe('Step number to start from (1-indexed). Use this to resume a test after fixing a prior failed step manually.'),
       new_window: z.boolean().optional().default(true).describe('Runs the test in a new browser window. Defaults to true. Set to false to reuse the current tab.'),
       debug: z.boolean().optional().describe('Enable debug mode: execution pauses before each step (or at breakpoints). Use debug_action tool to resume/step/continue.'),
-      breakpoints: z.array(z.number()).optional().describe('Step numbers (1-indexed) to pause at. Only used when debug=true. If empty, pauses at every step.')
+      breakpoints: z.array(z.number()).optional().describe('Step numbers (1-indexed) to pause at. Only used when debug=true. If empty, pauses at every step.'),
+      row: z.number().optional().describe('For a test bound to a dataset: the row to play, numbered from 1 (default 1). run_campaign plays every row.')
     },
-    async ({ name, variables, substitutions, start_step, new_window, debug, breakpoints }) => {
+    async ({ name, variables, substitutions, start_step, new_window, debug, breakpoints, row }) => {
       // Debug mode: run asynchronously and return immediately with execution ID
       if (debug) {
         const debugController = new DebugController(breakpoints || [], 'step');
@@ -334,7 +335,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         // debug_action reads _executionResult / _executionError later.
         const executionPromise = executeTest(
           name, variables, substitutions, start_step, new_window,
-          sendCommand, 'mcp', null, debugController
+          sendCommand, 'mcp', null, debugController, { row }
         ).then(
           (result) => { debugController._executionResult = result; },
           (err) => { debugController._executionError = err; }
@@ -374,7 +375,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       // Normal (non-debug) execution
       try {
-        const res = await executeTest(name, variables, substitutions, start_step, new_window, sendCommand, 'mcp');
+        const res = await executeTest(name, variables, substitutions, start_step, new_window, sendCommand, 'mcp', null, null, { row });
         rememberReplay(name, res.values, res.results?.findLast?.((r) => r.tabId != null)?.tabId);
         let resultText = `Test "${name}" executed successfully (execution #${res.executionId}).`;
         if (res.assertionsTotal > 0) {

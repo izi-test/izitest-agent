@@ -129,8 +129,14 @@ export const testsApi = createApi({
       providesTags: (_result, _error, name) => [{ type: 'Test', id: name }],
     }),
 
+    // The dataset a test runs the rows of, or none.
+    bindDataset: builder.mutation<unknown, { testName: string; dataset: number | null }>({
+      query: ({ testName, dataset }) => ({ url: `api/tests/${encodeURIComponent(testName)}/dataset`, method: 'PUT', body: { dataset } }),
+      invalidatesTags: (_result, _error, { testName }) => [{ type: 'Test', id: testName }, 'Test'],
+    }),
+
     // What a run would compute now for values holding expressions (mcp-server/lib/values.js).
-    previewValues: builder.query<{ values: Record<string, string>; problems: string[] }, { values: Record<string, string>; language?: string }>({
+    previewValues: builder.query<{ values: Record<string, string>; problems: string[] }, { values: Record<string, string>; language?: string; project_id?: number | null }>({
       query: (body) => ({ url: 'api/values/preview', method: 'POST', body }),
     }),
 
@@ -193,6 +199,7 @@ export const {
   useGetTestCodegenQuery,
   useGetBusinessProposalsQuery,
   usePreviewValuesQuery,
+  useBindDatasetMutation,
   useProposeBusinessStepsMutation,
   useAcceptBusinessStepMutation,
   useDismissBusinessStepMutation,

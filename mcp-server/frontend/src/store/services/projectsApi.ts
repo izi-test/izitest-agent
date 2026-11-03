@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { PageElement, Project } from '../../types';
+import type { Dataset, PageElement, Project } from '../../types';
 import { testsApi } from './testsApi';
 
 interface ProjectsResponse {
@@ -9,7 +9,7 @@ interface ProjectsResponse {
 export const projectsApi = createApi({
   reducerPath: 'projectsApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
-  tagTypes: ['ProjectList', 'Elements'],
+  tagTypes: ['ProjectList', 'Elements', 'Datasets'],
   endpoints: (builder) => ({
 
     getProjects: builder.query<Project[], void>({
@@ -60,6 +60,38 @@ export const projectsApi = createApi({
       },
     }),
 
+    // Its datasets (mcp-server/lib/datasets.js).
+    getDatasets: builder.query<Dataset[], number>({
+      query: (projectId) => `api/projects/${projectId}/datasets`,
+      transformResponse: (response: { datasets: Dataset[] }) => response.datasets ?? [],
+      providesTags: ['Datasets'],
+    }),
+
+    getDataset: builder.query<Dataset, number>({
+      query: (id) => `api/datasets/${id}`,
+      transformResponse: (response: { dataset: Dataset }) => response.dataset,
+      providesTags: ['Datasets'],
+    }),
+
+    // A file dropped in: text (CSV, JSON), or an Excel workbook in base64. Its name replaces the dataset of that name.
+    saveDataset: builder.mutation<{ dataset: Dataset }, { projectId: number; name?: string; filename: string; content?: string; content_base64?: string }>({
+      query: ({ projectId, ...body }) => ({ url: `api/projects/${projectId}/datasets`, method: 'POST', body }),
+      invalidatesTags: ['Datasets'],
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        await queryFulfilled.catch(() => null);
+        dispatch(testsApi.util.invalidateTags(['Test']));
+      },
+    }),
+
+    deleteDataset: builder.mutation<void, number>({
+      query: (id) => ({ url: `api/datasets/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['Datasets'],
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        await queryFulfilled.catch(() => null);
+        dispatch(testsApi.util.invalidateTags(['Test']));
+      },
+    }),
+
     deleteElement: builder.mutation<void, number>({
       query: (id) => ({ url: `api/elements/${id}`, method: 'DELETE' }),
       invalidatesTags: ['Elements'],
@@ -75,4 +107,8 @@ export const {
   useGetElementsQuery,
   useRenameElementMutation,
   useDeleteElementMutation,
+  useGetDatasetsQuery,
+  useGetDatasetQuery,
+  useSaveDatasetMutation,
+  useDeleteDatasetMutation,
 } = projectsApi;

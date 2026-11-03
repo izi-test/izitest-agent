@@ -18,6 +18,7 @@ import {
 import { log } from '../logger.js';
 import { CODEGEN_FRAMEWORKS, generateTestCode, formatCodeFiles } from '../codegen/index.js';
 import { addBusinessStep } from '../business-steps.js';
+import { listDatasets, saveDataset, bindDataset, datasetRows, datasetOfTest } from '../datasets.js';
 import { addTestVariable } from '../test-variable.js';
 import { linkRecorded, requirementsOfTest } from '../requirements.js';
 
@@ -72,6 +73,8 @@ export const AGENT_TOOLS = [
             steps_template: d.steps_template,
           })),
           existing_tests: tests.map(t => t.name),
+          // Tables of values: a test bound to one runs once per row ({{column}}); any reads one ({{name[2].column}}).
+          datasets: listDatasets(project_id).map(({ name, columns, row_count, used_by }) => ({ name, columns, rows: row_count, used_by })),
           // By name: where a phrase takes a CSS selector, the name acts on that element.
           elements: listElements(project_id).filter(e => e.used_by.length).map(({ name, page, target }) => ({ name, page, target })),
         },
@@ -282,6 +285,51 @@ export const AGENT_TOOLS = [
   },
 
   {
+    name: 'save_dataset',
+    description: [
+      'Save a dataset of a project: a table of values — the users to log in with, the products to order — given as CSV',
+      'text (header row first) or as rows (a list of objects). A dataset of that name is replaced. A test bound to it',
+      '(bind_dataset) runs once per row, each column a variable of the run ({{email}}); run_campaign runs every row,',
+      'run_test one (row). Any test reads a value of it as {{name[2].column}}, rows numbered from 1.',
+    ].join(' '),
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Project ID' },
+        name: { type: 'string', description: 'Its name: letters, digits and _, e.g. "users"' },
+        csv: { type: 'string', description: 'The table as CSV text, its header row first (, ; or tab)' },
+        rows: { type: 'array', items: { type: 'object' }, description: 'Or the rows, as objects: [{ "email": "bob@x.dev", "password": "…" }]' },
+      },
+      required: ['project_id', 'name'],
+    },
+    handler({ project_id, name, csv, rows }) {
+      if (csv == null && rows == null) return { error: 'Give the table: csv or rows' };
+      const result = saveDataset(project_id, { name, filename: `${name}.csv`, content: csv, rows });
+      if (result.error) return { error: result.error };
+      const { dataset } = result;
+      return { data: { name: dataset.name, columns: dataset.columns, rows: dataset.row_count, used_by: dataset.used_by } };
+    },
+  },
+
+  {
+    name: 'bind_dataset',
+    description: 'Bind a test to a dataset of its project, or unbind it (dataset: null): bound, the test runs once per row of it, each column a variable of the run ({{column}}) over its defaults. run_test plays one row (row, default 1); run_campaign plays every row.',
+    parameters: {
+      type: 'object',
+      properties: {
+        test_name: { type: 'string', description: 'Name of the test' },
+        dataset: { type: ['string', 'null'], description: 'The dataset\'s name, or null to unbind' },
+      },
+      required: ['test_name', 'dataset'],
+    },
+    handler({ test_name, dataset }) {
+      const result = bindDataset(test_name, dataset);
+      if (result.error) return { error: result.error };
+      return { data: result.dataset ? { test: test_name, dataset: result.dataset.name, columns: result.dataset.columns, rows: result.dataset.row_count } : { test: test_name, dataset: null } };
+    },
+  },
+
+  {
     name: 'add_test_variable',
     description: [
       'Turn a value recorded in a step into a variable of the test: {{name}} replaces it in the step, and the',
@@ -373,7 +421,8 @@ export const AGENT_TOOLS = [
       const test = loadTest(test_name);
       if (!test) return { error: `Test "${test_name}" not found` };
 
-      const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name) }, framework, projectDefinitions);
+      // With the datasets of its project, and the one it runs the rows of.
+      const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name), datasets: datasetRows(test.project_id), dataset: datasetOfTest(test.name)?.name ?? null }, framework, projectDefinitions);
       if (result.error) return { error: result.error };
 
       const count = result.files.length;

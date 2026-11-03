@@ -13,6 +13,7 @@
 //   operators   + - * / % and ( ); a date plus or minus a duration is a date; two dates
 //               subtracted are a number of days; + joins text
 //   functions   random(min, max), round(x, digits), floor(x), ceil(x), abs(x), min(…), max(…)
+//   datasets    utilisateurs[2].email: a value of a project's dataset, its rows numbered from 1
 //   format      after |: a date as dd/MM/yyyy, d MMMM yyyy, EEEE, HH:mm…; a number as 0.00
 
 const UNITS = {
@@ -44,7 +45,7 @@ function tokenize(source) {
     if (number) { tokens.push({ type: 'number', value: Number(number[0]) }); i += number[0].length; continue; }
     const word = /^[A-Za-z_À-ſ][\wÀ-ſ]*/.exec(source.slice(i));
     if (word) { tokens.push({ type: 'name', value: word[0] }); i += word[0].length; continue; }
-    if ('+-*/%(),'.includes(c)) { tokens.push({ type: c }); i += 1; continue; }
+    if ('+-*/%(),[].'.includes(c)) { tokens.push({ type: c }); i += 1; continue; }
     throw new ValueError(`unexpected "${c}"`);
   }
   return tokens;
@@ -70,7 +71,15 @@ function parse(source) {
     while (peek() && '*/%'.includes(peek().type)) left = { op: tokens[at++].type, left, right: unary() };
     return left;
   };
-  const unary = () => (peek()?.type === '-' ? (at++, { op: 'neg', left: unary() }) : withUnit(primary()));
+  const unary = () => (peek()?.type === '-' ? (at++, { op: 'neg', left: unary() }) : withUnit(postfix(primary())));
+  // A row of a dataset and a column of it: utilisateurs[2].email.
+  const postfix = (node) => {
+    for (;;) {
+      if (peek()?.type === '[') { at += 1; const index = additive(); take(']'); node = { row: index, of: node }; continue; }
+      if (peek()?.type === '.') { at += 1; node = { column: take('name').value, of: node }; continue; }
+      return node;
+    }
+  };
   // A number, or what gives one (a variable, a parenthesis), followed by a unit is a duration.
   const withUnit = (node) => {
     const next = peek();
@@ -147,6 +156,20 @@ function asNumber(value, what) {
 function evaluate(node, context) {
   if ('number' in node) return num(node.number);
   if ('name' in node) return named(node.name, context);
+  if ('row' in node) {
+    const dataset = evaluate(node.of, context);
+    if (dataset.type !== 'dataset') throw new ValueError('[…] picks a row of a dataset: utilisateurs[2]');
+    const number = asNumber(evaluate(node.row, context), 'a row');
+    const row = dataset.rows[number - 1];
+    if (!row) throw new ValueError(`${dataset.name} has ${dataset.rows.length} row(s), numbered from 1: no row ${number}`);
+    return { type: 'row', row, name: dataset.name };
+  }
+  if ('column' in node) {
+    const row = evaluate(node.of, context);
+    if (row.type !== 'row') throw new ValueError(`.${node.column} reads a column of a row: utilisateurs[2].${node.column}`);
+    if (!(node.column in row.row)) throw new ValueError(`${row.name} has no column "${node.column}" (it has ${Object.keys(row.row).join(', ')})`);
+    return text(row.row[node.column]);
+  }
   if ('duration' in node) {
     const amount = evaluate(node.duration, context);
     return { type: 'duration', amount: asNumber(amount, 'a duration'), unit: node.unit };
@@ -185,6 +208,8 @@ function named(name, context) {
   // A variable of the test comes first: one named "today" is that variable.
   const variable = context.lookup(name);
   if (variable !== undefined) return text(variable);
+  const rows = context.datasets?.(name);
+  if (rows) return { type: 'dataset', rows, name };
   const now = context.now;
   switch (name) {
     case 'today': return date(startOfDay(now), false);
@@ -248,6 +273,7 @@ function formatDate(d, pattern, language) {
 function format(value, pattern = '', language = 'en') {
   if (value.type === 'date') return formatDate(value.value, pattern || (value.time ? 'yyyy-MM-dd HH:mm' : 'yyyy-MM-dd'), language);
   if (value.type === 'duration') throw new ValueError('a duration alone is no value: add it to a date');
+  if (value.type === 'dataset' || value.type === 'row') throw new ValueError(`${value.name} is a dataset: pick a row and a column, ${value.name}[1].column`);
   if (value.type === 'number') {
     const decimals = /^0(?:[.,](0+))?$/.exec(pattern.trim());
     if (decimals) {
@@ -280,12 +306,13 @@ function uuid() {
 
 /**
  * What one run computes values with: the moment it started, its language, and what it already
- * worked out (the same expression gives the same value all through the run).
+ * worked out (the same expression gives the same value all through the run). `datasets(name)`:
+ * the rows of a dataset of the project.
  */
-export function valueContext({ now = new Date(), language = 'en', lookup = () => undefined } = {}) {
+export function valueContext({ now = new Date(), language = 'en', lookup = () => undefined, datasets = () => undefined } = {}) {
   let token = null;
   return {
-    now, language, lookup, cache: new Map(), uuid,
+    now, language, lookup, datasets, cache: new Map(), uuid,
     unique: () => (token ??= (Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2, 6))),
   };
 }
@@ -329,11 +356,11 @@ export function resolveValues(textValue, context = valueContext(), { escape = (v
  * The variables of a test with their values worked out: { values, problems }. A variable may
  * use another one ({{price * quantity}}); one that would use itself, round and round, is told.
  */
-export function computeVariables(raw, { now = new Date(), language = 'en' } = {}) {
+export function computeVariables(raw, { now = new Date(), language = 'en', datasets } = {}) {
   const values = {};
   const problems = [];
   const busy = new Set();
-  const context = valueContext({ now, language, lookup: (name) => valueOf(name) });
+  const context = valueContext({ now, language, datasets, lookup: (name) => valueOf(name) });
 
   function valueOf(name) {
     if (!(name in raw)) return undefined;

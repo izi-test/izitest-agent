@@ -109,6 +109,22 @@ export interface Test {
   last_run_at?: string | null;
   last_duration_ms?: number | null;
   requirement_keys?: string[];
+  /** The dataset it runs the rows of (mcp-server/lib/datasets.js), each row told by its first values. */
+  dataset?: { id: number; name: string; columns: string[]; row_count: number; row_labels: string[] } | null;
+}
+
+/** A table of values of a project: a test bound to it runs once per row ({{column}}). */
+export interface Dataset {
+  id: number;
+  project_id: number;
+  name: string;
+  source: string | null;
+  columns: string[];
+  row_count: number;
+  rows?: Record<string, string>[];
+  created_at: string;
+  updated_at: string;
+  used_by: string[];
 }
 
 export interface ExecutionStep {
@@ -296,6 +312,9 @@ export type CampaignTestStatus = 'passed' | 'failed' | 'error' | 'running' | 'pe
 
 export interface CampaignRun {
   name: string;
+  /** The row of its dataset it played, and how it is told apart: "login [row 2]". */
+  row?: number | null;
+  label?: string;
   status: CampaignTestStatus;
   execution_id: number | null;
   duration_ms: number | null;

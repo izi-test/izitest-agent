@@ -3104,3 +3104,11 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 .computed-hint .mono { color: var(--primary-hover); }
 .computed-hint--error { color: var(--red); }
 .data-help { margin-top: 12px; }
+
+/* Datasets (DatasetsPage.tsx) and a test's binding (TestDetail Data tab). */
+.dataset-rows > td { background: var(--surface-muted); padding-top: 4px; padding-bottom: 12px; }
+.table--compact th, .table--compact td { padding: 6px 10px; font-size: 12px; }
+.dataset-binding { margin-bottom: 16px; }
+.dataset-binding__row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dataset-binding__row select { min-width: 280px; }
+.run-options .field .btn { margin-top: 6px; }

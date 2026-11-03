@@ -84,7 +84,7 @@ const initialState: ExecutionState = {
 export const executeTest = createAsyncThunk(
   'execution/executeTest',
   async (
-    { testName, newWindow, variables, debug, breakpoints, headless }: { testName: string; newWindow: boolean; variables: Record<string, string>; debug?: boolean; breakpoints?: number[]; headless?: boolean },
+    { testName, newWindow, variables, debug, breakpoints, headless, row }: { testName: string; newWindow: boolean; variables: Record<string, string>; debug?: boolean; breakpoints?: number[]; headless?: boolean; row?: number },
     { dispatch }
   ) => {
     const controller = new AbortController();
@@ -93,7 +93,7 @@ export const executeTest = createAsyncThunk(
     const response = await fetch(`/api/tests/${encodeURIComponent(testName)}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ new_window: newWindow, variables, debug: debug || false, breakpoints: breakpoints || [], headless: headless || false }),
+      body: JSON.stringify({ new_window: newWindow, variables, debug: debug || false, breakpoints: breakpoints || [], headless: headless || false, ...(row ? { row } : {}) }),
       signal: controller.signal,
     });
 

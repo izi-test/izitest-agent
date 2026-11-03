@@ -11,17 +11,21 @@ import { collectorLines, oracleCode, needsAxe, AXE_IMPORT } from './oracles.js';
 import { requirementTags } from './requirement-tags.js';
 import { keywordsOf, languageOf } from '../gherkin/language.js';
 import { translatedPattern } from '../gherkin/default-step-definitions.js';
-import { usesComputedValues } from './playwright-plain.js';
+import { usesComputedValues, datasetsUsed } from './playwright-plain.js';
 
 // `valuesJs`: lib/values.js, carried by a test that holds computed values ({{today}}…).
 export function generatePlaywrightCucumber(test, definitions, { valuesJs = null } = {}) {
   const slug = slugify(test.name || 'test');
   const computed = !!valuesJs && usesComputedValues(test);
   const tags = requirementTags(test);
+  // Bound to a dataset, an Examples row per row of it; the datasets an expression reads go along.
+  const datasets = datasetsUsed(test);
+  const rows = test.dataset ? datasets[test.dataset] ?? null : null;
   const outline = toScenarioOutline(
     serializeTestToFeatureWith(test, definitions, { singleStep: withStableTarget }),
-    test.variables,
-    test.language
+    rows ? { ...Object.fromEntries(Object.keys(rows[0] ?? {}).map((column) => [column, { defaultValue: '' }])), ...test.variables } : test.variables,
+    test.language,
+    rows
   );
   // The tags go on the feature, after the line that says its language.
   const [, header = '', body] = outline.match(/^(# language: \w+\n)?([\s\S]*)$/);
@@ -34,8 +38,9 @@ export function generatePlaywrightCucumber(test, definitions, { valuesJs = null 
   const files = [
     { path: `features/${slug}.feature`, content: feature },
     { path: 'features/steps/default.steps.js', content: steps(defaultStepsJs(test.language)) },
-    { path: 'features/support/world.js', content: computed ? worldWithValues(test.language) : WORLD_JS },
+    { path: 'features/support/world.js', content: computed ? worldWithValues(test.language, Object.keys(datasets).length > 0) : WORLD_JS },
     ...(computed ? [{ path: 'features/support/values.js', content: valuesJs }] : []),
+    ...(computed && Object.keys(datasets).length ? [{ path: 'features/support/datasets.js', content: `// The datasets of the project the scenario reads ({{users[2].email}}), rows numbered from 1.\nexport const DATASETS = ${JSON.stringify(datasets, null, 2)};\n` }] : []),
     { path: 'cucumber.js', content: CUCUMBER_CONFIG_JS },
     { path: 'package.json', content: renderPackageJson(slug) },
   ];
@@ -72,7 +77,7 @@ function withStableTarget(step) {
  * before matching, so an {int} parameter still matches; left as is, "{{ville}}" would
  * have been typed into the page.
  */
-export function toScenarioOutline(feature, variables = {}, language = 'en') {
+export function toScenarioOutline(feature, variables = {}, language = 'en', rows = null) {
   const words = keywordsOf(language);
   const used = [];
   // A column per variable of the test; a value the scenario keeps as it runs ({{order}}) is no
@@ -95,15 +100,15 @@ export function toScenarioOutline(feature, variables = {}, language = 'en') {
       for (const [, name] of (m[1] ?? m[2]).matchAll(/<([A-Za-z_]\w*)>/g)) (enclosing[name] ??= new Set()).add(quote);
     }
   }
-  const cell = (name) => {
-    let value = String(variables?.[name]?.defaultValue ?? '');
+  const cell = (name, row = null) => {
+    let value = String(row?.[name] ?? variables?.[name]?.defaultValue ?? '');
     for (const quote of enclosing[name] ?? []) value = value.replaceAll(quote, `\\${quote}`);
     return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n');
   };
   return outline.replace(new RegExp(`^(\\s*)${words.scenario}:`, 'm'), `$1${words.outline}:`).trimEnd() + '\n\n' +
     `    ${words.examples}:\n` +
     `      | ${used.join(' | ')} |\n` +
-    `      | ${used.map(cell).join(' | ')} |\n`;
+    (rows ?? [null]).map((row) => `      | ${used.map((name) => cell(name, row)).join(' | ')} |\n`).join('');
 }
 
 /** Step code whose functions work out the computed values in their arguments first. */
@@ -112,11 +117,11 @@ function resolvingArgs(code) {
 }
 
 /** The World of a test with computed values: worked out once per scenario, in its language. */
-function worldWithValues(language) {
+function worldWithValues(language, withDatasets = false) {
   return WORLD_JS
-    .replace(`import { chromium, request } from 'playwright';\n`, `import { chromium, request } from 'playwright';\nimport { resolveValues, valueContext } from './values.js';\n`)
+    .replace(`import { chromium, request } from 'playwright';\n`, `import { chromium, request } from 'playwright';\nimport { resolveValues, valueContext } from './values.js';\n${withDatasets ? "import { DATASETS } from './datasets.js';\n" : ''}`)
     .replace(`  // A value of the last answer`, `  // Computed values in a step's arguments ({{today}}, {{unique}}, {{order}}…), the same all through the scenario.\n  values(...args) {\n    return args.map((arg) => (typeof arg === 'string' ? resolveValues(arg, this.run).text : arg));\n  }\n\n  // A value of the last answer`)
-    .replace(`Before(async function () {\n`, `Before(async function () {\n  this.run = valueContext({ language: '${language === 'fr' ? 'fr' : 'en'}', lookup: (name) => this.vars[name] });\n`);
+    .replace(`Before(async function () {\n`, `Before(async function () {\n  this.run = valueContext({ language: '${language === 'fr' ? 'fr' : 'en'}', lookup: (name) => this.vars[name]${withDatasets ? ', datasets: (name) => DATASETS[name]' : ''} });\n`);
 }
 
 // ─── Templates ──────────────────────────────────────────────────────

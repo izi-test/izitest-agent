@@ -5,6 +5,7 @@ import { db } from './db.js';
 import { loadTest, fillStepPages } from './test-store.js';
 import { computeVariables, resolveValues } from './values.js';
 import { isServerStep, keptNames, runServerStep } from './server-steps.js';
+import { datasetOfTest, datasetRows, rowLabel } from './datasets.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
@@ -393,6 +394,16 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       rawVariables[key] = String(info.defaultValue ?? '');
     }
   }
+  // Bound to a dataset (lib/datasets.js), the test plays one of its rows — the first unless
+  // told: each column is a variable of the run, over the defaults.
+  const dataset = options.test ? null : datasetOfTest(name);
+  const dataRow = dataset ? Number(options.row ?? 1) : null;
+  if (dataset) {
+    const row = dataset.rows[dataRow - 1];
+    if (!row) throw new Error(`The dataset "${dataset.name}" has ${dataset.rows.length} row(s), numbered from 1: no row ${options.row}`);
+    for (const [key, value] of Object.entries(row)) rawVariables[key] = String(value ?? '');
+    log(`Test "${name}" plays ${rowLabel(row, dataRow)} of the dataset "${dataset.name}"`);
+  }
   if (variables) {
     for (const [key, value] of Object.entries(variables)) {
       rawVariables[key] = String(value ?? '');
@@ -401,7 +412,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   // Computed values ({{today + 3 days | dd/MM/yyyy}}, {{unique}}, {{price * 1.2}}) worked out
   // once for the run, in the language of the test's project (lib/values.js). One that does not
   // work out stops the run here, told: typed as it is, it would fail further on, unexplained.
-  const computed = computeVariables(rawVariables, { language: test.language });
+  const projectData = datasetRows(test.project_id);
+  const computed = computeVariables(rawVariables, { language: test.language, datasets: (key) => projectData[key] });
   const mergedVariables = computed.values;
   const valueProblems = [...computed.problems];
   // Values kept by steps of the run (capture): known by name now, given to the steps after.
@@ -482,9 +494,9 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   // ─── Create execution record ──────────────────────────────────
   const execResult = db.prepare(
-    `INSERT INTO test_executions (test_id, test_name, status, total_steps, variables, new_window, trigger, assertions_total, campaign_id)
-     VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?) RETURNING id`
-  ).get(testId, name, hydratedSteps.length, JSON.stringify(mergedVariables), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null);
+    `INSERT INTO test_executions (test_id, test_name, status, total_steps, variables, new_window, trigger, assertions_total, campaign_id, data_row)
+     VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+  ).get(testId, name, hydratedSteps.length, JSON.stringify(mergedVariables), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null, dataRow);
   const executionId = execResult.id;
 
   // ─── Initialize pending step rows ─────────────────────────────

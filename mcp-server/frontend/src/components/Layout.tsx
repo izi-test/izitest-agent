@@ -1,6 +1,6 @@
 import { Link, Outlet, ScrollRestoration, useLocation, useMatch } from 'react-router-dom';
 import {
-  Bug, ChevronRight, ClipboardList, FlaskConical, FolderKanban, Layers, LayoutDashboard, MessageSquare, MousePointerClick, Plus, Settings as SettingsIcon,
+  Bug, ChevronRight, ClipboardList, FlaskConical, FolderKanban, Layers, LayoutDashboard, MessageSquare, MousePointerClick, Plus, Settings as SettingsIcon, Table,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setCreateTestOpen, showToast } from '../store/slices/uiSlice';
@@ -22,7 +22,7 @@ import { Button } from './Button';
 // section › item) and the new test button, and the page.
 
 const SECTIONS: Record<string, string> = {
-  tests: 'Tests', requirements: 'Requirements', campaigns: 'Campaigns', bugs: 'Bugs', elements: 'Elements', projects: 'Projects', settings: 'Settings', chat: 'Chat',
+  tests: 'Tests', requirements: 'Requirements', campaigns: 'Campaigns', bugs: 'Bugs', elements: 'Elements', datasets: 'Datasets', projects: 'Projects', settings: 'Settings', chat: 'Chat',
 };
 /** The sections that are not of a project. */
 const UNSCOPED = new Set(['projects', 'settings']);
@@ -101,6 +101,7 @@ function Sidebar() {
         {item('/campaigns', Layers, 'Campaigns', campaigns.length)}
         {item('/bugs', Bug, 'Bugs', bugs.length, true)}
         {item('/elements', MousePointerClick, 'Elements')}
+        {item('/datasets', Table, 'Datasets')}
         <div className="nav__divider" />
         {item('/projects', FolderKanban, 'Projects')}
       </nav>

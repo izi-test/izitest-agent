@@ -353,8 +353,8 @@ export function CampaignPage({ id }: { id: number }) {
             <thead><tr><th>Test</th><th>Status</th><th className="col-num">Duration</th><th>Why</th></tr></thead>
             <tbody>
               {c.runs.map((t) => (
-                <tr key={t.name}>
-                  <td><button className="test-link" onClick={() => openTest(t.name)}><FlaskConical size={12} /> {t.name}</button></td>
+                <tr key={t.label ?? t.name}>
+                  <td><button className="test-link" onClick={() => openTest(t.name)}><FlaskConical size={12} /> {t.label ?? t.name}</button></td>
                   <td><StatusPill status={t.status} icon={t.status === 'running' ? Loader2 : undefined} /></td>
                   <td className="col-num cell-muted">{t.duration_ms != null ? formatDuration(t.duration_ms) : '—'}</td>
                   <td className="why">
