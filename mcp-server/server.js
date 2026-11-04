@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
 
 import { log } from './lib/logger.js';
 import { startWebSocketServer, getProfiles, sendCommand, closeWebSocket, sendToProfile, onProfileRegistered } from './lib/websocket.js';
-import { resolveSession, dropConnection, listSessions, setConnectionClient } from './lib/session.js';
+import { resolveSession, dropConnection, listSessions, setConnectionClient, setConnectionRun } from './lib/session.js';
 import { initLive, liveRouter } from './lib/live.js';
 import { scopeToolsToSession } from './lib/tools/session-scope.js';
 import { registerBrowserTools } from './lib/tools/browser.js';
@@ -311,6 +311,9 @@ if (USE_STDIO) {
       log(`New SSE connection from ${req.socket.remoteAddress}`);
       const transport = new SSEServerTransport('/messages', res);
       const connectionId = transport.sessionId;
+      // An agent the dashboard started connects with its run's id: the dashboard shows its tab live.
+      const run = url.searchParams.get('run');
+      if (run && /^run-[0-9a-f]{12}$/.test(run)) setConnectionRun(connectionId, run);
       const sessionServer = createMcpServer(connectionId);
       activeSessions.set(connectionId, transport);
 

@@ -3112,3 +3112,126 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 .dataset-binding__row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .dataset-binding__row select { min-width: 280px; }
 .run-options .field .btn { margin-top: 6px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   LIVE VIEW OF THE BROWSER (LiveScreen): what an agent or a test
+   does in its tab, beside its output or its steps
+   ═══════════════════════════════════════════════════════════════ */
+
+.live-screen {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: #0b1220;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-screen__frame { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+.live-screen__badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(15, 23, 42, 0.78);
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.live-screen__badge--live { background: rgba(220, 38, 38, 0.92); color: #fff; }
+.live-screen__badge--live::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  animation: liveBlink 1.2s ease-in-out infinite;
+}
+
+@keyframes liveBlink { 50% { opacity: 0.25; } }
+
+.live-screen__message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 360px;
+  padding: 24px;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* Create with AI: the browser beside the agent's output, the form folded into what was asked. */
+.create-wf-modal--live { width: min(1200px, 96vw); max-width: min(1200px, 96vw); }
+
+.create-wf-asked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.create-wf-asked strong { color: var(--text); }
+.create-wf-asked span {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.create-wf-run {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* The output is as tall as the browser beside it, and scrolls: it does not stretch the row. */
+.create-wf-run__log { position: relative; min-height: 240px; }
+.create-wf-run__log .create-wf-output-section {
+  position: absolute;
+  inset: 0;
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+}
+.create-wf-run__log .create-wf-output { flex: 1; max-height: none; min-height: 0; }
+
+/* A run of a test: the browser beside its steps. */
+.live-exec-drawer--wide { max-width: min(1280px, 96vw); }
+
+.live-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.live-body__side { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.live-body--with-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.live-body__screen { padding: 16px 0 16px 24px; overflow-y: auto; }
+.live-body--with-screen .live-body__side { border-left: 1px solid var(--border-subtle); }
+
+@media (max-width: 900px) {
+  .create-wf-run { grid-template-columns: 1fr; }
+  .create-wf-run__log { position: static; min-height: 0; }
+  .create-wf-run__log .create-wf-output-section { position: static; }
+  .create-wf-run__log .create-wf-output { max-height: 300px; }
+
+  .live-body--with-screen { display: flex; flex-direction: column; }
+  .live-body__screen { padding: 12px 16px 0; flex: none; }
+  .live-body--with-screen .live-body__side { border-left: none; }
+}

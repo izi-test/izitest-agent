@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
 import type { AssertionResult, Triage } from '../../types';
 import { executionsApi } from '../services/executionsApi';
+import { toolCallLine, appendLine } from '../../agent-log';
 
 // Module-level reference — non-serializable, kept outside Redux state
 let activeAbortController: AbortController | null = null;
@@ -41,6 +42,8 @@ interface ExecutionState {
   liveSummary: ExecutionSummary | null;
   isAgentMode: boolean;
   agentOutput: string;
+  /** The browser tab the run plays in, once the server has told it: shown live (LiveScreen). */
+  liveTabId: number | null;
   refreshTrigger: number;
   isDebugMode: boolean;
   isPaused: boolean;
@@ -58,6 +61,7 @@ const initialState: ExecutionState = {
   liveSummary: null,
   isAgentMode: false,
   agentOutput: '',
+  liveTabId: null,
   refreshTrigger: 0,
   isDebugMode: false,
   isPaused: false,
@@ -194,6 +198,10 @@ export const executeAgent = createAsyncThunk(
           const event = JSON.parse(line.slice(6));
           if (event.type === 'chunk') {
             dispatch(appendAgentOutput(event.text));
+          } else if (event.type === 'tool_call') {
+            dispatch(appendAgentLine(toolCallLine(event.tool, event.input)));
+          } else if (event.type === 'live') {
+            dispatch(handleSseEvent(event));
           } else if (event.type === 'error') {
             dispatch(setLiveError(event.error));
             dispatch(setLiveStatus('error'));
@@ -245,6 +253,9 @@ const executionSlice = createSlice({
     appendAgentOutput(state, action: PayloadAction<string>) {
       state.agentOutput += action.payload;
     },
+    appendAgentLine(state, action: PayloadAction<string>) {
+      state.agentOutput = appendLine(state.agentOutput, action.payload);
+    },
     incrementRefreshTrigger(state) {
       state.refreshTrigger += 1;
     },
@@ -261,6 +272,9 @@ const executionSlice = createSlice({
     handleSseEvent(state, action: PayloadAction<any>) {
       const data = action.payload;
       switch (data.type) {
+        case 'live':
+          state.liveTabId = typeof data.tabId === 'number' ? data.tabId : null;
+          break;
         case 'execution_started':
           state.liveStatus = 'running';
           if (data.debugMode) {
@@ -397,6 +411,7 @@ const executionSlice = createSlice({
         state.liveError = null;
         state.liveSummary = null;
         state.agentOutput = '';
+        state.liveTabId = null;
         state.isAgentMode = false;
         state.isDebugMode = action.meta.arg.debug || false;
         state.breakpoints = action.meta.arg.breakpoints || [];
@@ -426,6 +441,7 @@ const executionSlice = createSlice({
         state.liveError = null;
         state.liveSummary = null;
         state.agentOutput = '';
+        state.liveTabId = null;
         state.isAgentMode = true;
       })
       .addCase(executeAgent.rejected, (state, action) => {
@@ -448,6 +464,7 @@ export const {
   setLiveStatus,
   setLiveError,
   appendAgentOutput,
+  appendAgentLine,
   incrementRefreshTrigger,
   toggleBreakpoint,
   handleSseEvent,

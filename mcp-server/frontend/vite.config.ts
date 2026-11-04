@@ -24,6 +24,14 @@ export default defineConfig({
           ? { Authorization: `Bearer ${process.env.IZITEST_TOKEN}` }
           : {},
       },
+      // The live view of a tab an agent or a test works in (lib/live.js): the same token.
+      '/live': {
+        target: `http://127.0.0.1:${MCP_BACKEND_PORT}`,
+        changeOrigin: true,
+        headers: process.env.IZITEST_TOKEN
+          ? { Authorization: `Bearer ${process.env.IZITEST_TOKEN}` }
+          : {},
+      },
     },
   },
 })

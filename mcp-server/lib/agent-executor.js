@@ -733,7 +733,8 @@ RULES:
  * project it is for.
  */
 export async function runAgent(config, prompt, sendCommand, onProgress, signal, options = {}) {
-  const session = createAdHocSession('dashboard-agent');
+  // `options.runId`: the dashboard run it is, which shows the tab it works in (lib/live.js followRun).
+  const session = createAdHocSession('dashboard-agent', { runId: options.runId ?? null });
   session.requirementLink = options.requirementLink ?? null;
   // The project the test is for: its datasets are read while recording, the test saved in it.
   session.projectId = options.projectId ?? null;

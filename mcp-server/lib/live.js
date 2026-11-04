@@ -26,7 +26,7 @@ import { randomBytes } from 'crypto';
 import { fileURLToPath } from 'url';
 import { log } from './logger.js';
 import * as websocket from './websocket.js';
-import { listSessions } from './session.js';
+import { listSessions, sessionsOfRun } from './session.js';
 import { db, parseJson } from './db.js';
 
 const DATA_DIR = process.env.IZITEST_LIVE_DIR
@@ -511,6 +511,28 @@ export function scheduleReconcile(ms = 100) {
     reconcileRecorders().catch((err) => log(`[live] Recording check failed: ${err.message}`));
   }, ms);
   reconcileTimer.unref?.();
+}
+
+// ─── Following a dashboard run ──────────────────────────────────────
+
+/**
+ * The tab an agent run of the dashboard works in, told to `onTab(tabId)` once the agent has
+ * opened one and each time it changes — the dashboard then shows it (GET
+ * /live/tabs/{tabId}/stream). The run's sessions carry its id (lib/session.js); the one used
+ * last is the one watched. Returns the function that stops following.
+ */
+export function followRun(runId, onTab, { everyMs = 500 } = {}) {
+  let told;
+  const check = () => {
+    const tabId = sessionsOfRun(runId)[0]?.lastTabId;
+    if (tabId === undefined || tabId === null || tabId === told) return;
+    told = tabId;
+    onTab(tabId);
+  };
+  const timer = setInterval(check, everyMs);
+  timer.unref?.();
+  check();
+  return () => clearInterval(timer);
 }
 
 /** A recorded frame pushed by an extension ({ tabId, data: base64 JPEG quality 50, at }). */

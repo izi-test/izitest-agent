@@ -18,6 +18,9 @@ import { datasetRows } from './datasets.js';
 const sessions = new Map();      // session id → Session
 const connectionDefaults = new Map(); // connection id → session id
 const connectionClients = new Map(); // connection id → { name, version } the MCP client announced
+// connection id → the dashboard run it was opened for (/sse?run=…): an agent the dashboard
+// started, whose sessions the dashboard shows live (lib/live.js followRun).
+const connectionRuns = new Map();
 
 let sessionCounter = 0;
 
@@ -32,10 +35,12 @@ const MAX_HISTORY = 100;
 const LIVE_PARAMS = ['url', 'value', 'text', 'selector', 'key', 'label', 'target', 'expected'];
 
 export class Session {
-  constructor({ id, label, connectionId }) {
+  constructor({ id, label, connectionId, runId = null }) {
     this.id = id;
     this.label = label || id;
     this.connectionId = connectionId;
+    // The dashboard run this session works for, if a dashboard run started it.
+    this.runId = runId;
     this.profile = undefined; // Chrome profile id this session drives, once it uses one
     this.createdAt = Date.now();
     this.lastUsedAt = Date.now();
@@ -186,7 +191,7 @@ export function resolveSession(connectionId, name) {
     const id = `s:${name}`;
     let session = sessions.get(id);
     if (!session) {
-      session = new Session({ id, label: name, connectionId });
+      session = new Session({ id, label: name, connectionId, runId: connectionRuns.get(connectionId) ?? null });
       sessions.set(id, session);
       log(`Session created: ${id} (named, connection ${connectionId})`);
     }
@@ -202,7 +207,7 @@ export function resolveSession(connectionId, name) {
   }
 
   const id = `c:${connectionId}`;
-  const session = new Session({ id, label: `connection ${++sessionCounter}`, connectionId });
+  const session = new Session({ id, label: `connection ${++sessionCounter}`, connectionId, runId: connectionRuns.get(connectionId) ?? null });
   sessions.set(id, session);
   connectionDefaults.set(connectionId, id);
   log(`Session created: ${id} (default for connection ${connectionId})`);
@@ -244,9 +249,9 @@ export function currentSessionOrNull() {
  * A session that belongs to no MCP connection — the dashboard's autonomous agent run.
  * The caller owns its lifetime and must destroySession() it when the run ends.
  */
-export function createAdHocSession(label) {
+export function createAdHocSession(label, { runId = null } = {}) {
   const id = `a:${label}-${++sessionCounter}`;
-  const session = new Session({ id, label, connectionId: null });
+  const session = new Session({ id, label, connectionId: null, runId });
   sessions.set(id, session);
   log(`Session created: ${id} (ad hoc)`);
   return session;
@@ -281,6 +286,7 @@ export function dropConnection(connectionId) {
   const id = connectionDefaults.get(connectionId);
   connectionDefaults.delete(connectionId);
   connectionClients.delete(connectionId);
+  connectionRuns.delete(connectionId);
   const session = id && sessions.get(id);
   if (!session) return null;
   sessions.delete(id);
@@ -291,6 +297,16 @@ export function dropConnection(connectionId) {
 /** What the MCP client announced at initialize (clientInfo). */
 export function setConnectionClient(connectionId, info) {
   if (info?.name) connectionClients.set(connectionId, { name: info.name, ...(info.version ? { version: info.version } : {}) });
+}
+
+/** The MCP connection was opened for this dashboard run: the sessions it makes are the run's. */
+export function setConnectionRun(connectionId, runId) {
+  if (runId) connectionRuns.set(connectionId, runId);
+}
+
+/** The sessions working for a dashboard run, the one used last first. */
+export function sessionsOfRun(runId) {
+  return [...sessions.values()].filter((s) => s.runId === runId).sort((a, b) => b.lastUsedAt - a.lastUsedAt);
 }
 
 /** Ids of every session the server still considers alive. */

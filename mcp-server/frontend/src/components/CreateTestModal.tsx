@@ -3,6 +3,8 @@ import { Button } from './Button';
 import { X, Wand2, Loader2, Square, FileCode, Bot } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { ProjectField } from './ProjectSelector';
+import { LiveScreen } from './LiveScreen';
+import { toolCallLine, appendLine } from '../agent-log';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
 import { useAddCaseMutation, useCreateRequirementMutation } from '../store/services/requirementsApi';
 import {
@@ -103,6 +105,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   const [projectId, setProjectId] = useState<number | null | undefined>(selectedProjectId ?? undefined);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('idle');
   const [agentOutput, setAgentOutput] = useState('');
+  // The tab the agent works in, once it has opened one: shown live beside its output.
+  const [liveTabId, setLiveTabId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gherkinDraft, setGherkinDraft] = useState('');
   const [gherkinDraftDirty, setGherkinDraftDirty] = useState(false);
@@ -125,6 +129,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       setViewport(null);
       setAgentStatus('idle');
       setAgentOutput('');
+      setLiveTabId(null);
       setError(null);
       setGherkinDraft(preset?.gherkin ?? '');
       setGherkinDraftDirty(!!preset?.gherkin);
@@ -181,6 +186,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
     setError(null);
     setAgentStatus('running');
     setAgentOutput('');
+    setLiveTabId(null);
 
     const prompt = buildPrompt(name.trim(), description.trim(), useVrt, viewport);
     // The request is kept as a requirement (source "prompt"), and the test the agent records is
@@ -236,6 +242,10 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
             const event = JSON.parse(line.slice(6));
             if (event.type === 'chunk') {
               setAgentOutput(prev => prev + event.text);
+            } else if (event.type === 'tool_call') {
+              setAgentOutput(prev => appendLine(prev, toolCallLine(event.tool, event.input)));
+            } else if (event.type === 'live') {
+              setLiveTabId(event.tabId);
             } else if (event.type === 'error') {
               setError(event.error);
               setAgentStatus('error');
@@ -337,12 +347,15 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   const isRunning = agentStatus === 'running';
   const showOutput = agentStatus !== 'idle';
   const isBusy = isRunning || isCreatingGherkin;
+  // While the agent works, and once it is done, the browser and the agent's output take the
+  // room: the form gives way to a line saying what was asked. It comes back to try again.
+  const watching = mode === 'ai' && (isRunning || agentStatus === 'done');
 
   return (
     <div className="modal" onClick={handleClose}>
       <div className="modal-overlay" />
       <div
-        className={`modal-content create-wf-modal ${showOutput ? 'create-wf-modal--expanded' : ''}`}
+        className={`modal-content create-wf-modal ${showOutput ? 'create-wf-modal--expanded' : ''} ${mode === 'ai' && showOutput ? 'create-wf-modal--live' : ''}`}
         onClick={e => e.stopPropagation()}
       >
         <div className="modal-header">
@@ -359,6 +372,13 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               {preset.mode === 'ai' && ' The agent is told the requirement\'s criteria: expected results come from them.'}
             </p>
           )}
+          {watching && (
+            <p className="create-wf-asked">
+              <strong>{name.trim()}</strong>
+              <span>{description.trim()}</span>
+            </p>
+          )}
+          {!watching && (<>
           <div className="create-mode-toggle" role="tablist">
             <button
               type="button"
@@ -439,6 +459,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               </div>
             </>
           )}
+          </>)}
 
           {mode === 'gherkin' && (
             <div className="field-group">
@@ -462,6 +483,9 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
           )}
 
           {mode === 'ai' && showOutput && (
+            <div className="create-wf-run">
+            <LiveScreen tabId={liveTabId} running={isRunning} waiting="Waiting for the agent to open a page…" />
+            <div className="create-wf-run__log">
             <div className="create-wf-output-section">
               <div className="create-wf-output-header">
                 <span className="create-wf-output-label">
@@ -478,6 +502,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               <div className="create-wf-output" ref={outputRef}>
                 <pre>{agentOutput || 'Waiting for agent output...'}</pre>
               </div>
+            </div>
+            </div>
             </div>
           )}
         </div>

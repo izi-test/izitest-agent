@@ -13,7 +13,7 @@ const dir = mkdtempSync(join(tmpdir(), 'bp-live-'));
 process.env.IZITEST_LIVE_DIR = dir;
 process.env.IZITEST_LIVE_SESSION_MAX_FRAMES = '5';
 const live = await import('../lib/live.js');
-const { resolveSession, destroySession, setConnectionClient } = await import('../lib/session.js');
+const { resolveSession, destroySession, setConnectionClient, setConnectionRun, dropConnection, createAdHocSession, sessionsOfRun } = await import('../lib/session.js');
 
 // Smallest valid JPEG markers are enough: the server never decodes frames.
 const jpeg = (n) => Buffer.from([0xff, 0xd8, n, 0xff, 0xd9]);
@@ -269,4 +269,39 @@ test('a session that ends stops being recorded', async () => {
   destroySession('s:watched');
   await live.reconcileRecorders();
   assert.equal(recordingInExtension.size, 0);
+});
+
+test('a run of the dashboard is followed: the tab its agent opens, then the one it moves to', async () => {
+  const RUN = 'run-0123456789ab';
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  setConnectionRun('conn-run', RUN);
+  const own = resolveSession('conn-run');
+  const helper = resolveSession('conn-run', 'helper');
+  const stranger = resolveSession('conn-other');
+  assert.deepEqual([own.runId, helper.runId, stranger.runId], [RUN, RUN, null], "a connection's sessions are its run's, named ones too");
+
+  const told = [];
+  const stop = live.followRun(RUN, (tabId) => told.push(tabId), { everyMs: 10 });
+  await wait(30);
+  assert.deepEqual(told, [], 'no tab before the agent opens one');
+  own.adoptTab(105, 150);
+  await wait(30);
+  assert.deepEqual(told, [105], 'told once, not at every check');
+  stranger.adoptTab(109, 190);
+  helper.adoptTab(107, 170);
+  helper.lastUsedAt = Date.now() + 1000;
+  await wait(30);
+  assert.deepEqual(told, [105, 107], 'the session used last is the one shown; another run is not');
+  stop();
+  own.lastUsedAt = Date.now() + 2000;
+  await wait(30);
+  assert.deepEqual(told, [105, 107], 'stopped: nothing more told');
+
+  const adHoc = createAdHocSession('dashboard-agent', { runId: 'run-ba9876543210' });
+  assert.deepEqual(sessionsOfRun('run-ba9876543210').map((s) => s.id), [adHoc.id], "the dashboard's own agent is followed the same way");
+  dropConnection('conn-run');
+  assert.equal(resolveSession('conn-run').runId, null, 'a connection gone takes its run along');
+  for (const s of [helper, stranger, adHoc]) destroySession(s.id);
+  dropConnection('conn-run');
+  dropConnection('conn-other');
 });

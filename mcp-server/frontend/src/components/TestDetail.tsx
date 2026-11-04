@@ -110,6 +110,7 @@ export function TestDetail({ testName }: TestDetailProps) {
     liveSummary,
     isAgentMode,
     agentOutput,
+    liveTabId,
     refreshTrigger,
     isDebugMode,
     isPaused,
@@ -795,6 +796,7 @@ CRITICAL RULES:
         executionSummary={liveSummary}
         agentMode={isAgentMode}
         agentOutput={agentOutput}
+        liveTabId={liveTabId}
         isDebugMode={isDebugMode}
         isPaused={isPaused}
         breakpoints={breakpoints}

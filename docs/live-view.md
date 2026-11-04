@@ -35,6 +35,36 @@ plan, fenêtre réduite ou recouverte), et le screencast se tait. L'extension ca
 l'onglet au rythme demandé et n'envoie que les images qui diffèrent de la précédente. Le flux
 continue donc sans rien mettre au premier plan.
 
+## Dans le tableau de bord
+
+Le tableau de bord montre ce flux à deux endroits.
+
+- **Créer un test avec l'agent IA** : la fenêtre s'élargit dès que l'agent démarre. Le
+  navigateur est à gauche, le journal de l'agent à droite. Le formulaire se replie en une
+  ligne qui rappelle la demande ; il revient si l'agent échoue ou est arrêté, pour réessayer.
+- **Exécuter un test** : le panneau des étapes s'élargit, avec le navigateur à côté. C'est la
+  seule façon de voir une exécution headless.
+
+À la fin, la dernière image reste affichée.
+
+Le serveur dit quel onglet montrer dans le flux d'événements de la course, et le redit si
+l'onglet change :
+
+```json
+{ "type": "live", "tabId": 123 }
+```
+
+- **Pour l'agent CLI** : il se connecte au serveur MCP avec l'identifiant de sa course
+  (`/sse?run=run-…`). Les sessions qu'il ouvre portent cet identifiant, et le serveur suit
+  l'onglet de celle qu'il a utilisée en dernier (`followRun` dans `lib/live.js`).
+- **Pour l'agent interne du tableau de bord** : il reçoit l'identifiant directement.
+- **Pour un test** : dès qu'une étape renvoie l'onglet où elle s'est jouée.
+
+Le tableau de bord lit le flux avec `fetch`, pas avec un `<img>`, pour pouvoir dire pourquoi
+il est refusé (vue en direct coupée, trop de spectateurs). En développement, le proxy de Vite
+transmet `/live` en ajoutant le jeton, comme pour `/api`. Il compte comme l'un des
+2 spectateurs de l'onglet.
+
 ## Une image par action
 
 Après chaque `navigate`, `click`, `fill`, `select`, `keyboard` et `act`, l'image de l'onglet

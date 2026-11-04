@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 import { executeTest } from './tests.js';
@@ -38,6 +39,7 @@ import { complete, agentName } from './agent/complete.js';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport } from './campaigns.js';
 import { generateTestCode } from './codegen/index.js';
 import { listSessions } from './session.js';
+import { followRun } from './live.js';
 import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless } from './headless.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
@@ -341,7 +343,15 @@ export async function apiRouter(req, res, url) {
         'Access-Control-Allow-Origin': '*'
       });
 
+      // The tab the test plays in, told as soon as a step names it ({ type: 'live', tabId }):
+      // the dashboard shows it live — the only way to see a headless run.
+      let liveTab = null;
       const onProgress = (data) => {
+        const tabId = data?.stepResult?.tabId;
+        if (tabId != null && tabId !== liveTab) {
+          liveTab = tabId;
+          res.write(`data: ${JSON.stringify({ type: 'live', tabId })}\n\n`);
+        }
         res.write(`data: ${JSON.stringify(data)}\n\n`);
       };
 
@@ -1418,6 +1428,11 @@ export async function apiRouter(req, res, url) {
       const project = body.project_id ? db.prepare('SELECT id, name, base_url, context, language FROM projects WHERE id = ?').get(body.project_id) : null;
       body.prompt += `\n\n${projectBrief(project, { datasets: datasetLines(project?.id) })}`;
 
+      // The run's id, which its sessions carry: the tab the agent works in is told to the
+      // dashboard as soon as it opens one ({ type: 'live', tabId }), which shows it live.
+      const runId = `run-${randomBytes(6).toString('hex')}`;
+      const followTab = (send) => followRun(runId, (tabId) => send({ type: 'live', tabId }));
+
       // ── API mode: internal agent via Vercel AI SDK ──
       if (agentConfig.mode === 'api') {
         const apiConfig = agentConfig.api;
@@ -1437,14 +1452,13 @@ export async function apiRouter(req, res, url) {
         req.on('close', () => abortController.abort());
 
         const { runAgent } = await import('./agent-executor.js');
-        await runAgent(
-          apiConfig,
-          body.prompt,
-          sendCommand,
-          (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); },
-          abortController.signal,
-          { requirementLink, projectId: project?.id ?? null }
-        );
+        const send = (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); };
+        const stopFollowing = followTab(send);
+        try {
+          await runAgent(apiConfig, body.prompt, sendCommand, send, abortController.signal, { requirementLink, projectId: project?.id ?? null, runId });
+        } finally {
+          stopFollowing();
+        }
 
         if (!res.writableEnded) res.end();
         return;
@@ -1484,7 +1498,7 @@ export async function apiRouter(req, res, url) {
           mcpServers: {
             'izitest-agent': {
               type: 'sse',
-              url: `http://127.0.0.1:${MCP_PORT}/sse`,
+              url: `http://127.0.0.1:${MCP_PORT}/sse?run=${runId}`,
               // The server refuses unauthenticated clients when a token is set.
               ...(process.env.IZITEST_TOKEN
                 ? { headers: { Authorization: `Bearer ${process.env.IZITEST_TOKEN}` } }
@@ -1515,6 +1529,10 @@ export async function apiRouter(req, res, url) {
       let outputBuffer = '';
       let lineBuffer = '';
       const isClaudeProvider = agentConfig.cli?.provider === 'claude';
+      // Only an agent given the MCP config above connects with the run's id.
+      const stopFollowing = tmpMcpConfig
+        ? followTab((event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); })
+        : () => {};
 
       // Parse Claude stream-json and emit only human-readable SSE events
       const processStreamJson = (raw) => {
@@ -1566,6 +1584,7 @@ export async function apiRouter(req, res, url) {
 
       child.on('error', (err) => {
         log(`Agent spawn error: ${err.message}`);
+        stopFollowing();
         res.write(`data: ${JSON.stringify({ type: 'error', error: `Failed to start agent: ${err.message}` })}\n\n`);
         res.end();
       });
@@ -1579,6 +1598,7 @@ export async function apiRouter(req, res, url) {
 
       child.on('close', (code) => {
         cleanupTmpConfig();
+        stopFollowing();
         log(`Agent process exited with code ${code} (output: ${outputBuffer.length} chars)`);
         const fixCalls = outputBuffer.match(/fix_test_step/g);
         const runCalls = outputBuffer.match(/run_test/g);
@@ -1595,6 +1615,7 @@ export async function apiRouter(req, res, url) {
           log('Agent process group killed (client disconnected)');
         }
         cleanupTmpConfig();
+        stopFollowing();
       });
 
       return;
