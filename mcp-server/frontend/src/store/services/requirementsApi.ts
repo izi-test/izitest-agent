@@ -58,6 +58,11 @@ export const requirementsApi = createApi({
       query: ({ ref, scenarios }) => ({ url: `api/requirements/${encodeURIComponent(ref)}/design/plan`, method: 'POST', body: { scenarios } }),
       invalidatesTags: (_result, _error, { ref }) => ['Requirements', { type: 'Requirement', id: ref }],
     }),
+    // A rule the design found unsaid: written where it belongs (another requirement, one for the whole project), or dismissed.
+    placeMissing: builder.mutation<{ requirement: Requirement; placed: string | null }, { ref: string; text: string; dismiss?: boolean }>({
+      query: ({ ref, text, dismiss }) => ({ url: `api/requirements/${encodeURIComponent(ref)}/design/missing`, method: 'POST', body: { text, dismiss: !!dismiss } }),
+      invalidatesTags: (result, _error, { ref }) => ['Requirements', { type: 'Requirement', id: ref }, ...(result?.placed ? [{ type: 'Requirement' as const, id: result.placed }] : [])],
+    }),
     dismissDesign: builder.mutation<{ requirement: Requirement }, string>({
       query: (ref) => ({ url: `api/requirements/${encodeURIComponent(ref)}/design`, method: 'DELETE' }),
       invalidatesTags: (_result, _error, ref) => [{ type: 'Requirement', id: ref }],
@@ -105,6 +110,7 @@ export const {
   useDesignRequirementMutation,
   usePlanDesignMutation,
   useDismissDesignMutation,
+  usePlaceMissingMutation,
   useImportRequirementsMutation,
   useImportFromConnectorMutation,
   useGetConnectorScopesQuery,

@@ -13,8 +13,8 @@ import { join } from 'node:path';
 process.env.IZITEST_DB_PATH = join(await mkdtemp(join(tmpdir(), 'requirement-design-')), 'test.db');
 const { db, initDatabase } = await import('../lib/db.js');
 initDatabase();
-const { saveRequirement, getRequirement, planCases, updateCase, linkTest, formatRequirement, nonConformityOf } = await import('../lib/requirements.js');
-const { designBrief, parseDesign, resolveScenario, withResolution, designTests, planDesigned, recordingBrief, projectBrief, definitionsFor } = await import('../lib/requirement-design.js');
+const { saveRequirement, getRequirement, planCases, updateCase, linkTest, formatRequirement, nonConformityOf, saveDesign, addCriterion } = await import('../lib/requirements.js');
+const { designBrief, parseDesign, resolveScenario, withResolution, designTests, planDesigned, placeMissing, recordingBrief, projectBrief, definitionsFor } = await import('../lib/requirement-design.js');
 const { seedProjectStepDefinitions, createStepDefinition } = await import('../lib/gherkin/step-definition-store.js');
 const { cliInvocation } = await import('../lib/agent/complete.js');
 
@@ -30,6 +30,9 @@ const LOGIN = {
   criteria: ['Un mauvais mot de passe affiche "Identifiants invalides"', 'La connexion doit être rapide', 'Après 3 échecs le compte est bloqué'],
 };
 
+// Another requirement of the project: what it says is not missing from SHOP-7, and a rule of its subject goes there.
+const LOCKED = { title: 'Le compte bloqué', projectId: project, source: 'manual', key: 'SHOP-9', criteria: ['Un compte bloqué affiche "Compte bloqué"'] };
+
 // What an agent answers: fenced, with a scenario of each sort, and things to drop.
 const ANSWER = '```json\n' + JSON.stringify({
   review: [
@@ -37,7 +40,15 @@ const ANSWER = '```json\n' + JSON.stringify({
     { criterion: 9, issue: 'No such criterion' },
     { criterion: 2, issue: 'Twice the same criterion' },
   ],
-  missing: ['Un mot de passe vide affiche une erreur', ''],
+  missing: [
+    { text: 'Un mot de passe vide affiche une erreur', scope: 'this', level: 'e2e', why: "Un message à l'écran." },
+    { text: 'Le compte se débloque après 30 minutes', scope: 'other', requirement: 'SHOP-9', level: 'api', why: 'Une règle du serveur, à essayer avec plusieurs durées.' },
+    { text: 'Les espaces autour du mot de passe sont ignorés', scope: 'other', requirement: 'NOPE-1', level: 'unit' },
+    { text: 'Le titre de la page est connu', scope: 'other', requirement: 'SHOP-7' },
+    { text: 'Les messages sont en français', scope: 'project', level: 'manual' },
+    'Une règle comme avant',
+    '',
+  ],
   scenarios: [
     {
       title: 'Mot de passe erroné', criterion: 1, kind: 'error', technique: 'equivalence_partitioning', priority: 'high', rationale: 'La classe invalide.',
@@ -51,6 +62,7 @@ const ANSWER = '```json\n' + JSON.stringify({
 
 test('the method laid out for a requirement: its criteria, cases, app, phrases and which arguments are selectors', () => {
   const { requirement } = saveRequirement(LOGIN);
+  saveRequirement(LOCKED);
   const planned = planCases(requirement.key, [{ title: 'Déjà prévu', criterion: 1, kind: 'error' }]);
   const brief = designBrief(planned);
   assert.match(brief, /# Test design for SHOP-7 — Un mauvais mot de passe est refusé/);
@@ -63,6 +75,10 @@ test('the method laid out for a requirement: its criteria, cases, app, phrases a
   assert.match(brief, /- Given I am logged in as \{string\} — business step \(2 actions of this app\)/);
   assert.match(brief, /never a\s+guessed one/);
   assert.match(brief, /## Answer\nAnswer with this JSON and nothing else/);
+  assert.match(brief, /## The other requirements of the project — what they say is not missing here\n- SHOP-9 — Le compte bloqué\n {2}- Un compte bloqué affiche "Compte bloqué"/);
+  assert.match(brief, /"this" requirement; "other": another requirement of the project, by its key/);
+  assert.match(brief, /"e2e" through the screens of the app[\s\S]*"api" through its API[\s\S]*"unit" in the code, by its developers/);
+  assert.match(brief, /A rule is written in a requirement whatever\s+the level/);
   const mcp = designBrief(planned, { answer: 'mcp' });
   assert.doesNotMatch(mcp, /## Answer/);
   assert.match(mcp, /plan_tests\(requirement: "SHOP-7"[\s\S]*create_test_from_gherkin[\s\S]*start_recording/);
@@ -76,7 +92,15 @@ test('an agent\'s answer checked: known criteria, kinds, techniques and prioriti
     criterion: 2, criterion_text: 'La connexion doit être rapide', issue: '« Rapide » ne se mesure pas.',
     question: 'En combien de secondes ?', suggestion: 'La connexion répond en moins de 2 secondes',
   }]);
-  assert.deepEqual(design.missing, ['Un mot de passe vide affiche une erreur']);
+  const none = { requirement: null, level: null, why: null };
+  assert.deepEqual(design.missing, [
+    { text: 'Un mot de passe vide affiche une erreur', scope: 'this', requirement: null, level: 'e2e', why: "Un message à l'écran." },
+    { text: 'Le compte se débloque après 30 minutes', scope: 'other', requirement: 'SHOP-9', level: 'api', why: 'Une règle du serveur, à essayer avec plusieurs durées.' },
+    { text: 'Les espaces autour du mot de passe sont ignorés', scope: 'this', requirement: null, level: 'unit', why: null },
+    { text: 'Le titre de la page est connu', scope: 'this', ...none },
+    { text: 'Les messages sont en français', scope: 'project', ...none },
+    { text: 'Une règle comme avant', scope: 'this', ...none },
+  ], 'another requirement only if one of the project, not itself; a level only if a known one');
   assert.deepEqual(design.scenarios.map((s) => [s.id, s.title, s.criterion, s.kind, s.technique, s.priority]), [
     ['s1', 'Mot de passe erroné', 1, 'error', 'equivalence_partitioning', 'high'],
     ['s2', 'Troisième échec', 3, 'boundary', 'boundary_values', 'medium'],
@@ -112,6 +136,33 @@ test('the design asked of the agent is kept on the requirement, stale once its c
   assert.equal(getRequirement('SHOP-7').design_stale, true);
   await assert.rejects(designTests('SHOP-7', { complete: async () => 'no json' }), /did not answer/);
   assert.equal(getRequirement('SHOP-7').design.scenarios.length, 3, 'a failed design leaves the last one');
+});
+
+test('a missing rule placed where it belongs, or left out: either way it leaves the design', () => {
+  const before = getRequirement('SHOP-7').design.missing.length;
+  const toOther = placeMissing('SHOP-7', 'Le compte se débloque après 30 minutes');
+  assert.equal(toOther.placed, 'SHOP-9');
+  assert.deepEqual(getRequirement('SHOP-9').criteria.map((c) => c.text), ['Un compte bloqué affiche "Compte bloqué"', 'Le compte se débloque après 30 minutes']);
+  assert.equal(addCriterion('SHOP-9', ' le compte se débloque après 30 minutes ').criteria.length, 2, 'not added twice');
+
+  const forProject = placeMissing('SHOP-7', 'Les messages sont en français');
+  const transverse = getRequirement(forProject.placed);
+  assert.deepEqual([transverse.title, transverse.project_id, transverse.source, transverse.criteria.map((c) => c.text)],
+    ['Les messages sont en français', project, 'manual', ['Les messages sont en français']]);
+  assert.match(transverse.description, /found unsaid by the test design of SHOP-7/);
+
+  assert.throws(() => placeMissing('SHOP-7', 'Un mot de passe vide affiche une erreur'), /is a rule of SHOP-7: add it to its criteria/);
+  const dismissed = placeMissing('SHOP-7', 'Un mot de passe vide affiche une erreur', { dismiss: true });
+  assert.equal(dismissed.placed, null);
+  assert.deepEqual(dismissed.requirement.design.missing.map((m) => m.text), ['Les espaces autour du mot de passe sont ignorés', 'Le titre de la page est connu', 'Une règle comme avant']);
+  assert.equal(dismissed.requirement.design.missing.length, before - 3);
+  assert.equal(dismissed.requirement.design.scenarios.length, 3, 'the scenarios stay');
+  assert.throws(() => placeMissing('SHOP-7', 'Jamais proposé'), /does not list "Jamais proposé"/);
+
+  // A design kept before its rules were placed: bare texts, rules of the requirement.
+  const kept = getRequirement('SHOP-7');
+  saveDesign(kept.id, { ...kept.design, missing: ['Une règle de jadis'] });
+  assert.deepEqual(getRequirement('SHOP-7').design.missing, [{ text: 'Une règle de jadis', scope: 'this', requirement: null, level: null, why: null }]);
 });
 
 test('the chosen scenarios planned: of their criterion found by its text, gone from the design', () => {

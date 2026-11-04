@@ -30,7 +30,7 @@ import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectR
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
-import { designTests, planDesigned, withResolution, recordingBrief, projectBrief } from './requirement-design.js';
+import { designTests, planDesigned, placeMissing, withResolution, recordingBrief, projectBrief } from './requirement-design.js';
 import { importRequirements } from './requirement-import.js';
 import {
   describeConnectors, connectorOf, saveConnectorConfig, testConnector, connectorConfig, importFromConnector, sendCoverage, sendResults, sentTo,
@@ -718,6 +718,18 @@ export async function apiRouter(req, res, url) {
       const body = await readBody(req);
       try {
         return json(res, 200, { requirement: planDesigned(params.ref, Array.isArray(body.scenarios) ? body.scenarios : []) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/requirements/:ref/design/missing — { text, dismiss }: a rule the design found unsaid, written where it
+    // belongs (a criterion of another requirement, a requirement for the whole project), or dismissed; it leaves the design
+    params = matchRoute(path, '/api/requirements/:ref/design/missing');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      try {
+        return json(res, 200, placeMissing(params.ref, String(body.text ?? ''), { dismiss: body.dismiss === true }));
       } catch (err) {
         return json(res, 400, { error: err.message });
       }

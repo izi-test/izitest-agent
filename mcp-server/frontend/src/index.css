@@ -3235,3 +3235,18 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
   .live-body__screen { padding: 12px 16px 0; flex: none; }
   .live-body--with-screen .live-body__side { border-left: none; }
 }
+
+/* What a requirement leaves unsaid (test design): each rule with its level and where it belongs. */
+.missing__item { align-items: flex-start; padding: 6px 0; border-top: 1px solid var(--border-subtle); }
+.missing__title + .missing__item { border-top: none; }
+.missing__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.missing__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11px; color: var(--text-muted); }
+.missing__why { flex-basis: 100%; }
+.missing__actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; white-space: nowrap; }
+.link-btn--quiet { color: var(--text-muted); }
+.link-btn:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+
+.level-badge { padding: 1px 7px; border-radius: var(--radius-full); border: 1px solid; font-size: 10.5px; font-weight: 600; }
+.level-badge--e2e { color: var(--blue); background: var(--blue-bg); border-color: var(--blue-border); }
+.level-badge--api { color: var(--green); background: var(--green-bg); border-color: var(--green-border); }
+.level-badge--unit { color: var(--text-muted); background: var(--surface-subtle); border-color: var(--border-strong); }

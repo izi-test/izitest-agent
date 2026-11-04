@@ -10,7 +10,9 @@
 
 import { db } from './db.js';
 import { log } from './logger.js';
-import { CASE_KINDS, PRIORITIES, TECHNIQUES, getRequirement, planCases, saveDesign, scenarioFeature } from './requirements.js';
+import {
+  CASE_KINDS, PRIORITIES, TECHNIQUES, MISSING_SCOPES, TEST_LEVELS, getRequirement, saveRequirement, addCriterion, planCases, saveDesign, scenarioFeature,
+} from './requirements.js';
 import { writingDefinitions, projectLanguage } from './gherkin/step-definition-store.js';
 import { keywordsOf } from './gherkin/language.js';
 import { elementLines } from './element-store.js';
@@ -100,13 +102,26 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
       'Recorded by the tests of the project, page by page:', ...elements);
   }
 
+  const others = otherRequirementLines(requirement);
+  if (others.length) {
+    lines.push('', '## The other requirements of the project — what they say is not missing here', ...others);
+  }
+
   lines.push('', '## Method',
     '1. Review each criterion: can a test tell pass from fail? It can when the criterion says what is done and what is then',
     '   seen — a message, a page, a state — with its values. Flag the ones that cannot: a vague word (fast, simple, correct,',
     '   clear), no expected result, a value left out (how many, how long, which message). For each: the issue in one',
     '   sentence, the question to ask its author, and a rewording when you can propose one.',
     '2. List what the requirement leaves unsaid but its scope implies (an empty field, a value out of range, a second',
-    '   attempt): each a criterion it could add. Nothing outside its scope.',
+    '   attempt): each a rule it could add. Nothing another requirement of the project already says. For each, say:',
+    '   - where it belongs: "this" requirement; "other": another requirement of the project, by its key, whose subject it',
+    '     is (a calculation another one is about); "project": the whole project rather than one requirement (the language',
+    '     of the messages, a form sent twice, accessibility), to say once for all of them;',
+    '   - the level a test checks it best at: "e2e" through the screens of the app (what a user sees and does: a message,',
+    '     a button there or not, a flow); "api" through its API (a rule to try with many values, a refusal by the server);',
+    '     "unit" in the code, by its developers (a calculation, a format). A rule is written in a requirement whatever',
+    '     the level: the level says where its test goes, not whether it is said;',
+    '   - why that level, in one sentence.',
     '3. Design the scenarios, criterion by criterion, with these techniques:',
     ...TECHNIQUES.map((t) => `   - ${t}: ${TECHNIQUE_GUIDE[t]};`),
     '   One scenario checks one criterion (the one it is mainly for), with concrete values. No two check the same thing.',
@@ -127,7 +142,8 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
   const shape = [
     '{',
     '  "review": [{ "criterion": 2, "issue": "…", "question": "…", "suggestion": "the criterion reworded, or null" }],',
-    '  "missing": ["a criterion it could add", "…"],',
+    '  "missing": [{ "text": "a rule it could add", "scope": "this | other | project", "requirement": "the key of the other',
+    '    requirement, or null", "level": "e2e | api | unit", "why": "why that level, in one sentence" }],',
     '  "scenarios": [{',
     '    "title": "…", "criterion": 1, "kind": "nominal | alternative | error | boundary",',
     `    "technique": "${TECHNIQUES.join(' | ')}", "priority": "high | medium | low",`,
@@ -144,6 +160,8 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
     lines.push('', '## Then',
       'Show the user the review, what is missing and the scenarios, in that order. With their go-ahead:',
       `- the criteria they reword or add: save_requirement(key: "${requirement.key}", criteria: all of them, in order);`,
+      '- a missing rule of another requirement: save_requirement on that one, its criteria and the rule; one of the whole',
+      '  project: save_requirement(title, criteria: [the rule], project_id), a requirement of its own;',
       `- the scenarios they keep: plan_tests(requirement: "${requirement.key}", cases: [{ title, criterion, kind, technique,`,
       '  priority, rationale, gherkin }]) — it says which scenarios are ready and which have steps to record;',
       '- a ready one: create_test_from_gherkin(project_id, gherkin, test_name, requirement, case_id), then run_test;',
@@ -186,7 +204,18 @@ export function parseDesign(text, requirement) {
     seen.add(criterion.id);
     return [{ criterion: criterion.position, criterion_text: criterion.text, issue: clean(item.issue), question: clean(item.question) || null, suggestion: clean(item.suggestion) || null }];
   });
-  const missing = (Array.isArray(answer.missing) ? answer.missing : []).map((m) => clean(m, 500)).filter(Boolean).slice(0, 12);
+  // Where each missing rule belongs: another requirement only if it is one of the project's.
+  const otherOf = (key) => (typeof key === 'string' && key.trim()
+    ? db.prepare('SELECT key FROM requirements WHERE key = ? AND project_id IS ? AND id != ?').get(key.trim(), requirement.project_id ?? null, requirement.id) ?? null
+    : null);
+  const missing = (Array.isArray(answer.missing) ? answer.missing : []).flatMap((m) => {
+    const item = typeof m === 'string' ? { text: m } : (m ?? {});
+    const text = clean(item.text, 500);
+    if (!text) return [];
+    const other = item.scope === 'other' ? otherOf(item.requirement) : null;
+    const scope = other ? 'other' : MISSING_SCOPES.includes(item.scope) && item.scope !== 'other' ? item.scope : 'this';
+    return [{ text, scope, requirement: other?.key ?? null, level: TEST_LEVELS.includes(item.level) ? item.level : null, why: clean(item.why, 300) || null }];
+  }).slice(0, 12);
   const scenarios = (Array.isArray(answer.scenarios) ? answer.scenarios : []).flatMap((s) => {
     const title = clean(s?.title, 200);
     if (!title) return [];
@@ -278,6 +307,41 @@ export function planDesigned(ref, ids) {
   planCases(requirement.id, chosen.map((s) => ({ ...s, criterion: criterionNow(s) })));
   const left = requirement.design.scenarios.filter((s) => !ids.includes(s.id));
   return withResolution(saveDesign(requirement.id, { ...requirement.design, scenarios: left }));
+}
+
+/**
+ * A rule the design of a requirement found unsaid, taken care of: written where it belongs —
+ * a criterion of the other requirement it names, or a requirement of its own for the whole
+ * project —, or `dismiss`ed. Either way it leaves the design. A rule of this requirement is
+ * added to its criteria in the editor, with the others: not here.
+ */
+export function placeMissing(ref, text, { dismiss = false } = {}) {
+  const requirement = getRequirement(ref);
+  if (!requirement) throw new Error(`No requirement ${ref}`);
+  const item = requirement.design?.missing.find((m) => m.text === text);
+  if (!item) throw new Error(`The test design of ${requirement.key} does not list "${text}"`);
+  let placed = null;
+  if (!dismiss) {
+    if (item.scope === 'other') placed = addCriterion(item.requirement, item.text).key;
+    else if (item.scope === 'project') {
+      const fr = projectLanguage(requirement.project_id) === 'fr';
+      placed = saveRequirement({
+        title: item.text, criteria: [item.text], source: 'manual', projectId: requirement.project_id,
+        description: fr ? `Pour tout le projet, pas une seule exigence : relevé par la conception des tests de ${requirement.key}.`
+          : `For the whole project, not one requirement: found unsaid by the test design of ${requirement.key}.`,
+      }).requirement.key;
+    } else throw new Error(`"${text}" is a rule of ${requirement.key}: add it to its criteria`);
+  }
+  const design = { ...requirement.design, missing: requirement.design.missing.filter((m) => m !== item) };
+  return { requirement: withResolution(saveDesign(requirement.id, design)), placed };
+}
+
+/** The other requirements of the project, with their criteria: what the design must not find missing. */
+function otherRequirementLines(requirement) {
+  if (!requirement.project_id) return [];
+  const others = db.prepare('SELECT id, key, title FROM requirements WHERE project_id = ? AND id != ? ORDER BY id LIMIT 40').all(requirement.project_id, requirement.id);
+  const criteria = db.prepare('SELECT text FROM acceptance_criteria WHERE requirement_id = ? ORDER BY position LIMIT 8');
+  return others.flatMap((r) => [`- ${r.key} — ${r.title}`, ...criteria.all(r.id).map((c) => `  - ${c.text}`)]);
 }
 
 /**

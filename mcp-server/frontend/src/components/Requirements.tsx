@@ -6,7 +6,7 @@ import {
 import {
   useGetRequirementsQuery, useGetRequirementQuery, useCreateRequirementMutation, useUpdateRequirementMutation,
   useDeleteRequirementMutation, useAddCaseMutation, useDeleteCaseMutation, useUpdateCaseMutation,
-  useDesignRequirementMutation, usePlanDesignMutation, useDismissDesignMutation,
+  useDesignRequirementMutation, usePlanDesignMutation, useDismissDesignMutation, usePlaceMissingMutation,
 } from '../store/services/requirementsApi';
 import { useGetTestsQuery } from '../store/services/testsApi';
 import { useGetCampaignsQuery, useStartCampaignMutation } from '../store/services/campaignsApi';
@@ -25,7 +25,7 @@ import { CreateTestModal, type CreateMode, type CreateTestPreset } from './Creat
 import { useRunHeadless } from '../headless';
 import { Card, Dialog, EmptyState, KeyChip, Menu, PageHeader, ProjectChip, ResultBar, Segmented, StatusPill } from './ui';
 import { dateTime, relativeTime } from '../format';
-import type { Requirement, RequirementCase, RequirementDesign, DesignedScenario, ScenarioResolution, Technique } from '../types';
+import type { MissingRule, Requirement, RequirementCase, RequirementDesign, DesignedScenario, ScenarioResolution, Technique } from '../types';
 
 // Requirements: what tests are for (mcp-server/lib/requirements.js). A tester writes one here
 // — its acceptance criteria, the cases that check each — and links the tests that check them;
@@ -296,7 +296,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
   const [startCampaign, { isLoading: launching }] = useStartCampaignMutation();
   const headless = useRunHeadless();
   const design = requirement.design;
-  const missing = (design?.missing ?? []).filter((m) => !criteria.some((c) => sameText(c.text, m)));
+  const missing = (design?.missing ?? []).filter((m) => !criteria.some((c) => sameText(c.text, m.text)));
   const dirty = title !== requirement.title || description !== requirement.description || priority !== requirement.priority
     || JSON.stringify(criteria) !== JSON.stringify(requirement.criteria.map((c) => ({ id: c.id, text: c.text })));
   const project = projects.find((p) => p.id === requirement.project_id) ?? null;
@@ -428,15 +428,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
               );
             })}
             {missing.length > 0 && (
-              <div className="missing">
-                <div className="missing__title">The requirement does not say</div>
-                {missing.map((m) => (
-                  <div key={m} className="missing__item">
-                    <span>{m}</span>
-                    <button className="link-btn" onClick={() => setCriteria([...criteria, { id: undefined, text: m }])}>Add as a criterion</button>
-                  </div>
-                ))}
-              </div>
+              <MissingRules requirement={requirement} rules={missing} onAdd={(text) => setCriteria([...criteria, { id: undefined, text }])} />
             )}
             <div className="repair-actions" style={{ marginTop: 12 }}>
               <Button size="sm" variant="secondary" icon={Plus} onClick={() => setCriteria([...criteria, { id: undefined, text: '' }])}>Add a criterion</Button>
@@ -520,6 +512,60 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
 }
 
 /** What the review says of a criterion: why a test cannot judge it, what to ask, a rewording to use. */
+// The level a test checks a rule best at, as the test design says.
+const LEVELS: Record<NonNullable<MissingRule['level']>, { label: string; hint: string }> = {
+  e2e: { label: 'End to end', hint: 'Through the screens of the app: a test of IziTest.' },
+  api: { label: 'API', hint: 'Through the API of the app: a test of IziTest that calls it (call_api).' },
+  unit: { label: 'Unit · developers', hint: 'In the code, by its developers: the test is theirs, the rule still belongs in a requirement.' },
+};
+
+/**
+ * What the requirement leaves unsaid, as the test design found it: each rule with the level a
+ * test checks it best at, and where it belongs — added to these criteria (then saved with
+ * them), to the other requirement it names, or as a requirement of its own for the whole
+ * project. Or not needed: it leaves the design.
+ */
+function MissingRules({ requirement, rules, onAdd }: { requirement: Requirement; rules: MissingRule[]; onAdd: (text: string) => void }) {
+  const dispatch = useAppDispatch();
+  const go = useGo();
+  const [place, { isLoading }] = usePlaceMissingMutation();
+  const act = async (rule: MissingRule, dismiss = false) => {
+    try {
+      const { placed } = await place({ ref: requirement.key, text: rule.text, dismiss }).unwrap();
+      dispatch(showToast({ message: dismiss ? 'Left out' : rule.scope === 'other' ? `Added to the criteria of ${placed}` : `${placed} created, for the whole project` }));
+    } catch (err) {
+      dispatch(showToast({ message: errorOf(err), type: 'error' }));
+    }
+  };
+  const open = (key: string) => go(`/requirements/${encodeURIComponent(key)}`, { from: requirement.key });
+  return (
+    <div className="missing">
+      <div className="missing__title">The requirement does not say</div>
+      {rules.map((rule) => (
+        <div key={rule.text} className="missing__item">
+          <div className="missing__body">
+            <span>{rule.text}</span>
+            <span className="missing__meta">
+              {rule.level && <span className={`level-badge level-badge--${rule.level}`} title={LEVELS[rule.level].hint}>{LEVELS[rule.level].label}</span>}
+              {rule.scope === 'other' && rule.requirement && (
+                <span>Belongs to <button className="link-btn" onClick={() => open(rule.requirement!)}>{rule.requirement}</button></span>
+              )}
+              {rule.scope === 'project' && <span>For the whole project, not this requirement</span>}
+              {rule.why && <span className="missing__why">{rule.why}</span>}
+            </span>
+          </div>
+          <div className="missing__actions">
+            {rule.scope === 'this' && <button className="link-btn" onClick={() => onAdd(rule.text)}>Add as a criterion</button>}
+            {rule.scope === 'other' && <button className="link-btn" disabled={isLoading} onClick={() => act(rule)}>Add to {rule.requirement}</button>}
+            {rule.scope === 'project' && <button className="link-btn" disabled={isLoading} onClick={() => act(rule)}>Create a requirement</button>}
+            <button className="link-btn link-btn--quiet" disabled={isLoading} onClick={() => act(rule, true)}>Not needed</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ReviewNote({ note, onUse }: { note: RequirementDesign['review'][number]; onUse: () => void }) {
   return (
     <div className="review-note">

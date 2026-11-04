@@ -23,6 +23,20 @@ export const CASE_KINDS = ['nominal', 'alternative', 'error', 'boundary'];
 // one value per class of inputs that behave the same, the values at a limit, the combinations
 // of conditions that change the result, the moves between states, what usually goes wrong.
 export const TECHNIQUES = ['use_case', 'equivalence_partitioning', 'boundary_values', 'decision_table', 'state_transition', 'error_guessing'];
+// What a requirement leaves unsaid, as a test design finds it: where each rule belongs — this
+// requirement, another one of its project (named), or the whole project, said once for all —
+// and the level a test checks it best at: through the screens, through the API, or in the code
+// by its developers. A rule is written in a requirement whatever the level of its test.
+export const MISSING_SCOPES = ['this', 'other', 'project'];
+export const TEST_LEVELS = ['e2e', 'api', 'unit'];
+
+/** A design as it is kept. One kept before its rules were placed has bare texts: rules of this requirement. */
+function designOf(json) {
+  const design = parseJson(json);
+  if (!design) return null;
+  const missing = (design.missing ?? []).map((m) => (typeof m === 'string' ? { text: m, scope: 'this', requirement: null, level: null, why: null } : m));
+  return { ...design, missing };
+}
 
 /** What makes two versions of a requirement the same: its title, description and criteria. */
 export function contentHash({ title, description, criteria }) {
@@ -134,7 +148,7 @@ export function getRequirement(ref) {
      FROM requirement_cases c LEFT JOIN tests t ON t.id = c.test_id
      WHERE c.requirement_id = ? ORDER BY c.position, c.id`
   ).all(row.id).map((c) => ({ ...c, last_run: c.test_id ? lastRunOf(c.test_id) : null }));
-  const design = parseJson(row.design);
+  const design = designOf(row.design);
   return {
     ...row, design, design_stale: !!design && design.content_hash !== row.content_hash,
     criteria, cases, coverage: coverageOf(criteria, cases),
@@ -217,6 +231,22 @@ export function updateCase(caseId, changes) {
   db.prepare('UPDATE requirement_cases SET title = ?, kind = ?, technique = ?, priority = ?, rationale = ?, gherkin = ? WHERE id = ?')
     .run(f.title, f.kind, f.technique, f.priority, f.rationale, f.gherkin, row.id);
   return getRequirement(row.requirement_id);
+}
+
+/**
+ * One more criterion, last, for a requirement: the others keep their cases. One it already
+ * has, said the same way, is not added twice.
+ */
+export function addCriterion(ref, text) {
+  const requirement = getRequirement(ref);
+  if (!requirement) throw new Error(`No requirement ${ref}`);
+  if (!text?.trim()) throw new Error('A criterion needs a text');
+  if (requirement.criteria.some((c) => c.text.trim().toLowerCase() === text.trim().toLowerCase())) return requirement;
+  return saveRequirement({
+    key: requirement.key, title: requirement.title, description: requirement.description, source: requirement.source,
+    url: requirement.external_url, projectId: requirement.project_id, priority: requirement.priority,
+    criteria: [...requirement.criteria.map((c) => ({ id: c.id, text: c.text })), text.trim()],
+  }).requirement;
 }
 
 /** Keep the test design an agent proposed for a requirement (null: none any more). */

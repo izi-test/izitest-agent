@@ -272,9 +272,22 @@ export interface DesignedScenario {
 }
 
 /** The last test design an agent proposed: the review of the criteria, what is missing, the scenarios. */
+/**
+ * A rule a requirement leaves unsaid, as its test design found it: where it belongs — this
+ * requirement, another one of the project (`requirement`), the whole project — and the level a
+ * test checks it best at (null: a design made before levels were asked).
+ */
+export interface MissingRule {
+  text: string;
+  scope: 'this' | 'other' | 'project';
+  requirement: string | null;
+  level: 'e2e' | 'api' | 'unit' | null;
+  why: string | null;
+}
+
 export interface RequirementDesign {
   review: Array<{ criterion: number; criterion_text: string; issue: string; question: string | null; suggestion: string | null }>;
-  missing: string[];
+  missing: MissingRule[];
   scenarios: DesignedScenario[];
   agent: string | null;
   designed_at: string;

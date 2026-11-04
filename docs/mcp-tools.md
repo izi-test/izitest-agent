@@ -892,7 +892,18 @@ métier ; les phrases qui nomment un champ par son label (`I fill the field "…
    avec ses valeurs. Un mot vague (« rapide », « simple »), un résultat absent, une valeur manquante :
    le critère est signalé, avec la question à poser à son auteur et une reformulation.
 2. **Ce que l'exigence ne dit pas** mais que sa portée implique (un champ vide, une valeur hors
-   limite) : des critères à ajouter.
+   limite) : des règles à ajouter, sauf celles qu'une autre exigence du projet dit déjà (l'agent les
+   voit toutes, avec leurs critères). Pour chaque règle, deux informations, et la raison du niveau
+   en une phrase :
+   - **où elle va** : `this` (cette exigence), `other` (une autre exigence du projet, nommée par sa
+     clé, dont c'est le sujet), ou `project` (tout le projet : la langue des messages, un formulaire
+     envoyé deux fois). Une clé inconnue, ou celle de l'exigence elle-même, ramène la règle à `this` ;
+   - **le niveau où un test la vérifie le mieux** : `e2e` (par les écrans de l'appli : un message, un
+     bouton là ou pas, un parcours), `api` (par son API : une règle à essayer avec beaucoup de
+     valeurs, un refus du serveur), ou `unit` (dans le code, par ses développeurs).
+
+   Une règle s'écrit dans une exigence quel que soit son niveau. Le niveau dit où va son test, pas
+   s'il faut la dire.
 3. **Les scénarios**, critère par critère, avec une technique : `use_case` (chemin attendu et
    variantes), `equivalence_partitioning`, `boundary_values`, `decision_table`, `state_transition`,
    `error_guessing`. Un scénario vérifie un critère, avec des valeurs concrètes, et une priorité.
@@ -908,13 +919,24 @@ clair sont **à enregistrer** : un agent les suit dans le navigateur (`start_rec
 case_id)`).
 
 - **En MCP**, l'agent du dev lit `design_tests(requirement)`, montre la revue et les scénarios à
-  l'utilisateur, puis garde ce qu'il retient : `save_requirement` pour les critères reformulés,
-  `plan_tests` pour les scénarios (`technique`, `priority`, `rationale`, `gherkin`).
+  l'utilisateur, puis garde ce qu'il retient : `save_requirement` pour les critères reformulés ou
+  ajoutés (sur l'autre exigence pour une règle `other`, sur une nouvelle exigence du projet pour une
+  règle `project`), `plan_tests` pour les scénarios (`technique`, `priority`, `rationale`, `gherkin`).
 - **Dans le tableau de bord**, « Propose scenarios » envoie la même méthode à l'agent réglé dans
   Settings (un modèle par l'API, ou un CLI lancé une fois avec `-p`, sans outils), qui répond en JSON.
-  La proposition est gardée sur l'exigence : la revue s'affiche sous chaque critère concerné (avec
-  « Use this wording »), ce qui manque sous les critères (« Add as a criterion »), et les scénarios à
-  cocher, groupés par critère. « Plan » en fait des cas planifiés, rattachés à leur critère par son
+  La proposition est gardée sur l'exigence. La revue s'affiche sous chaque critère concerné (avec
+  « Use this wording »), et les scénarios sont à cocher, groupés par critère.
+
+  Ce qui manque s'affiche sous les critères, chaque règle avec son niveau (End to end, API, Unit ·
+  developers) et sa raison. Son bouton dépend de l'endroit où elle va :
+  - **cette exigence** : « Add as a criterion », puis Save avec les autres critères ;
+  - **une autre exigence** : « Add to DOLI-6 », qui l'ajoute à la fin de ses critères ;
+  - **tout le projet** : « Create a requirement », qui crée une exigence du projet avec cette règle
+    comme titre et comme critère.
+
+  « Not needed » l'écarte. Placée ou écartée, la règle quitte la proposition
+  (`POST /api/requirements/:ref/design/missing`, `{ text, dismiss }`). Une proposition faite avant
+  ce classement garde ses règles comme règles de cette exigence, sans niveau. « Plan » en fait des cas planifiés, rattachés à leur critère par son
   texte. Si l'exigence change ensuite, la proposition est marquée comme faite pour une version
   antérieure.
 - **Un cas planifié** se crée depuis son scénario (« Create » : le modal Gherkin, prérempli, lie le
