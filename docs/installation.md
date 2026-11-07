@@ -1,116 +1,106 @@
-# Installation Guide 🛠️
+# Installation
 
-Setting up IziTest Agent involves three main steps: the MCP server, the Chrome extension, and the AI agent (Claude) configuration.
+IziTest Agent has three parts: a server (with its dashboard), a Chrome extension, and the agent
+you connect to it.
 
 ## Prerequisites
 
-- **Chrome Browser** installed.
-- **Node.js** (v18 or higher) installed.
-- **Claude Desktop** or **Claude Code** installed.
+- **Node.js 22 or newer** and **git**.
+- **Google Chrome** (or Chromium).
+- To have tests written by an agent: **Claude Code**, Claude Desktop or another MCP client. The
+  dashboard's own agent can also be a model reached with an API key.
+- For the [Dolibarr demo](../demo/dolibarr): **Docker**.
 
----
-
-## 1. Setup MCP Server
-
-The MCP server acts as the bridge between Claude and the Chrome extension.
+## 1. Install and build
 
 ```bash
-cd mcp-server
-npm install
+git clone <repository-url> izitest-agent
+cd izitest-agent
+npm run setup
 ```
 
-To test if the server starts correctly:
+`npm run setup` installs the server's dependencies, builds the dashboard into
+`mcp-server/public`, and builds the extension into `extension/dist`. Run it again after a
+`git pull`.
+
+## 2. Load the extension in Chrome
+
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode** (top right).
+3. Click **Load unpacked** and choose the `extension/dist` folder.
+
+The extension connects to the server by itself as soon as it runs. Later builds
+(`npm --prefix extension run build`) reload it in Chrome by themselves.
+
+## 3. Start the server
+
 ```bash
-node server.js
+npm start
 ```
-*Note: The server will normally be started automatically by Claude.*
 
----
+The dashboard is at <http://127.0.0.1:3467>. The server keeps its data in
+`mcp-server/data/izitest.db` (SQLite).
 
-## 2. Install Chrome Extension
+To keep it running in the background, start it with `npm --prefix mcp-server run ensure`: it
+starts the server only if it is not already running, and several calls at once start only one.
+A process manager such as PM2 works too:
 
-1.  Open Chrome and navigate to `chrome://extensions/`.
-2.  Enable **Developer Mode** (toggle in the top-right corner).
-3.  Click **Load unpacked**.
-4.  Select the `extension/` directory from the root of this project.
-5.  Click the IziTest Agent icon in your toolbar to ensure it's active.
-6.  (Optional) Set a `Profile ID` in the extension popup to identify this instance.
+```bash
+pm2 start mcp-server/server.js --name izitest-agent
+```
 
----
+## 4. Connect your agent
 
-## 3. Configure Claude
+The server speaks MCP over SSE at `http://127.0.0.1:3467/sse`. Several agents can be connected at
+once, each in its own browser window ([parallel sessions](parallel-sessions.md)).
 
-### Option A: Claude Desktop (UI)
+**Claude Code** started in this folder finds it by itself ([.mcp.json](../.mcp.json)). Anywhere
+else:
 
-Add the following to your configuration file:
-- **Mac**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+```bash
+claude mcp add --transport sse izitest-agent http://127.0.0.1:3467/sse
+```
+
+**Claude Desktop**: in `~/Library/Application Support/Claude/claude_desktop_config.json`
+(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
   "mcpServers": {
-    "izitest-agent": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/izitest-agent/mcp-server/server.js", "--stdio"]
-    }
+    "izitest-agent": { "type": "sse", "url": "http://127.0.0.1:3467/sse" }
   }
 }
 ```
 
-> **Important** : Le flag `--stdio` est obligatoire pour Claude Desktop. Il active le mode "standard input/output" nécessaire pour la communication avec Claude.
+**The dashboard's agent** — the one behind *New test → AI Agent*, *Propose scenarios* and *Chat
+with AI* — is chosen in *Settings*: a CLI it starts (Claude Code, Gemini, GitHub Copilot,
+OpenCode) or a model through an API key.
 
-### Option B: Claude Code (CLI)
+## 5. Replay without windows (optional)
 
-Run the following command in your terminal:
+To run tests and campaigns out of sight, IziTest uses Chrome for Testing with its extension and
+a profile of its own. Install it once from *Settings → Headless browser* (about 150 MB, in
+`~/.izitest/browsers`); it then starts by itself when a run asks for it.
 
-```bash
-claude mcp add izitest-agent node /ABSOLUTE/PATH/TO/izitest-agent/mcp-server/server.js --stdio
-```
+## Ports and environment
 
-> **Note** : Claude Code détecte automatiquement le mode approprié, mais le flag `--stdio` est recommandé pour la cohérence.
+| Variable | Default | |
+|---|---|---|
+| `MCP_PORT` | `3467` | The server: MCP, the dashboard and its API |
+| `WS_PORT` | `3466` | The bridge to the extension |
+| `MCP_HOST` | `127.0.0.1` | Where the server listens |
+| `IZITEST_TOKEN` | (none) | A token every request must carry; required as soon as `MCP_HOST` is not local ([security](security.md)) |
 
----
+More in [configuration](configuration.md).
 
-## 4. Configuration des ports (optionnel)
-
-Par défaut, IziTest Agent utilise les ports suivants :
-- **3466** : WebSocket (communication avec l'extension Chrome)
-- **3467** : Serveur MCP en mode SSE (Server-Sent Events)
-
-Si ces ports sont déjà utilisés, vous pouvez les configurer via des variables d'environnement :
-
-```bash
-export WS_PORT=3458      # Port WebSocket personnalisé
-export MCP_PORT=3459     # Port MCP SSE personnalisé
-```
-
-> **Note** : En mode `--stdio` (Claude Desktop), le port MCP_PORT n'est pas utilisé car la communication se fait via stdin/stdout.
-
----
-
-## 5. Lancer le serveur (mode standalone)
-
-Si vous souhaitez tester le serveur indépendamment de Claude :
+## Check that it works
 
 ```bash
-cd mcp-server
-
-# Mode stdio (comme avec Claude Desktop)
-node server.js --stdio
-
-# Mode SSE avec interface web
-node server.js
+curl http://127.0.0.1:3467/health
 ```
 
-En mode SSE, l'interface web est accessible à `http://127.0.0.1:3467`.
+lists the connected Chrome profiles: one per Chrome where the extension runs. If it lists none,
+see [troubleshooting](troubleshooting.md).
 
 ---
-
-## 6. Vérification
-
-1.  Restart Claude Desktop or Claude Code.
-2.  In the chat, ask: `"List the connected browser profiles"`.
-3.  If successful, Claude should respond with a list including the profile you just configured.
-
----
-[< Previous: Introduction](introduction.md) | [Next: Configuration >](configuration.md)
+[< Introduction](introduction.md) | [Usage >](usage.md)

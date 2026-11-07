@@ -1,0 +1,67 @@
+# Dolibarr, an open source ERP/CRM, as an application to test IziTest on for real:
+# quotes, orders, invoices, credit notes, VAT, discounts, numbering, rights, PDF documents.
+#
+# It starts on version 23 (the one before the latest) so that moving to 24 later is a real
+# maintenance case: the same tests, an application that changed.
+#
+#   docker compose up -d         then http://localhost:8090 (first start: about a minute)
+#   docker compose logs -f web
+#   docker compose down          stops it; the data stays in the volumes
+#   docker compose down -v       stops it and throws the data away
+#
+# The secrets (database, admin) are in .env, generated on this machine, never committed.
+
+name: dolibarr-demo
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?run ./setup.sh first}
+      MARIADB_DATABASE: dolidb
+      MARIADB_USER: dolidbuser
+      MARIADB_PASSWORD: ${DB_PASSWORD:?run ./setup.sh first}
+    volumes:
+      - db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 30
+
+  web:
+    image: dolibarr/dolibarr:${DOLIBARR_VERSION:-23.0.4}
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      DOLI_INSTALL_AUTO: 1
+      DOLI_INIT_DEMO: 1                     # the demo data of Dolibarr: companies, products, quotes, invoices, users
+      DOLI_DB_HOST: mariadb
+      DOLI_DB_NAME: dolidb
+      DOLI_DB_USER: dolidbuser
+      DOLI_DB_PASSWORD: ${DB_PASSWORD}
+      DOLI_URL_ROOT: http://localhost:8090
+      DOLI_ADMIN_LOGIN: admin
+      DOLI_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?run ./setup.sh first}
+      DOLI_INSTANCE_UNIQUE_ID: ${INSTANCE_ID:?run ./setup.sh first}
+      DOLI_COMPANY_NAME: Atelier Demo
+      DOLI_COMPANY_COUNTRYCODE: FR          # French VAT rates: 20, 10, 5.5, 2.1
+      DOLI_ENABLE_MODULES: Societe,Propale,Commande,Facture,Product,Service,Banque,Stock
+      # Everyone who opens it is the admin, without a login page: no password to type, by
+      # anyone or anything (scripts/before-starting.d/10-izitest.sh names the user). Testing
+      # the rights of other users means going back to "dolibarr" here.
+      DOLI_AUTH: forceuser
+      PHP_INI_DATE_TIMEZONE: Europe/Paris
+    ports:
+      - "127.0.0.1:8090:80"
+    volumes:
+      - documents:/var/www/documents          # generated PDFs, uploads, install.lock
+      - custom:/var/www/html/custom
+      - ./scripts/before-starting.d:/var/www/scripts/before-starting.d:ro
+
+volumes:
+  db:
+  documents:
+  custom:

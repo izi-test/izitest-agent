@@ -1,5 +1,6 @@
 {
   "name": "izitest-agent-extension",
+  "license": "Apache-2.0",
   "private": true,
   "scripts": {
     "build": "npm run clean && npm run copy && node build.js",

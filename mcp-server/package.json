@@ -1,6 +1,7 @@
 {
   "name": "izitest-agent-mcp",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "description": "MCP server + WebSocket bridge for IziTest Agent",
   "type": "module",
   "main": "server.js",

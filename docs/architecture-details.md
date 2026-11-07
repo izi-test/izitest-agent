@@ -1,6 +1,6 @@
 # Architecture Details 🏗️
 
-IziTest Agent's architecture is built for stability and transparency. It avoids standard automation frameworks (Puppeteer, Selenium) to ensure 100% human-like behavior and fingerprinting.
+IziTest Agent drives pages through a Chrome extension: in your own Chrome, where the application's logins and settings already are, or in a Chrome without windows for runs out of sight.
 
 ## The Connection Chain
 
@@ -44,15 +44,15 @@ sequenceDiagram
 
 ---
 
-## Why "Real Browser" Over "Headless"?
+## Why a real Chrome
 
-Traditional automation is easy to flag:
--   **Navigator Properties**: `navigator.webdriver` is `true` by default in automated browsers.
--   **TLS Fingerprinting**: Headless browsers often use different TLS/SSL stacks than real browsers.
--   **CSS Media Queries**: Headless browsers often fail `@media (prefers-reduced-motion)` or have weird screen dimensions.
--   **Extension Presence**: Some sites check for common extensions (AdBlock, etc.), which are usually missing in test environments.
-
-**IziTest Agent inherits everything from your real browsing environment.** If you can browse a site as a human without being blocked, IziTest Agent can too.
+- **The application as its users see it**: your Chrome, its logins (SSO, two-factor), its
+  settings. An agent recording a test does not have to script a login it can already use.
+- **Out of sight when it should be**: tests and campaigns can also run in Chrome for Testing,
+  without windows, with the same extension and a profile of its own. A test that needs a login
+  then logs in itself.
+- **Only its own windows**: in your Chrome, IziTest acts in the windows it opened, never in your
+  tabs (see [parallel-sessions.md](parallel-sessions.md)).
 
 ---
 [< Previous: Multi-Account Management](multi-account.md) | [Next: Configuration >](configuration.md)

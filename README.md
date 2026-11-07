@@ -1,239 +1,147 @@
-# IziTest Agent 🎯
+# IziTest Agent
 
-**Contrôle ton navigateur Chrome via Claude en langage naturel.**
-Garde tes vraies sessions, cookies, fingerprint — zéro détection bot.
+**End-to-end tests written by an AI agent from your requirements, in a real Chrome — then replayed
+by IziTest, without AI.**
 
----
+*En français : [résumé plus bas](#en-français).*
 
-## Architecture
+An agent (Claude Code, or the one the dashboard starts) reads a requirement, browses your
+application and records the test: its steps, the values it typed, the checks it made. From then
+on IziTest replays it on its own — in your Chrome or in a Chrome without windows — and keeps
+track of what each requirement is proven by. The agent comes back only when a test needs to be
+created or repaired.
+
+## What it does
+
+- **Requirements first.** Write them, import them from a file (CSV, Excel, JSON, Markdown), Jira
+  or GitHub Issues. Each has its acceptance criteria, and its coverage shows which criteria a
+  passing test proves.
+- **Test design.** The agent reviews the criteria (can a test tell pass from fail?), lists the
+  rules the requirement leaves unsaid — where each belongs, and at which level to test it —, and
+  proposes scenarios with standard techniques (equivalence classes, boundary values, decision
+  tables, state transitions).
+- **Recorded by an agent, replayed without one.** Steps keep several locators each, so a
+  renamed class does not break them. An assertion waits for what it checks. A value that must
+  change at each run (an e-mail, a date) is computed; one the page gives (an order number) is
+  kept for the steps after.
+- **The expected result comes from the requirement**, not from what the application shows: when
+  they differ, the test reports a non-conformity.
+- **Data-driven.** A test bound to a dataset runs once per row.
+- **Campaigns.** A project's tests, or a requirement's, replayed together for a version of the
+  application, a few at a time, with or without windows. JUnit and HTML reports, a command line
+  for CI, results sent to Xray, coverage sent to Jira.
+- **Triage and repair.** A failure is classified (the application changed, the test is fragile,
+  the page was slow…) and a repair proposed, checked on a replay before it is applied.
+- **Export.** Every test reads as Gherkin and exports to Playwright (plain or Cucumber).
+- **Watch it work.** The dashboard shows the agent's or the test's browser live, with a cursor
+  where it clicks.
+
+## How it works
 
 ```
-Toi (langage naturel)
-  → Claude Desktop / Claude Code / plusieurs agents en parallèle
-    → MCP Server partagé (SSE, port 3467) — une session par agent
-      → WebSocket Bridge (port 3466)
-        → Extension Chrome (par profil)
-          → Ton vrai navigateur, une fenêtre par session
+Your agent (Claude Code, Claude Desktop, any MCP client)      The dashboard (http://127.0.0.1:3467)
+                         │ MCP over SSE                                │
+                         └──────────────► IziTest server ◄─────────────┘
+                                          (Node, SQLite, port 3467)
+                                                 │ WebSocket (port 3466)
+                                                 ▼
+                                    IziTest's Chrome extension
+                           in your Chrome · in a Chrome without windows
 ```
 
-Plusieurs agents peuvent piloter le navigateur en même temps : chacun obtient sa propre
-fenêtre, ses propres refs de snapshot et son propre enregistrement.
-Voir [docs/parallel-sessions.md](docs/parallel-sessions.md).
+The server keeps projects, requirements, tests and their runs in a local SQLite database. The
+extension drives the pages. Everything runs on your machine: the server listens on `127.0.0.1`
+only.
 
-Le Poste de pilotage peut suivre chaque agent en direct (flux MJPEG, une image par action,
-relecture) sans le perturber. Voir [docs/live-view.md](docs/live-view.md).
+## Quick start
 
-## Installation
+**You need** Node.js 22 or newer, Google Chrome and git. To have tests written by an agent: Claude
+Code (or another MCP client). For the Dolibarr demo: Docker.
 
-### 1. MCP Server
+**1. Install and build** (the server, its dashboard and the extension):
 
 ```bash
-cd mcp-server
-npm install
+git clone <repository-url> izitest-agent
+cd izitest-agent
+npm run setup
 ```
 
-### 2. Extension Chrome
+**2. Load the extension in Chrome**: open `chrome://extensions`, turn on *Developer mode*, click
+*Load unpacked* and choose the `extension/dist` folder. Later builds reload it by themselves.
+
+**3. Start the server**, then open the dashboard at <http://127.0.0.1:3467>:
 
 ```bash
-cd extension && npm install && npm run build
+npm start
 ```
 
-1. Ouvre Chrome → `chrome://extensions`
-2. Active le **Mode développeur** (toggle en haut à droite)
-3. Clique **Charger l'extension non empaquetée**
-4. Sélectionne le dossier `extension/dist/` (c'est là qu'atterrissent le manifeste et les bundles)
-5. L'icône IziTest Agent apparaît dans la barre — clique dessus pour configurer le profile ID
-
-> Les rebuilds suivants (`npm run build`, ou `npm run watch`) **rechargent l'extension dans
-> Chrome automatiquement** — plus besoin de revenir sur `chrome://extensions`.
-> Voir [docs/parallel-sessions.md](docs/parallel-sessions.md#recharger-lextension-après-un-build).
-
-### 3. Configuration Claude
-
-IziTest Agent tourne comme **un serveur partagé** auquel tous les agents se connectent en
-SSE. C'est ce qui permet de lancer plusieurs agents en parallèle sans qu'ils se gênent.
-
-#### Option A : Claude Desktop
-
-Ajoute dans `~/Library/Application Support/Claude/claude_desktop_config.json` :
-
-```json
-{
-  "mcpServers": {
-    "izitest-agent": {
-      "type": "sse",
-      "url": "http://127.0.0.1:3467/sse"
-    }
-  }
-}
-```
-
-#### Option B : Claude Code
+**4. Connect your agent.** Claude Code started in this folder finds the server by itself
+([.mcp.json](.mcp.json)). Anywhere else:
 
 ```bash
 claude mcp add --transport sse izitest-agent http://127.0.0.1:3467/sse
 ```
 
-> Le mode stdio (`node mcp-server/server.js --stdio`) reste disponible, mais **pour un seul
-> agent à la fois** : il démarre son propre pont WebSocket, et deux agents en stdio se
-> disputeraient le port 3466.
+The dashboard's own agent (*New test → AI Agent*, *Propose scenarios*) is set in *Settings*: a
+CLI (Claude Code, Gemini, GitHub Copilot, OpenCode) or a model through an API key.
 
-### 4. Lancement
-
-```bash
-# Démarre le serveur partagé s'il ne tourne pas déjà (sûr en parallèle)
-cd mcp-server && npm run ensure
-
-# Optionnel, pour multi-comptes : un Chrome par profil isolé
-chmod +x scripts/launch-profile.sh
-./scripts/launch-profile.sh compte-youtube-1
-./scripts/launch-profile.sh compte-youtube-2
-```
-
-> `npm run ensure` ne démarre le serveur que s'il est absent, et plusieurs appels
-> simultanés ne créent qu'une seule instance (verrou exclusif). Dans ce dépôt, un hook
-> `SessionStart` l'appelle automatiquement au démarrage de Claude Code.
-> Les scripts de profil sont pour lancer Chrome avec des profils isolés.
-
----
-
-## Utilisation avec Claude
-
-Une fois configuré, parle simplement à Claude :
-
-### Navigation
-> "Va sur youtube.com"
-> "Ouvre un nouvel onglet sur twitter.com avec le profil compte-youtube-1"
-
-### Interactions
-> "Clique sur le bouton 'Se connecter'"
-> "Remplis le champ de recherche avec 'military aircraft'"
-> "Appuie sur Entrée"
-
-### Extraction
-> "Extrais les titres de toutes les vidéos sur la page"
-> "Récupère le texte de l'élément .description"
-> "Combien de liens il y a sur cette page ?"
-
-### Multi-comptes
-> "Liste les profils connectés"
-> "Sur le profil compte-youtube-1, va sur youtube.com/studio"
-> "Sur le profil compte-youtube-2, poste ce commentaire..."
-
-### Screenshots
-> "Fais un screenshot de la page actuelle"
-
-### Avancé
-> "Exécute ce JavaScript : document.querySelectorAll('.video-title').length"
-> "Attends que l'élément .results apparaisse puis extrais son contenu"
-
----
-
-## Tools MCP disponibles
-
-| Tool | Description |
-|------|-------------|
-| `list_profiles` | Liste les profils Chrome connectés |
-| `open_session` | Réclame une session isolée (sa propre fenêtre). Inutile en temps normal — chaque connexion MCP en a déjà une ; sert aux sous-agents qui partagent une connexion |
-| `list_sessions` | Liste les sessions actives et la fenêtre de chacune |
-| `close_session` | Ferme une session nommée et sa fenêtre |
-| `navigate` | Navigue vers une URL |
-| `snapshot` | Scanne la page et retourne tous les éléments interactifs avec des UIDs — iframes comprises, même d'un autre site ([docs/iframes.md](docs/iframes.md)) |
-| `click` | Clique un élément (uid, sélecteur CSS ou texte) |
-| `fill` | Remplit un champ de formulaire (uid ou sélecteur CSS) |
-| `extract` | Extrait du contenu de la page |
-| `screenshot` | Capture d'écran |
-| `get_tabs` | Liste les onglets ouverts |
-| `close_window` | Ferme la fenêtre de travail en fin de tâche — uniquement une fenêtre ouverte par IziTest Agent, jamais celles de l'utilisateur |
-| `get_page_info` | Infos détaillées sur la page |
-| `scroll` | Scroll haut/bas ou vers un élément |
-| `wait` | Attend (temps ou apparition d'élément) |
-| `execute_js` | Exécute du JavaScript arbitraire |
-| `keyboard` | Envoie une touche clavier |
-| `get_cookies` | Récupère les cookies |
-| `network_requests` | Liste les requêtes réseau capturées (filtre par texte/méthode/type) |
-| `network_response` | Récupère le corps d'une réponse (avec recherche JSONPath si JSON) |
-| `network_search` | Cherche dans les réponses de plusieurs requêtes filtrées à la fois (utile pour GraphQL) |
-| `act` | **Voie rapide (Jev)** : délègue une tâche courte (login, formulaire, recherche) — le serveur enchaîne snapshot → décision → action tout seul et rend la main en cas de doute |
-
-| `bench_start` / `bench_stop` | Encadrent une tâche et comparent les runs (temps total, temps LLM de l'agent, temps outils, appels, texte renvoyé) — pour mesurer `act` contre `snapshot`/`click`/`fill` |
-
-### Voie rapide avec `act` (Jev)
-
-`act` confie une tâche bornée à [Jev](https://typesafe.ai/) (TypeSafe AI), un modèle de décision (~300 ms par décision)
-appelé via OpenRouter. Un seul appel d'outil remplace toute la séquence `snapshot → click/fill → snapshot → …` :
-
-```
-act(goal: "Se connecter", inputs: { "email": "moi@exemple.fr", "mot de passe": "..." })
-→ act: DONE after 3 action(s) in 1721ms
-```
-
-- **Clé requise** : variable d'environnement `OPENROUTER_API_KEY`, ou clé enregistrée dans Settings (mode API).
-  Sans clé, `act` répond qu'il est indisponible et l'agent continue avec `snapshot`/`click`/`fill`.
-- **`inputs` obligatoire pour tout ce qui se tape** : Jev ne génère pas de texte. Les valeurs vont uniquement au
-  navigateur ; Jev ne voit que les clés, et les valeurs déjà saisies (mots de passe inclus) sont masquées dans ce qu'il reçoit.
-- **Rend la main plutôt que deviner** : si Jev hésite, tourne en rond ou se dit bloqué, `act` s'arrête et renvoie
-  les refs `@eX` candidates pour que l'agent termine avec `click`/`fill`.
-- **Limites** : pas d'extraction de contenu, pas de canvas ni d'iframes cross-origin ; Jev juge la fin de tâche sur
-  l'URL, le titre et les éléments interactifs seulement — à vérifier si le résultat compte.
-
-### Workflow recommandé avec `snapshot`
-
-```
-1. snapshot → obtient la liste des éléments avec UIDs
-2. click uid="5" → clique sur l'élément [5]
-3. fill uid="12" value="hello" → remplit l'input [12]
-```
-
-Le snapshot retourne un format compact :
-```
-Page: YouTube
-URL: https://www.youtube.com
-Elements: 42
-
-[1] link "Home" → https://www.youtube.com/
-[2] input/text placeholder="Search"
-[3] button "Search"
-[4] link "Sign in" → https://accounts.google.com/...
-[5] heading/1 "Recommended"
-```
-
----
-
-## Multi-comptes
-
-Chaque profil Chrome est complètement isolé :
-- Cookies / sessions séparés
-- Historique séparé
-- Extensions installées séparément
+**5. Write a first test.** Serve the Test Arena, a page full of what makes UI tests hard:
 
 ```bash
-# Lance 3 profils différents
-./scripts/launch-profile.sh youtube-main
-./scripts/launch-profile.sh youtube-backup
-./scripts/launch-profile.sh twitter-bot
+npm run arena    # http://127.0.0.1:8777/izitest-test.html
 ```
 
-Installe l'extension dans chaque profil et donne un nom unique.
-Claude peut ensuite cibler un profil spécifique via le paramètre `profile`.
+Then, in the dashboard, create a project with that address and click *New test*. Or ask your
+agent:
 
----
+> Record a test on http://127.0.0.1:8777/izitest-test.html: sign in with a wrong password and
+> check that the error message is shown.
 
-## Pourquoi c'est anti-détection
+## Try it on a real application
 
-1. **Vrai navigateur** — pas de headless Chrome, pas de Puppeteer
-2. **Vrai fingerprint** — le navigateur a ton vrai user agent, plugins, fonts, WebGL
-3. **Vraies sessions** — tu te connectes manuellement une fois, les cookies persistent
-4. **Pas d'injection CDP visible** — l'extension utilise les APIs Chrome officielles
-5. **Timing humain** — les actions passent par `scrollIntoView` + events DOM naturels
+[demo/dolibarr](demo/dolibarr) starts [Dolibarr](https://www.dolibarr.org), an open source ERP,
+with its demo data, in Docker: quotes, invoices, credit notes, VAT, discounts. It starts on the
+version before the latest, so that upgrading it is a real maintenance case for your tests.
 
----
+## Documentation
 
-## Sécurité
+| | |
+|---|---|
+| [Introduction](docs/introduction.md) | Why an agent writes the tests and IziTest replays them |
+| [Installation](docs/installation.md) | Every step, the ports, starting the server in the background |
+| [Usage](docs/usage.md) | From a requirement to a campaign |
+| [MCP tools](docs/mcp-tools.md) | Every tool an agent can call: recording, assertions, datasets, connectors, campaigns |
+| [Configuration](docs/configuration.md) | Environment variables, ports, the extension's settings |
+| [Live view](docs/live-view.md) | Watching an agent or a test in its browser |
+| [Parallel sessions](docs/parallel-sessions.md) | Several agents at once, each in its own window |
+| [Security](docs/security.md) | What can reach the server, the token |
+| [Troubleshooting](docs/troubleshooting.md) | When something does not connect |
 
-- Le WebSocket écoute uniquement sur `localhost` (127.0.0.1)
-- Aucun port exposé sur le réseau
-- Les cookies sont partiellement masqués dans les réponses (50 premiers caractères)
-- Le JavaScript exécuté tourne dans le contexte de la page (sandboxé par Chrome)
+Parts of the documentation are still in French (most of *MCP tools*, *Configuration*,
+*Troubleshooting*).
 
+## Status
 
+IziTest is young. It is used on real applications, and it still has rough edges: Chrome only,
+an interface in English, PDF documents not read yet. Issues and feedback are welcome.
+
+To work on it: `npm test` runs the server's and the extension's test suites;
+`npm --prefix mcp-server run dev:frontend` serves the dashboard with hot reload on port 5175.
+
+## En français
+
+IziTest Agent fait écrire des tests de bout en bout par un agent IA, à partir de vos exigences,
+dans un vrai Chrome — puis les rejoue lui-même, sans IA, dans votre Chrome ou dans un Chrome sans
+fenêtre. Il suit ce que chaque exigence a pour preuve (sa couverture), conçoit les tests avec les
+techniques usuelles (classes d'équivalence, valeurs limites, tables de décision), signale une
+non-conformité quand l'application ne fait pas ce que l'exigence attend, analyse les échecs et
+propose des réparations. Il lit les exigences d'un fichier, de Jira ou de GitHub Issues, envoie les
+résultats à Xray, et exporte les tests en Gherkin et en Playwright.
+
+Pour l'installer : `npm run setup`, l'extension `extension/dist` chargée dans Chrome, `npm start`,
+puis le tableau de bord sur <http://127.0.0.1:3467>. Pour l'essayer sur une vraie application :
+[demo/dolibarr](demo/dolibarr).
+
+## License
+
+[Apache License 2.0](LICENSE).

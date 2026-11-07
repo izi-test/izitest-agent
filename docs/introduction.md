@@ -1,41 +1,56 @@
-# Introduction to IziTest Agent 🎯
+# Introduction to IziTest Agent
 
-**IziTest Agent** is a minimalist but powerful framework designed to bridge the gap between AI agents (like Claude) and your real, daily-use web browser. Unlike traditional automation tools that use "headless" browsers or specialized drivers, IziTest Agent allows the AI to control your actual Chrome sessions, preserving your cookies, fingerprint, and logged-in states.
+IziTest Agent has AI agents write end-to-end tests from your requirements, in a real Chrome, and
+replays them itself, without AI.
 
-## Why IziTest Agent?
+## Why
 
-Traditional browser automation (Puppeteer, Selenium, Playwright) often suffers from two major problems:
-1.  **Bot Detection**: Modern websites easily detect headless Chrome or CDP-injected browsers.
-2.  **Context Loss**: Setting up sessions, cookies, and multi-factor authentication (MFA) in a script is a nightmare.
+Writing end-to-end tests is slow, and keeping them working is slower: a renamed class, a page
+that loads a little later, and the suite goes red for nothing. AI agents can now browse an
+application and do what a requirement says — but a test that asks a model at every run is slow,
+costly, and never quite the same twice.
 
-**IziTest Agent solves this by:**
-- Using your **real browser** profile.
-- Executing actions via an **official Chrome Extension**.
-- Providing a **human-like** interaction layer.
+IziTest splits the work:
 
-## High-Level Architecture
+- **an agent writes the test** — it reads the requirement, browses the application and records
+  what it does and what it checks;
+- **IziTest replays it**, step by step, with no model in the loop: the same test, the same way,
+  every time, in seconds;
+- **the agent comes back** only when a test has to be created, or repaired after the application
+  changed — and a repair is checked on a replay before it is applied.
 
-IziTest Agent uses a multi-layered bridge to ensure stability and transparency:
+And it keeps the link a QA team cares about: which requirement each test proves, which
+criteria are covered, how each one did in the last campaign.
 
-```mermaid
-graph TD
-    User([User Natural Language]) --> Claude[Claude Desktop / Claude Code]
-    Claude --> MCPServer[MCP Server - Node.js]
-    MCPServer <--> WSBridge[WebSocket Bridge - Port 3466]
-    WSBridge <--> ChromeExt[Chrome Extension]
-    ChromeExt <--> RealBrowser[Real Chrome Browser]
+## How it is built
+
+```
+Your agent (MCP client)      The dashboard
+          │ MCP over SSE           │ HTTP
+          └──────► IziTest server ◄┘   (Node, SQLite, port 3467)
+                         │ WebSocket (port 3466)
+                         ▼
+               IziTest's Chrome extension
+        in your Chrome · in a Chrome without windows
 ```
 
-## Key Technical Concepts
+- **The server** keeps projects, requirements, tests, datasets and runs in SQLite, serves the
+  dashboard, and exposes the MCP tools agents call.
+- **The extension** drives the pages: it finds elements, clicks, types, checks, and replays a
+  test's steps. In your own Chrome it acts, by default, only in the windows IziTest opened: never
+  in your own tabs.
+- **A Chrome without windows** (Chrome for Testing, with the same extension and a profile of its
+  own) replays tests and campaigns out of sight.
 
-### 1. Real Browser, Real Fingerprint
-Because it's your actual browser, you have your real user agent, plugins, fonts, and WebGL fingerprint. This makes IziTest Agent virtually indistinguishable from a human user.
+## Key ideas
 
-### 2. Multi-Profile Isolation
-The project is built to handle multiple Chrome profiles simultaneously. You can have a "Work" profile and a "Personal" profile connected at the same time, and Claude can target actions to specific profiles.
-
-### 3. Snapshot-Based Interaction
-Instead of making Claude guess where elements are, IziTest Agent provides a `snapshot` tool that scans the page and returns a compact, high-utility list of interactive elements with unique, short IDs (UIDs).
+- **Several locators per step.** A recorded click keeps its CSS selector, its accessible name, its
+  text, a test id when there is one; a replay tries them in turn.
+- **Assertions wait** for what they check, as Playwright's do.
+- **The expected result comes from the requirement.** When the application does otherwise, the
+  test reports a non-conformity instead of adapting to it.
+- **Snapshots for agents.** An agent sees a page as a compact list of its interactive elements,
+  each with a reference (`@e12`) to act on — iframes included.
 
 ---
-[Next: Installation >](installation.md)
+[Installation >](installation.md)
