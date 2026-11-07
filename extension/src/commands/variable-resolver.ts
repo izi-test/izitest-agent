@@ -1,7 +1,7 @@
 // Resolves list/box variable steps to a concrete element handle.
 import { ensureContentScript } from '../helpers';
 import type { WorkflowStep } from '../types';
-import type { ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { ElementHandle, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 
 export interface VariableResolve {
   parentSelector: string;

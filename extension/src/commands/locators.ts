@@ -1,7 +1,7 @@
 // Locator engine: finds elements via multiple selector strategies in parallel.
 import { escapeCssString } from './page-helpers';
 import type { Locator } from '../types';
-import type { ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { ElementHandle, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 
 export interface LocatingResult {
   locatorUsed: string;

@@ -3,7 +3,7 @@
 // to avoid slowing down every request on every page.
 
 import { JSONPath } from 'jsonpath-plus';
-import type { HTTPResponse, HTTPRequest, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { HTTPResponse, HTTPRequest, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 import { resolveTabId } from '../helpers';
 import { getPage } from '../puppeteer-client';
 import type { NetworkRequestsParams, NetworkResponseParams, NetworkSearchParams } from '../types';

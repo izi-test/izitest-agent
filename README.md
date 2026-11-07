@@ -55,7 +55,7 @@ only.
 
 ## Quick start
 
-**You need** Node.js 22 or newer, Google Chrome and git. To have tests written by an agent: Claude
+**You need** Node.js 22.12 or newer, Google Chrome and git. To have tests written by an agent: Claude
 Code (or another MCP client). For the Dolibarr demo: Docker.
 
 **1. Install and build** (the server, its dashboard and the extension):

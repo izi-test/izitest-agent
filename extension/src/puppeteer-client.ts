@@ -4,7 +4,7 @@ import {
   Browser,
   Page,
   Dialog
-} from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+} from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 import { isHeadless, pageUserAgent } from './headless';
 import { showCursorOf } from './cursor';
 

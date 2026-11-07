@@ -11,7 +11,7 @@ import { setPickedValue } from '../dom/picked-input';
 import { actsOnPage } from '../page-url';
 import { fileInputOf, putFiles } from '../dom/file-input';
 import type { ReplaySequenceParams, Locator } from '../types';
-import type { ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { ElementHandle, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 
 const STEP_DELAY_MS: Record<string, number> = { navigate: 300, click: 150 };
 

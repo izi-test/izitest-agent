@@ -3,7 +3,7 @@
 // (mcp-server/lib/explore.js), by check_page, and by the assertions that reproduce a bug.
 
 import { resolveTabId, TOP_FRAME } from '../helpers';
-import type { Page, ConsoleMessage } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { Page, ConsoleMessage } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 import type { ConsoleMessagesParams, CheckLinksParams, RunAxeParams } from '../types';
 
 // ─── Console ─────────────────────────────────────────────────────────

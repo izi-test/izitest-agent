@@ -6,7 +6,7 @@
 // and Page.startScreencast both render a tab that is in the background, which
 // chrome.tabs.captureVisibleTab cannot do without bringing it to the front.
 
-import type { CDPSession } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { CDPSession } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 import { getPage } from './puppeteer-client';
 import { delay, TOP_FRAME } from './helpers';
 

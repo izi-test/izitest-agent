@@ -9,7 +9,7 @@ import { adoptOpenedWindow, rememberOwnedWindow } from '../owned-windows';
 import { armEffects } from '../effects';
 import { dragBetween, dropPoint } from './drag';
 import type { NavigateParams, ClickParams, FillParams, SelectParams, UploadParams, DragParams, KeyboardParams, ScrollParams } from '../types';
-import type { CDPSession, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { CDPSession, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 
 // ─── Ref resolution (content script element map) ────────────────────
 

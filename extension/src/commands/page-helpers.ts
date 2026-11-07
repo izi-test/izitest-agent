@@ -1,12 +1,12 @@
 // Puppeteer-side helpers for element interaction.
 // page.evaluate callbacks are serialized — _find() is re-declared inline in each one.
-import type { ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { ElementHandle, KeyInput, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 
 export const IS_MAC = navigator.userAgent.includes('Macintosh');
 export const CMD_KEY = IS_MAC ? 'Meta' : 'Control';
 
 import type { KeyboardModifier, TypingMode } from '../types';
-export const MODIFIER_MAP: Record<KeyboardModifier, string> = {
+export const MODIFIER_MAP: Record<KeyboardModifier, KeyInput> = {
   alt: 'Alt', ctrl: 'Control', meta: 'Meta', shift: 'Shift'
 };
 

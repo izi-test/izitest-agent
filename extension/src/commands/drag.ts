@@ -9,7 +9,7 @@
 // which the page receives as Chrome's own dragenter, dragover, drop and dragend: what
 // Playwright's dragTo does too.
 
-import type { CDPSession, ElementHandle, Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { CDPSession, ElementHandle, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 import type { Protocol } from 'devtools-protocol';
 
 export const DROP_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'] as const;

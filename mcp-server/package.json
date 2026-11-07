@@ -19,14 +19,14 @@
     "@cucumber/cucumber-expressions": "^19.0.0",
     "@cucumber/gherkin": "^39.0.0",
     "@cucumber/messages": "^32.2.0",
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@openrouter/sdk": "^0.11.2",
-    "@puppeteer/browsers": "^2.13.2",
+    "@puppeteer/browsers": "^3.2.6",
     "ai": "^6.0.156",
     "better-sqlite3": "^11.7.0",
     "pixelmatch": "^7.1.0",
     "pngjs": "^7.0.0",
     "ws": "^8.18.0",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   }
 }

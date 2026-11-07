@@ -5,7 +5,7 @@
 // the live view, the action frames and the window itself. Only tabs IziTest drives: the user's
 // own mouse is never followed.
 
-import type { Page } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
+import type { Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
 
 // The tab's top frame (helpers.ts TOP_FRAME): not imported, helpers brings Chrome's listeners
 // into the page driver, which imports this.

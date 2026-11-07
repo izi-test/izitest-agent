@@ -4,7 +4,7 @@
   "description": "AI agents write end-to-end tests from your requirements in a real Chrome; IziTest replays them, without AI.",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "scripts": {
     "setup": "npm --prefix mcp-server install && npm --prefix mcp-server/frontend install && npm --prefix mcp-server/frontend run build && npm --prefix extension install && npm --prefix extension run build",

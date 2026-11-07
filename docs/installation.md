@@ -5,7 +5,7 @@ you connect to it.
 
 ## Prerequisites
 
-- **Node.js 22 or newer** and **git**.
+- **Node.js 22.12 or newer** and **git**.
 - **Google Chrome** (or Chromium).
 - To have tests written by an agent: **Claude Code**, Claude Desktop or another MCP client. The
   dashboard's own agent can also be a model reached with an API key.
