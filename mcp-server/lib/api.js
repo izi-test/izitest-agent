@@ -40,7 +40,7 @@ import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign
 import { generateTestCode } from './codegen/index.js';
 import { listSessions } from './session.js';
 import { followRun } from './live.js';
-import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless } from './headless.js';
+import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless, HEADLESS_PROFILE } from './headless.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
 // How long to wait for a reloaded extension to register again. A reload drops the socket
@@ -133,13 +133,20 @@ export async function apiRouter(req, res, url) {
     // of the user clicking Reload in chrome://extensions. The extension reloads itself
     // (chrome.runtime.reload), so nothing here needs CDP or a relaunched browser.
     if (method === 'POST' && path === '/api/dev/reload-extension') {
-      if (getProfiles().size === 0) {
+      // Not the headless Chrome's: an extension loaded from its command line that reloads itself
+      // stays disabled in its profile, and every later start waits 30 s for it in vain. It is
+      // stopped instead, and starts with the new build at the next run (lib/headless.js).
+      if (getProfiles().has(HEADLESS_PROFILE)) {
+        await stopHeadless().catch((err) => log(`Extension reload: could not stop the headless Chrome: ${err.message}`));
+        log('Extension reload: the headless Chrome is stopped, it starts with the new build at the next run');
+      }
+      if ([...getProfiles().keys()].every((id) => id === HEADLESS_PROFILE)) {
         log('Extension reload requested, but no extension is connected');
         return json(res, 200, { notified: 0, reloaded: false });
       }
       // Listener first: the extension can be back before this request finishes.
       const reconnected = waitForProfileReregister(RELOAD_RECONNECT_TIMEOUT_MS);
-      const notified = broadcastToExtensions({ type: 'reload_extension' });
+      const notified = broadcastToExtensions({ type: 'reload_extension' }, { except: [HEADLESS_PROFILE] });
       const reloaded = await reconnected;
       log(reloaded
         ? `Extension reload confirmed (${notified} profile(s) notified, extension re-registered)`

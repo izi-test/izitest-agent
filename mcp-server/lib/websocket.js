@@ -243,9 +243,10 @@ export function sendToProfile(profileId, message) {
 }
 
 /** Same, to every connected extension. Returns how many received it. */
-export function broadcastToExtensions(message) {
+export function broadcastToExtensions(message, { except = [] } = {}) {
   let sent = 0;
-  for (const ws of profiles.values()) {
+  for (const [profileId, ws] of profiles) {
+    if (except.includes(profileId)) continue;
     if (ws.readyState === 1) { ws.send(JSON.stringify(message)); sent++; }
   }
   return sent;
