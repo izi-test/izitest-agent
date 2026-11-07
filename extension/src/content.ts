@@ -5,6 +5,7 @@ import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, cl
 import FindSimilarElements from './utils/FindSimilarElements';
 import { announceToParent, listenForHops } from './dom/frame-hop';
 import type { FileData } from './dom/file-input';
+import { drawCursor } from './dom/cursor';
 
 (() => {
   // Helper: build a stable CSS selector for an element (for serialization)
@@ -33,6 +34,14 @@ import type { FileData } from './dom/file-input';
   }
 
   listenForHops();
+
+  // The cursor of the mouse IziTest drives (cursor.ts): drawn in the top frame. A page just
+  // loaded in a driven tab shows it where it was.
+  if (window === window.top) {
+    chrome.runtime.sendMessage({ type: 'cursor_where' })
+      .then((at: { x: number; y: number } | null) => { if (at) drawCursor(at); })
+      .catch(() => {});
+  }
 
   chrome.runtime.onMessage.addListener((
     message: Record<string, unknown>,
@@ -144,6 +153,11 @@ import type { FileData } from './dom/file-input';
       } catch (error) {
         sendResponse({ success: false, error: String(error) });
       }
+    }
+
+    if (message.type === 'cursor') {
+      if (window === window.top) drawCursor(message as { x?: number; y?: number; press?: boolean; hidden?: boolean });
+      sendResponse({ success: true });
     }
 
     if (message.type === 'show_overlay') {

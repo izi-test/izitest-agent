@@ -12,6 +12,7 @@ import type {
 import { getPage, isBrowserAttached } from '../puppeteer-client';
 import { isOwnedWindow, forgetOwnedWindow, getWindowOwner, listOwnedWindows, listPopupWindows, popupParent, popupsOf } from '../owned-windows';
 import { detachBrowser } from '../puppeteer-client';
+import { hideCursor } from '../cursor';
 
 const MAX_SNAPSHOT_ELEMENTS = 500;
 const WAIT_MAX_TIMEOUT_MS = 10000;
@@ -163,7 +164,10 @@ export async function cmdScreenshot({ tabId, sessionId, annotate, format, qualit
     await delay(100);
   }
 
-  const dataUrl = await captureTab(resolvedTabId, format ?? 'png', quality ?? 90);
+  // Without the cursor of the driven mouse: a screenshot compared with a baseline would differ by it.
+  await hideCursor(resolvedTabId, true);
+  const dataUrl = await captureTab(resolvedTabId, format ?? 'png', quality ?? 90)
+    .finally(() => hideCursor(resolvedTabId, false));
 
   if (annotate) {
     for (const frameId of [TOP_FRAME, ...frames]) {

@@ -6,6 +6,7 @@ import {
   Dialog
 } from 'puppeteer-core/lib/esm/puppeteer/puppeteer-core-browser.js';
 import { isHeadless, pageUserAgent } from './headless';
+import { showCursorOf } from './cursor';
 
 const connectedBrowsers = new Map<number, Browser>();
 const connectedPages = new Map<number, Page>();
@@ -128,6 +129,8 @@ export async function getPage(tabId: number): Promise<Page> {
 
   connectedPages.set(tabId, page);
   await emulateForeground(page);
+  // Its mouse, shown in the tab as a blue cursor (cursor.ts): seen in the live view.
+  showCursorOf(tabId, page);
   // What the page asks of the network, kept from now on: a test step may read the answer to a
   // request a click made (the server's capture, what: "request"). Loaded here, not on import:
   // the network module sets up Chrome's listeners as it loads.

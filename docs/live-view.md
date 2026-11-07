@@ -65,6 +65,26 @@ il est refusé (vue en direct coupée, trop de spectateurs). En développement, 
 transmet `/live` en ajoutant le jeton, comme pour `/api`. Il compte comme l'un des
 2 spectateurs de l'onglet.
 
+## Le curseur
+
+La souris que pilote IziTest (protocole DevTools) n'a pas d'image à elle : un clic tombait sans que
+rien ne le montre. Chaque déplacement et chaque appui de cette souris est donc dessiné dans la page,
+par l'extension (`extension/src/cursor.ts`, `dom/cursor.ts`) :
+
+- une flèche bleue qui glisse jusqu'au point visé (350 ms) ;
+- un cercle bleu qui s'élargit là où elle appuie.
+
+On la voit dans la vue en direct, dans les images par action et dans la fenêtre elle-même. Elle
+reste là où elle était quand une nouvelle page se charge.
+
+- **Jamais dans le chemin** : elle ne prend aucun clic (`pointer-events: none`), n'a pas de texte et
+  vit dans un shadow root.
+- **Masquée pendant une capture** comparée à une référence (`screenshot`, VRT), qui sinon
+  différerait par elle.
+- **Seulement dans les onglets pilotés** : la souris de l'utilisateur n'est jamais suivie.
+- **Un clic fait par script** (`el.click()`, pour une case à cocher) ne la déplace pas : il ne passe
+  pas par la souris.
+
 ## Une image par action
 
 Après chaque `navigate`, `click`, `fill`, `select`, `keyboard` et `act`, l'image de l'onglet

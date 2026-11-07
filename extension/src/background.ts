@@ -19,6 +19,7 @@ import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecor
 
 // Importing puppeteer-client to register its lifecycle listeners
 import { detachBrowser } from './puppeteer-client';
+import { cursorOf } from './cursor';
 
 // ─── Content-Script Commands ────────────────────────────────────────
 
@@ -327,6 +328,11 @@ chrome.runtime.onMessage.addListener((
 ) => {
   if (message.type === 'getStatus') {
     sendResponse({ connected: isConnected, profileId });
+  }
+
+  // A page just loaded asks where the cursor of its tab is (cursor.ts): null when it is not driven.
+  if (message.type === 'cursor_where') {
+    sendResponse(cursorOf(_sender.tab?.id));
   }
 
   if (message.type === 'setProfileId') {
