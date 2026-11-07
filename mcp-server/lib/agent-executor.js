@@ -5,7 +5,7 @@ import { generateText, tool, stepCountIs } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { log } from './logger.js';
-import { recordAction, selectParams } from './recording.js';
+import { recordAction, selectParams, waitsForNothing } from './recording.js';
 import { currentSession, runInSession, createAdHocSession, destroySession } from './session.js';
 
 // The dashboard agent gets its own session like any other agent, so a run from the web UI
@@ -440,6 +440,8 @@ function buildTools(sendCommand) {
         intent: z.string().optional(),
       }),
       execute: async ({ ms, selector, intent }) => {
+        const nothing = waitsForNothing(ms, selector);
+        if (nothing) return nothing;
         try {
           const result = await sendCommand(undefined, 'wait', { ms, selector });
           saveActionToHistory('wait', { ms, selector }, null, null, intent);

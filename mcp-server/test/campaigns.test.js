@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.IZITEST_DB_PATH = join(await mkdtemp(join(tmpdir(), 'campaigns-')), 'test.db');
+// A failing assertion is told at once: these tests are about campaigns, not about waiting (test/assertion-wait.test.js).
+process.env.IZITEST_ASSERT_TIMEOUT_MS = '0';
 const { db, initDatabase } = await import('../lib/db.js');
 initDatabase();
 const { saveTest, deleteTest } = await import('../lib/test-store.js');

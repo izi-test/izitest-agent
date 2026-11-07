@@ -848,7 +848,8 @@ async function triageRun({ name, test, executionId, failedStepOrder, globalError
     ? {
       step: failedStepOrder, error: assertion.error, assertionResult: assertion.assertionResult,
       hydratedExpected: hydrated?.assertion?.expected,
-      recheck: () => evaluateAssertion(sendCommand, hydrated.assertion, tabId),
+      // Once: triage asks whether it holds a moment later (lib/triage.js).
+      recheck: () => evaluateAssertion(sendCommand, hydrated.assertion, tabId, { timeoutMs: 0 }),
     }
     : { step: failedStepOrder, error: action?.error ?? globalError ?? '' };
   const testRow = db.prepare('SELECT id FROM tests WHERE name = ?').get(name);
@@ -881,7 +882,39 @@ function pageExcerpt(text, expected) {
  * Evaluate a single assertion by querying the browser.
  * Returns { passed, expected, actual, type }
  */
-export async function evaluateAssertion(sendCommand, assertion, tabId) {
+// An assertion is read again until it holds, as Playwright's expect does: the page may still be
+// on its way to what it checks — a form sent with Enter, the next page loading; a message shown
+// once a request answers. One the page cannot be read for meanwhile (it is being replaced) is
+// read again too. It fails once this time is up, with what it read last.
+const ASSERTION_TIMEOUT_MS = Number(process.env.IZITEST_ASSERT_TIMEOUT_MS ?? 5000);
+const ASSERTION_POLL_MS = 250;
+
+/**
+ * Whether the page shows what `assertion` expects, read again until it does or `timeoutMs` is
+ * up. A screenshot compared, or an oracle (what the page does wrong on its own), is read once.
+ */
+export async function evaluateAssertion(sendCommand, assertion, tabId, { timeoutMs = ASSERTION_TIMEOUT_MS } = {}) {
+  if (assertion.type === 'visual_match' || ORACLE_ASSERTIONS.has(assertion.type)) return readAssertion(sendCommand, assertion, tabId);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let result = null;
+    let error = null;
+    try {
+      result = await readAssertion(sendCommand, assertion, tabId);
+    } catch (err) {
+      error = err;
+    }
+    if (result?.passed || result?.unknown || Date.now() >= deadline) {
+      if (error) throw error;
+      const { unknown, ...told } = result;
+      return told;
+    }
+    await new Promise((resolve) => setTimeout(resolve, ASSERTION_POLL_MS));
+  }
+}
+
+/** What the page shows for `assertion`, read once. */
+async function readAssertion(sendCommand, assertion, tabId) {
   const type = assertion.type;
   const selector = assertion.selector;
   const expected = assertion.expected;
@@ -994,7 +1027,7 @@ export async function evaluateAssertion(sendCommand, assertion, tabId) {
       js = `document.querySelectorAll(${JSON.stringify(selector)}).length`;
       break;
     default:
-      return { passed: false, expected: '', actual: `Unknown assertion type: ${type}`, type };
+      return { passed: false, expected: '', actual: `Unknown assertion type: ${type}`, type, unknown: true };
   }
 
   // With the URL of the page it is checked on: the assertion keeps its page (lib/elements.js).

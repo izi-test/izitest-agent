@@ -23,7 +23,7 @@ These tools are used for direct, real-time control of the browser.
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
 | `get_page_info` | Detailed info (title, URL, element counts). | `tabId`, `profile` |
 | `scroll` | Scrolls the page or moves to an element. | `direction`, `amount`, `selector` |
-| `wait` | Pauses for a duration or until an element appears. | `ms`, `selector` |
+| `wait` | Pauses for a duration or until an element appears. One of the two is needed: a `wait` with neither is refused, not recorded. | `ms`, `selector` |
 | `execute_js` | Runs arbitrary JavaScript in the page context. Recorded as a step while a test records — to only read the page, use `extract` or `snapshot`, which are not. | `code` |
 | `keyboard` | Sends a key press event. | `key`, `modifiers` |
 | `get_cookies` | Retrieves cookies for a URL/domain. | `url`, `domain` |
@@ -470,6 +470,19 @@ compare donc les phrases éditées à celles du test :
 
 Seules les phrases modifiées ou ajoutées doivent correspondre à une step definition : une erreur
 cite leur ligne.
+
+#### Une assertion attend ce qu'elle vérifie
+
+À l'exécution, une assertion est relue jusqu'à ce qu'elle passe, pendant 5 s au plus, comme
+l'`expect` de Playwright. C'est utile quand la page est encore en route vers ce qu'elle vérifie : un
+formulaire envoyé avec Entrée dont la page suivante se charge, un message affiché à la réponse d'une
+requête.
+
+- Une page qu'on ne peut pas lire pendant ce temps, parce qu'elle est en train d'être remplacée,
+  est relue aussi.
+- Une fois les 5 s écoulées, l'assertion échoue avec ce qu'elle a lu en dernier.
+- Une comparaison de captures (VRT) et un oracle sont lus une seule fois.
+- `IZITEST_ASSERT_TIMEOUT_MS` change ce délai ; `0` lit une seule fois.
 
 #### Types d'assertion à l'export
 

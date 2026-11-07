@@ -85,6 +85,16 @@ function deriveIntent(command, params, locators) {
 }
 
 /**
+ * A wait told neither how long nor what for — a parameter of another name ("seconds") is
+ * dropped on the way —: refused, with what to pass, rather than waiting 0 ms and being
+ * recorded as a step. Null when it says one of the two.
+ */
+export function waitsForNothing(ms, selector) {
+  if ((typeof ms === 'number' && ms > 0) || (typeof selector === 'string' && selector.trim())) return null;
+  return 'wait needs ms (milliseconds: 3 seconds is 3000) or selector (a CSS selector to wait for). Nothing was waited for, nor recorded.';
+}
+
+/**
  * The params a select step is kept with: the option's value, what the form sends — an
  * assertion on it is then linked to the variable the step becomes, and a label reworded or
  * translated still replays. As asked when the page gave no value back.

@@ -7,7 +7,7 @@ import { currentSession, listSessions, closeNamedSession, forgetTabsEverywhere }
 
 /** Session ids the extension should treat as still working (see CloseWindowParams). */
 const liveSessionIds = () => listSessions().map((s) => s.id);
-import { recordAction, selectParams } from '../recording.js';
+import { recordAction, selectParams, waitsForNothing } from '../recording.js';
 import { runServerStep } from '../server-steps.js';
 import { resolveValues } from '../values.js';
 import { absolutePaths, readUploadFiles } from '../upload-files.js';
@@ -605,15 +605,18 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
   // --- Tool: wait ---
   server.tool(
     'wait',
-    'Wait for a specified time or until an element appears on the page.',
+    'Wait for a specified time (ms) or until an element appears on the page (selector). One of the two is needed.',
     {
       profile: z.string().optional(),
       tabId: z.number().optional(),
-      ms: z.number().optional().describe('Milliseconds to wait'),
+      ms: z.number().optional().describe('Milliseconds to wait (3 seconds: 3000)'),
       selector: z.string().optional().describe('Wait until this CSS selector appears (max 10s)'),
       intent: z.string().optional().describe('Functional description of this step. Recorded as step intent during test recording.')
     },
     async ({ profile, tabId, ms, selector, intent }) => {
+      // Neither (a parameter of another name, dropped): it would wait 0 ms and be recorded as a step.
+      const nothing = waitsForNothing(ms, selector);
+      if (nothing) return { content: [{ type: 'text', text: nothing }], isError: true };
       const result = await sendCommand(profile, 'wait', { ms, selector, tabId });
       const actionId = saveActionToHistory('wait', { ms, selector, tabId }, null, null, intent);
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };

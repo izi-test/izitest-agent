@@ -3,12 +3,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateAssertion } from '../lib/test-execute.js';
+import { evaluateAssertion as evaluateUntil } from '../lib/test-execute.js';
 import { generatePlaywrightPlain } from '../lib/codegen/playwright-plain.js';
 import { generatePlaywrightCucumber } from '../lib/codegen/playwright-cucumber.js';
 import { serializeTestToFeatureWith } from '../lib/gherkin/serialize.js';
 import { parseFeatureToStepsWith } from '../lib/gherkin/parse.js';
 import { DEFAULT_STEP_DEFINITIONS } from '../lib/gherkin/default-step-definitions.js';
+
+// Read once: these check what the page says, not how long it takes to say it (test/assertion-wait.test.js).
+const evaluateAssertion = (send, assertion, tabId) => evaluateUntil(send, assertion, tabId, { timeoutMs: 0 });
 
 const NO_DARK_MODE = { type: 'text_not_contains', selector: '#result-profile', expected: 'darkMode' };
 const pageText = (text) => async (_profile, command, params) => {
