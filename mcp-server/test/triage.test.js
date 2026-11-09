@@ -211,3 +211,65 @@ test('a repair, made on a copy: a step replaced, or a wait inserted before one',
   assert.equal(withRepair(stored, replace).steps[0].params.selector, '#signin-btn');
   assert.deepEqual(repairDiff(replace), ['selector: "#login-form > div:nth-of-type(3) > button:nth-of-type(1)" → "#signin-btn"']);
 });
+
+test('a request that failed, then answered: no error of the page; one still failing is', async () => {
+  const { failuresOf } = await import('../lib/triage.js');
+  // As the extension lists them: the most recent first, with their time.
+  const at = (t, method, path, status) => ({ method, url: `http://127.0.0.1:5173${path}`, status, timestamp: t });
+  const requests = [
+    at(6, 'GET', '/favicon.ico', 404),
+    at(5, 'POST', '/api/notes', 500),
+    at(4, 'GET', '/api/report', 503),
+    at(3, 'GET', '/api/report', 200),
+    at(2, 'POST', '/api/auth/login', 200),
+    at(1, 'GET', '/api/auth/me', 401),
+  ];
+  assert.deepEqual(failuresOf(requests).map((r) => `${r.method} ${r.url} ${r.status}`), [
+    'GET http://127.0.0.1:5173/api/report 503',
+    'POST http://127.0.0.1:5173/api/notes 500',
+  ], 'the 401 before the login is not; a 503 after a 200 of the same URL still is');
+  // Logged out for good: every later request of the site refused too.
+  assert.equal(failuresOf([at(2, 'GET', '/api/notes', 401), at(1, 'GET', '/api/auth/me', 401)]).length, 2);
+});
+
+test('the requirement now says what the page shows: the test is behind it, not the app', async () => {
+  const { againstRequirements } = await import('../lib/triage.js');
+  const changed = {
+    cause: 'changed_value', confidence: 'low', summary: 'Expected "Brouillon", the page shows "À soumettre"',
+    evidence: { expected: 'Brouillon', actual: 'À soumettre' },
+    proposals: [{ kind: 'expect', needs_review: true, summary: 'Expect "À soumettre" in step 12, if this change is intended' }],
+  };
+  const requirement = (text) => [{ key: 'NDF-1', title: 'Notes', criteria: [{ number: 3, text }] }];
+  const now = againstRequirements(changed, requirement('Un employé crée une note : elle apparaît avec le statut « À soumettre ».'));
+  assert.equal(now.cause, 'test_outdated');
+  assert.equal(now.confidence, 'high');
+  assert.match(now.summary, /NDF-1 criterion 3 says "À soumettre" now: the test is behind its requirement/);
+  assert.deepEqual(now.proposals.map((p) => [p.kind, p.needs_review, p.summary]), [['expect', false, 'Expect "À soumettre" in step 12, as NDF-1 says']]);
+  // The requirement still says the expected value: the app does not do what it asks.
+  const before = againstRequirements(changed, requirement('Un employé crée une note : elle apparaît avec le statut Brouillon.'));
+  assert.equal(before.cause, 'non_conformity');
+  assert.deepEqual(before.proposals, []);
+  // A word of the value inside another word is not the value.
+  assert.equal(againstRequirements({ ...changed, evidence: { expected: 'Brouillon', actual: 'mise' } }, requirement('Une note soumise')).cause, 'non_conformity');
+});
+
+test('the expense-notes case, end to end: a 401 before the login is no error, the requirement says the new label', async () => {
+  const STATUS = { command: 'assert', params: {}, intent: 'La note créée a le statut À soumettre', assertion: { type: 'text_equals', selector: '[data-testid=note-status]', expected: 'Brouillon' } };
+  const page = fakePage({
+    refs: [ref('generic', 'À soumettre', '[data-testid=note-status]')],
+    requests: [
+      { method: 'GET', url: 'http://127.0.0.1:5173/api/notes', status: 201, timestamp: 3 },
+      { method: 'POST', url: 'http://127.0.0.1:5173/api/auth/login', status: 200, timestamp: 2 },
+      { method: 'GET', url: 'http://127.0.0.1:5173/api/auth/me', status: 401, timestamp: 1 },
+    ],
+  });
+  const triage = await diagnoseFailure({
+    stored: { name: 'ndf', steps: [{ command: 'navigate', params: { url: 'http://127.0.0.1:5173/' } }, STATUS] }, tabId: 1, sendCommand: page,
+    failed: { step: 2, error: 'x', assertionResult: { passed: false, actual: 'À soumettre' }, recheck: async () => ({ passed: false }) },
+    requirements: [{ key: 'NDF-1', title: 'Notes', criteria: [{ number: 3, text: 'Elle apparaît dans sa liste avec le statut « À soumettre ».' }] }],
+  });
+  assert.equal(triage.cause, 'test_outdated');
+  assert.deepEqual(triage.evidence.page.failedRequests, [], 'the 401 was the session checked before the login');
+  assert.doesNotMatch(triage.summary, /reports an error/);
+  assert.equal(triage.proposals[0].change.step.assertion.expected, 'À soumettre');
+});

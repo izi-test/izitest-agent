@@ -462,6 +462,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
             ? `It accepts what the page shows now: ask the user whether that change is intended before resolve_repair(repair_id=${repair.id}, decision="apply").\n`
             : `If the test passes, tell the user what it changes, and on their word save it: resolve_repair(repair_id=${repair.id}, decision="apply").\n`;
           text += `If it does not fix the test, fix the step by hand:\n`;
+        } else if (triage?.cause === 'test_outdated') {
+          text += `The app does what its requirement says now; the test still expects the old value. Update the test to what the requirement says, then tell the user which test changed and why.\n`;
         } else if (triage?.cause === 'session_state') {
           text += `The test is not broken: it started in a browser already logged in. Make it start logged out (a first step to the app's logout URL), then run it again — do NOT change its login steps.\n`;
         } else if (['app_regression', 'environment', 'changed_value', 'disabled', 'non_conformity'].includes(triage?.cause)) {

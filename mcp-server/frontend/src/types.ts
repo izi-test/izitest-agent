@@ -165,7 +165,7 @@ export interface ExecutionStep {
 
 /** Why a run failed, worked out on the page it failed on (mcp-server/lib/triage.js). */
 export interface Triage {
-  cause: 'test_drift' | 'timing' | 'changed_value' | 'disabled' | 'app_regression' | 'non_conformity' | 'environment' | 'session_state' | 'unknown';
+  cause: 'test_drift' | 'timing' | 'changed_value' | 'disabled' | 'app_regression' | 'non_conformity' | 'environment' | 'session_state' | 'test_outdated' | 'unknown';
   confidence: 'high' | 'medium' | 'low';
   summary: string;
   evidence?: {

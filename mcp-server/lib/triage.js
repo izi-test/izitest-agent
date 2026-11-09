@@ -15,6 +15,9 @@
 //   app_regression  nothing like the element is on the page, and the page shows an error or a
 //                   request failed: most likely the app.
 //   environment     the page did not load: a network error, the server failed the page itself.
+//   test_outdated   an assertion reads another value, and the requirement it checks says that
+//                   value now: the requirement changed, the test did not follow. Repair: expect
+//                   what the requirement says.
 //   session_state   a login step finds no login form, and the page offers to log out: the
 //                   browser was already logged in, by an earlier run. The test must start
 //                   logged out.
@@ -34,6 +37,7 @@ export const CAUSES = {
   non_conformity: 'Non-conformity: the app does not do what the requirement asks',
   environment: 'Environment: the page did not load',
   session_state: 'Already logged in: a session left by an earlier run',
+  test_outdated: 'The test is behind its requirement: the page shows what it asks now',
   unknown: 'No cause found',
 };
 
@@ -229,6 +233,22 @@ export async function diagnoseFailure({ stored, failed, tabId, sendCommand, valu
 export function againstRequirements(diagnosis, requirements) {
   if (!requirements?.length || !['changed_value', 'app_regression'].includes(diagnosis.cause)) return diagnosis;
   const what = requirements.map((r) => `${r.key} (${r.title}${r.criteria.length ? `, criterion ${r.criteria.map((c) => `${c.number}: ${c.text}`).join('; ')}` : ''})`).join(', ');
+  // The requirement says what the page shows, not what the test expects: it changed, the test
+  // did not follow. Called a non-conformity, the agent was told not to touch a test its own
+  // requirement update had left behind.
+  const { expected, actual } = diagnosis.evidence ?? {};
+  const said = requirements.flatMap((r) => (r.criteria.length ? r.criteria.map((c) => ({ key: r.key, number: c.number, text: c.text })) : [{ key: r.key, text: r.title }]));
+  const sayingActual = said.find((c) => says(c.text, actual));
+  if (sayingActual && !said.some((c) => says(c.text, expected))) {
+    return {
+      ...diagnosis,
+      cause: 'test_outdated',
+      confidence: 'high',
+      summary: `${diagnosis.summary} — and ${sayingActual.key}${sayingActual.number ? ` criterion ${sayingActual.number}` : ''} says "${actual}" now: the test is behind its requirement. Expect what the requirement says.`,
+      evidence: { ...diagnosis.evidence, requirements: requirements.map((r) => r.key) },
+      proposals: diagnosis.proposals.map((proposal) => (proposal.kind === 'expect' ? { ...proposal, needs_review: false, summary: `${proposal.summary.replace(/, if this change is intended$/, '')}, as ${sayingActual.key} says` } : proposal)),
+    };
+  }
   return {
     ...diagnosis,
     cause: 'non_conformity',
@@ -237,6 +257,13 @@ export function againstRequirements(diagnosis, requirements) {
     evidence: { ...diagnosis.evidence, requirements: requirements.map((r) => r.key) },
     proposals: diagnosis.proposals.filter((proposal) => proposal.kind !== 'expect'),
   };
+}
+
+/** Whether `text` (a criterion) says `value`: its words, whatever the quotes and the case. */
+function says(text, value) {
+  const clean = (s) => norm(s).replace(/[«»"“”'’]/g, ' ').replace(/\s+/g, ' ').trim();
+  const wanted = clean(value);
+  return wanted.length >= 2 && ` ${clean(text)} `.includes(` ${wanted} `);
 }
 
 async function diagnose({ stored, failed, tabId, sendCommand, history }) {
@@ -298,6 +325,8 @@ async function diagnose({ stored, failed, tabId, sendCommand, history }) {
     const assertion = step.assertion ?? {};
     const expected = failed.hydratedExpected ?? assertion.expected;
     const actual = failed.assertionResult?.actual;
+    // Weighed against the requirement the test checks (againstRequirements).
+    if (kind === 'assertion_value') Object.assign(evidence, { expected, actual });
     if (kind === 'assertion_missing') {
       // The text the assertion looks for, elsewhere on the page: the selector broke.
       const candidates = tabId && expected ? await candidatesFor([String(expected)], tabId, sendCommand, { interactiveOnly: false }) : [];
@@ -355,11 +384,32 @@ async function pageSignals(tabId, sendCommand) {
     sendCommand(undefined, 'network_requests', { tabId, limit: 300 }).catch(() => null),
   ]);
   const alerts = (snap?.digest ?? []).filter(line => /^(alert|alertdialog):/.test(line)).slice(0, 5);
-  const failedRequests = (network?.requests ?? [])
-    .filter(r => (r.status >= 400 || r.status === 0) && !/favicon/.test(r.url))
-    .slice(0, 5)
-    .map(({ method, url, status, resourceType }) => ({ method, url, status, resourceType }));
+  const failedRequests = failuresOf(network?.requests ?? []);
   return { url: snap?.url ?? null, title: snap?.title ?? null, alerts, failedRequests, refs: snap?.refs ?? {} };
+}
+
+/**
+ * The requests of the page that failed and stayed failed. Not an error of the page:
+ * - one asked again later with success;
+ * - a 401 or 403 followed by a request of the same site that succeeded: the session checked
+ *   before the login (GET /api/auth/me in 401, then the login and the notes in 200). Counted, it
+ *   made the triage say "the page reports an error" on every app with a login.
+ * The extension lists the most recent first: put back in the order they were made.
+ */
+export function failuresOf(requests) {
+  const key = (r) => `${r.method ?? 'GET'} ${r.url}`;
+  const failed = (r) => r.status >= 400 || r.status === 0;
+  const origin = (url) => { try { return new URL(url).origin; } catch { return null; } };
+  const timed = requests.every((r) => typeof r.timestamp === 'number');
+  const inOrder = timed ? [...requests].sort((x, y) => x.timestamp - y.timestamp) : [...requests].reverse();
+  const stayed = inOrder.filter((r, i) => {
+    if (!failed(r) || /favicon/.test(r.url)) return false;
+    const after = inOrder.slice(i + 1);
+    if (after.some((later) => key(later) === key(r) && !failed(later))) return false;
+    if ((r.status === 401 || r.status === 403) && after.some((later) => origin(later.url) === origin(r.url) && later.status >= 200 && later.status < 400)) return false;
+    return true;
+  });
+  return stayed.slice(0, 5).map(({ method, url, status, resourceType }) => ({ method, url, status, resourceType }));
 }
 
 /** Elements of the page that match one of `terms`: snapshot refs, with their role, name and locators. */

@@ -1252,8 +1252,14 @@ l'historique du tableau de bord.
 | `disabled` | L'élément est là mais désactivé | — |
 | `app_regression` | L'élément a disparu, ou la valeur a changé, et la page signale une erreur (`role="alert"`, requête en 4xx/5xx) ; ou elle n'affiche pas la valeur que le test a saisie | — : à signaler, pas à « réparer » |
 | `environment` | La page ne s'est pas chargée (erreur réseau, page servie en 5xx) | — |
+| `test_outdated` | Une assertion lit une autre valeur, et l'exigence que le test vérifie dit cette valeur-là maintenant (« le statut « À soumettre » ») et plus l'attendue : l'exigence a changé, le test n'a pas suivi. Avant, c'était une `non_conformity`, et l'agent qui venait de mettre l'exigence à jour s'entendait dire de ne pas toucher au test | `expect` sans revue : attendre ce que dit l'exigence |
 | `session_state` | Une étape de connexion ne trouve pas le formulaire, et la page propose de se déconnecter (« Se déconnecter », « Log out ») : le navigateur était déjà connecté, par un rejeu d'avant. Une étape « de connexion » tape un mot de passe ou un secret, ou précède de peu celle qui le fait | — : faire partir le test déconnecté (une première étape vers l'URL de déconnexion de l'appli, ou une voie headless à lui), sans toucher à ses étapes de connexion |
 | `unknown` | Rien de tout ça, ou plusieurs éléments ressemblent autant à celui cherché | — |
+
+Une requête en échec n'est pas une erreur de la page quand elle a été redemandée ensuite avec succès,
+ou quand c'est un 401 ou 403 suivi d'une requête réussie vers le même site : c'est la vérification de
+session avant la connexion (`GET /api/auth/me` en 401, puis la connexion et les notes en 200). Elle
+faisait dire « la page signale une erreur » sur toute appli avec une connexion.
 
 Les preuves accompagnent le diagnostic : l'adresse de la page, ses alertes, les requêtes en échec,
 les meilleurs candidats avec leur score, et combien de fois le test est passé avant.
