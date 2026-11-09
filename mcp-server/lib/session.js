@@ -14,6 +14,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { log } from './logger.js';
 import { resolveValues, valueContext } from './values.js';
 import { datasetRows } from './datasets.js';
+import { secretValue } from './secrets.js';
 
 const sessions = new Map();      // session id → Session
 const connectionDefaults = new Map(); // connection id → session id
@@ -108,15 +109,18 @@ export class Session {
 
   /**
    * Starts the session's values afresh: a new recording keeps its own. Recording a test of a
-   * project, the values of its datasets ({{users[2].email}}); playing one, the first row of it
-   * ({{email}}).
+   * project, the values of its datasets ({{users[2].email}}) and its secrets
+   * ({{secret.PASSWORD}}, typed, never told back); playing a dataset, the first row of it
+   * ({{email}}). The project is the recording's, or the run's (`projectId` of a dashboard agent).
    */
   resetValues({ projectId = null, row = null } = {}) {
     this.kept = {};
     this.lastResponse = null;
+    const project = () => projectId ?? this.projectId ?? null;
     this.values = valueContext({
       lookup: (name) => this.kept[name] ?? row?.[name],
-      datasets: (name) => datasetRows(projectId)[name],
+      datasets: (name) => datasetRows(project())[name],
+      secrets: (name) => (project() == null ? null : secretValue(project(), name)),
     });
   }
 
@@ -133,7 +137,13 @@ export class Session {
       problems.push(...resolved.problems);
       out[key] = resolved.text;
     }
-    if (problems.length) throw new Error(`Values that do not work out: ${problems.join('; ')}`);
+    if (problems.length) {
+      // A secret is the project's: the recording names it, and one it lacks is asked for.
+      const aboutSecrets = problems.some((problem) => problem.includes('{{secret.'));
+      throw new Error(`Values that do not work out: ${problems.join('; ')}${aboutSecrets
+        ? '. A secret is one of the project\'s (start_recording with project_id); one it lacks, ask the user for it with ask_user.'
+        : ''}`);
+    }
     return out;
   }
 

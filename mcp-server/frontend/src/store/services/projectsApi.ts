@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Dataset, PageElement, Project } from '../../types';
+import type { Dataset, PageElement, Project, ProjectSecret } from '../../types';
 import { testsApi } from './testsApi';
 
 interface ProjectsResponse {
@@ -9,7 +9,7 @@ interface ProjectsResponse {
 export const projectsApi = createApi({
   reducerPath: 'projectsApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
-  tagTypes: ['ProjectList', 'Elements', 'Datasets'],
+  tagTypes: ['ProjectList', 'Elements', 'Datasets', 'Secrets'],
   endpoints: (builder) => ({
 
     getProjects: builder.query<Project[], void>({
@@ -58,6 +58,24 @@ export const projectsApi = createApi({
         await queryFulfilled.catch(() => null);
         dispatch(testsApi.util.invalidateTags(['Test']));
       },
+    }),
+
+    // Its secrets (mcp-server/lib/secrets.js): names and descriptions, never a value.
+    getSecrets: builder.query<ProjectSecret[], number>({
+      query: (projectId) => `api/projects/${projectId}/secrets`,
+      transformResponse: (response: { secrets: ProjectSecret[] }) => response.secrets ?? [],
+      providesTags: ['Secrets'],
+    }),
+
+    // Added, or replaced: a value left out keeps the stored one.
+    saveSecret: builder.mutation<{ secret: ProjectSecret }, { projectId: number; name: string; value?: string; description?: string }>({
+      query: ({ projectId, name, ...body }) => ({ url: `api/projects/${projectId}/secrets/${encodeURIComponent(name)}`, method: 'PUT', body }),
+      invalidatesTags: ['Secrets'],
+    }),
+
+    deleteSecret: builder.mutation<void, { projectId: number; name: string }>({
+      query: ({ projectId, name }) => ({ url: `api/projects/${projectId}/secrets/${encodeURIComponent(name)}`, method: 'DELETE' }),
+      invalidatesTags: ['Secrets'],
     }),
 
     // Its datasets (mcp-server/lib/datasets.js).
@@ -111,4 +129,7 @@ export const {
   useGetDatasetQuery,
   useSaveDatasetMutation,
   useDeleteDatasetMutation,
+  useGetSecretsQuery,
+  useSaveSecretMutation,
+  useDeleteSecretMutation,
 } = projectsApi;

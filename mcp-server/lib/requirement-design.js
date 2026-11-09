@@ -373,7 +373,7 @@ export function recordingBrief(requirement, caseId = null, { viaMcp = false } = 
  * project's context, its datasets (`datasets`: lib/datasets.js datasetLines). Run without a
  * terminal, it cannot ask: what it lacks, it says, and stops.
  */
-export function projectBrief(project, { datasets = [] } = {}) {
+export function projectBrief(project, { datasets = [], secrets = [] } = {}) {
   const lines = [];
   if (project) {
     lines.push(`The app under test is the project "${project.name}".`);
@@ -391,9 +391,19 @@ export function projectBrief(project, { datasets = [] } = {}) {
       'make one up: type {{users[1].email}}, the value of row 1. When the test is to run with each row (each user, each product),',
       'pass dataset: "users" to start_recording too and type {{email}}, {{password}}: the values of row 1 now, those of each row at run.');
   }
+  // Its secrets, by name: typed by IziTest, never read by the agent (lib/secrets.js).
+  if (secrets.length) {
+    lines.push(
+      'Its secrets (a password, a key: you are told their names, never their values):', ...secrets,
+      'Type {{secret.NAME}} where one goes, a password field say: IziTest types its value. Never type a value you guessed instead.');
+  }
+  // A value nobody gave is asked, not made up (lib/asks.js).
   lines.push(
-    'Nobody answers questions during this run. If you cannot record the test — no URL to start from, a page that does not',
-    'load —, close the recording window with close_window, then end with one sentence that says what is missing.');
+    'If the test needs a value that neither the description, the datasets nor the secrets give (an account to log in with,',
+    'a password, a code), call ask_user: the person who started this run answers it in the dashboard. Mark a password, a key',
+    'or a code secret: true. Never make such a value up, and never ask for it in your reply: nobody reads it before the end.',
+    'If you cannot record the test for another reason — no URL to start from, a page that does not load —, or the person',
+    'does not give what you asked, close the recording window with close_window, then end with one sentence that says what is missing.');
   // A value that changes from one day or one run to the next is computed, not recorded; one the
   // page or an API gives is kept for the steps after.
   lines.push(

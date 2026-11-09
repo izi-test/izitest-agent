@@ -143,14 +143,15 @@ test('the exported code carries the rows: a Playwright test per row, an Examples
   assert.match(feature, /Examples:\n {6}\| email \| password \|\n {6}\| bob@x\.dev \| pw1 \|\n {6}\| ann@x\.dev \| pw\\\|2 \|\n$/);
 });
 
-test('the agent creating a test is told the datasets: a value taken from one, not made up', () => {
+test('the agent creating a test is told the datasets: a value taken from one, not made up; a password, not', () => {
   const lines = datasetLines(project);
-  assert.deepEqual(lines, ['- users: email, password, name — 2 row(s); row 1: email "bob@x.dev", password "pw1", name "Bob"']);
+  // A password column's value is hidden from the agent: typed as {{password}}, the server types it.
+  assert.deepEqual(lines, ['- users: email, password, name — 2 row(s); row 1: email "bob@x.dev", password "(hidden)", name "Bob"']);
   const brief = projectBrief({ id: project, name: 'Shop' }, { datasets: lines });
   assert.match(brief, new RegExp(`Pass project_id: ${project} to start_recording`));
   assert.match(brief, /tables of values to test with \(rows numbered from 1\):\n- users: email[\s\S]*rather than\nmake one up: type \{\{users\[1\]\.email\}\}/);
   assert.match(brief, /pass dataset: "users" to start_recording too and type \{\{email\}\}/);
-  assert.doesNotMatch(projectBrief({ id: project, name: 'Shop' }), /datasets/, 'none, nothing said');
+  assert.doesNotMatch(projectBrief({ id: project, name: 'Shop' }), /Its datasets/, 'none, nothing said');
   assert.deepEqual(datasetLines(null), []);
 });
 

@@ -14,6 +14,8 @@
 //               subtracted are a number of days; + joins text
 //   functions   random(min, max), round(x, digits), floor(x), ceil(x), abs(x), min(…), max(…)
 //   datasets    utilisateurs[2].email: a value of a project's dataset, its rows numbered from 1
+//   secrets     secret.PASSWORD: a secret of the project, its value given by `secrets(name)` —
+//               in exported code, the environment variable of that name
 //   format      after |: a date as dd/MM/yyyy, d MMMM yyyy, EEEE, HH:mm…; a number as 0.00
 
 const UNITS = {
@@ -166,7 +168,8 @@ function evaluate(node, context) {
   }
   if ('column' in node) {
     const row = evaluate(node.of, context);
-    if (row.type !== 'row') throw new ValueError(`.${node.column} reads a column of a row: utilisateurs[2].${node.column}`);
+    if (row.type !== 'row' && row.type !== 'secrets') throw new ValueError(`.${node.column} reads a column of a row: utilisateurs[2].${node.column}`);
+    if (row.type === 'secrets') return secretOf(node.column, context);
     if (!(node.column in row.row)) throw new ValueError(`${row.name} has no column "${node.column}" (it has ${Object.keys(row.row).join(', ')})`);
     return text(row.row[node.column]);
   }
@@ -204,12 +207,22 @@ function evaluate(node, context) {
   }
 }
 
+/** A secret of the project, {{secret.NAME}}: its value, which only what types it reads. */
+function secretOf(name, context) {
+  // null: no project to read one from.
+  const value = context.secrets ? context.secrets(name) : null;
+  if (value === null) throw new ValueError(`secret.${name}: a secret belongs to a project, and is read in one of its tests`);
+  if (value === undefined) throw new ValueError(`no secret named "${name}"`);
+  return text(value);
+}
+
 function named(name, context) {
   // A variable of the test comes first: one named "today" is that variable.
   const variable = context.lookup(name);
   if (variable !== undefined) return text(variable);
   const rows = context.datasets?.(name);
   if (rows) return { type: 'dataset', rows, name };
+  if (name === 'secret') return { type: 'secrets' };
   const now = context.now;
   switch (name) {
     case 'today': return date(startOfDay(now), false);
@@ -307,12 +320,14 @@ function uuid() {
 /**
  * What one run computes values with: the moment it started, its language, and what it already
  * worked out (the same expression gives the same value all through the run). `datasets(name)`:
- * the rows of a dataset of the project.
+ * the rows of a dataset of the project; `secrets(name)`: the value of one of its secrets
+ * ({{secret.NAME}}), undefined when it has none of that name, null when there is no project to
+ * read one from. Without it, a secret is read nowhere.
  */
-export function valueContext({ now = new Date(), language = 'en', lookup = () => undefined, datasets = () => undefined } = {}) {
+export function valueContext({ now = new Date(), language = 'en', lookup = () => undefined, datasets = () => undefined, secrets = undefined } = {}) {
   let token = null;
   return {
-    now, language, lookup, datasets, cache: new Map(), uuid,
+    now, language, lookup, datasets, secrets, cache: new Map(), uuid,
     unique: () => (token ??= (Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2, 6))),
   };
 }
@@ -356,11 +371,11 @@ export function resolveValues(textValue, context = valueContext(), { escape = (v
  * The variables of a test with their values worked out: { values, problems }. A variable may
  * use another one ({{price * quantity}}); one that would use itself, round and round, is told.
  */
-export function computeVariables(raw, { now = new Date(), language = 'en', datasets } = {}) {
+export function computeVariables(raw, { now = new Date(), language = 'en', datasets, secrets } = {}) {
   const values = {};
   const problems = [];
   const busy = new Set();
-  const context = valueContext({ now, language, datasets, lookup: (name) => valueOf(name) });
+  const context = valueContext({ now, language, datasets, secrets, lookup: (name) => valueOf(name) });
 
   function valueOf(name) {
     if (!(name in raw)) return undefined;

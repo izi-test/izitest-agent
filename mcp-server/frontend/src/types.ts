@@ -114,6 +114,28 @@ export interface Test {
 }
 
 /** A table of values of a project: a test bound to it runs once per row ({{column}}). */
+/** A secret of a project (mcp-server/lib/secrets.js): its name and purpose, never its value. */
+export interface ProjectSecret {
+  name: string;
+  description: string;
+  updated_at: string;
+  /** IZITEST_SECRET_<NAME> in the server's environment is used instead of the stored value. */
+  from_environment: boolean;
+}
+
+/** A question an agent asks while it works (mcp-server/lib/asks.js). */
+export interface AgentAsk {
+  id: string;
+  project_id: number | null;
+  project_name: string | null;
+  run_id: string | null;
+  why: string;
+  fields: { name: string; label: string; secret: boolean }[];
+  status: 'pending' | 'answered' | 'cancelled' | 'expired';
+  created_at: string;
+  expires_at: string;
+}
+
 export interface Dataset {
   id: number;
   project_id: number;

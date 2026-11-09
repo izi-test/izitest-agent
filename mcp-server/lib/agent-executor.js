@@ -35,6 +35,8 @@ import { evaluateAssertion } from './test-execute.js';
 import { pageOf } from './elements.js';
 import { LIVE_ACTIONS } from './live.js';
 import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from './datasets.js';
+import { redact } from './secrets.js';
+import { askUser, cancelAsk, ASK_USER_DESCRIPTION, ASK_FIELD_DESCRIPTION } from './asks.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
 
@@ -262,6 +264,15 @@ function detectLoop(messages) {
 }
 
 // ─── Tool definitions ──────────────────────────────────────────────
+
+/** The tools with what they answer put through redact(): a secret's value never reaches the model. */
+function withoutSecrets(tools) {
+  for (const entry of Object.values(tools)) {
+    const execute = entry.execute;
+    if (typeof execute === 'function') entry.execute = async (...args) => redact(await execute(...args));
+  }
+  return tools;
+}
 
 function buildTools(sendCommand) {
   return {
@@ -725,7 +736,8 @@ RULES:
 7. If element not found, broaden snapshot filters before falling back to screenshot.
 8. Keep responses concise — focus on actions, not explanations.
 9. After each tool result, immediately call the next tool. Never stop mid-task.
-10. NEVER use execute_js to dump large DOM content (document.body.textContent, innerHTML of big containers, full page data). Use snapshot() for page content.`;
+10. NEVER use execute_js to dump large DOM content (document.body.textContent, innerHTML of big containers, full page data). Use snapshot() for page content.
+11. A value the task needs that nobody gave (an account to log in with, a password, a code): call ask_user — never make one up, never ask in your reply. Type a secret as {{secret.NAME}}: IziTest types its value.`;
 
 // ─── Agent executor ────────────────────────────────────────────────
 
@@ -776,6 +788,31 @@ async function runAgentInSession(config, prompt, rawSendCommand, onProgress, sig
     finally { timing.stepBrowserMs += Date.now() - startedAt; }
   };
   const tools = buildTools(timedSendCommand);
+  // A value nobody gave (an account, a password): asked to the person who started the run, in
+  // the dashboard. A tool of this agent has no time limit: it waits for the answer.
+  tools.ask_user = tool({
+    description: ASK_USER_DESCRIPTION,
+    inputSchema: z.object({
+      why: z.string().describe('What the values are for, shown to the person: "To log in to Tiime as the test user"'),
+      fields: z.array(z.object({
+        name: z.string().describe(ASK_FIELD_DESCRIPTION.name),
+        label: z.string().optional().describe(ASK_FIELD_DESCRIPTION.label),
+        secret: z.boolean().optional().describe(ASK_FIELD_DESCRIPTION.secret),
+      })),
+    }),
+    execute: async (args) => {
+      let result = await askUser(args, { session, wait: 5_000 });
+      while (result.status === 'pending') {
+        if (signal?.aborted) {
+          cancelAsk(result.id);
+          return 'The run was stopped.';
+        }
+        result = await askUser({ request_id: result.id }, { session, wait: 5_000 });
+      }
+      return result.text;
+    },
+  });
+  withoutSecrets(tools);
 
   try {
     const result = await generateText({

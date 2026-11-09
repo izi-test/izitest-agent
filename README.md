@@ -27,6 +27,9 @@ created or repaired.
 - **The expected result comes from the requirement**, not from what the application shows: when
   they differ, the test reports a non-conformity.
 - **Data-driven.** A test bound to a dataset runs once per row.
+- **Secrets stay secret.** Passwords and API keys are kept encrypted per project and typed by
+  IziTest (`{{secret.NAME}}`): the agent only knows their names, and they never show in its
+  answers, the logs or a run's record. When the agent lacks one, it asks you in the dashboard.
 - **Campaigns.** A project's tests, or a requirement's, replayed together for a version of the
   application, a few at a time, with or without windows. JUnit and HTML reports, a command line
   for CI, results sent to Xray, coverage sent to Jira.

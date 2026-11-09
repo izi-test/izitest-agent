@@ -614,7 +614,8 @@ texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fich
   DATASETS['users']`) ; en Cucumber, une ligne d'`Examples` par ligne du jeu, et
   `features/support/datasets.js` pour les expressions.
 - **L'agent IA qui crée un test** (« Create Test with AI ») reçoit les jeux du projet dans sa consigne :
-  colonnes, nombre de lignes, première ligne. Il prend une valeur d'un jeu plutôt que d'en inventer une.
+  colonnes, nombre de lignes, première ligne (la valeur d'une colonne de mot de passe, de clé ou de
+  code est montrée `(hidden)`). Il prend une valeur d'un jeu plutôt que d'en inventer une.
   Pour une valeur, il tape `{{users[1].email}}`. Pour un test à jouer avec chaque ligne (« pour chaque
   utilisateur »), il passe `project_id` et `dataset: "users"` à `start_recording` et tape `{{email}}`,
   `{{password}}`. L'agent du chat, lui, les écrit dans le Gherkin, puis lie le test avec `bind_dataset`.
@@ -636,8 +637,88 @@ texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fich
 | `POST /api/projects/:id/datasets` | Dépose un fichier (`filename`, `content` texte ou `content_base64` pour un Excel) ou des lignes (`name`, `rows`) |
 | `GET /api/datasets/:id`, `DELETE /api/datasets/:id` | Un jeu avec ses lignes ; sa suppression (les tests liés jouent alors une seule fois) |
 | `PUT /api/tests/:name/dataset` | Lie un test à un jeu (`{ dataset: id ou nom }`) ou le délie (`null`) |
-| `save_dataset`, `bind_dataset` | Les mêmes, pour un agent (CSV en texte ou lignes) ; `get_project_context` liste les jeux, avec leur première ligne |
+| `save_dataset`, `bind_dataset` | Les mêmes, pour un agent (CSV en texte ou lignes) ; `get_project_context` liste les jeux, avec leur première ligne (un mot de passe masqué) |
 | `start_recording(project_id, dataset)` | Enregistre un test qui joue un jeu : `{{email}}` tape la ligne 1, le test est lié au jeu à `stop_recording` |
+
+### Secrets : ce qu'un test tape sans que personne le lise
+
+Un mot de passe, une clé d'API, un jeton : un projet les garde dans ses secrets (`lib/secrets.js`),
+et un test les écrit `{{secret.NOM}}`. IziTest tape la valeur ; personne ne la relit, ni l'agent qui
+enregistre le test, ni le tableau de bord.
+
+- **Où** : *Projects → Edit → Secrets*. Un nom (`TIIME_PASSWORD` : lettres, chiffres, `_`), une valeur,
+  et ce à quoi il sert (l'agent lit cette description). Une fois enregistrée, une valeur se remplace,
+  elle ne s'affiche plus jamais.
+- **Gardés chiffrés** (AES-256-GCM), avec une clé de la machine hors de la base :
+  `IZITEST_SECRET_KEY`, ou `~/.izitest/secret.key`, créée au premier secret (lisible par l'utilisateur
+  seul). Une base copiée sur une autre machine n'en livre aucun.
+- **Tapés au dernier moment**, par le serveur, juste avant que l'extension saisisse : pendant
+  l'enregistrement (`start_recording` avec `project_id`) comme à chaque exécution. Le test garde la
+  référence : à `stop_recording`, elle devient la valeur par défaut d'une variable
+  (`{{password}}` = `{{secret.TIIME_PASSWORD}}`). Une colonne d'un jeu de données peut en contenir une
+  (un mot de passe par utilisateur).
+- **Jamais redits.** Partout où une valeur sortirait du serveur, sa référence la remplace
+  (`redact`) : la réponse de chaque outil à un agent (une page qui affiche ce qu'on a tapé, une erreur),
+  les logs, les variables et les erreurs gardées d'une exécution, ce que le tableau de bord en reçoit.
+  Une valeur de moins de 4 caractères n'est pas reconnue ainsi.
+- **Le snapshot masque les champs mot de passe** : `value="••••••"` dit qu'il est rempli, pas avec quoi.
+  Une colonne de jeu de données nommée comme un mot de passe, une clé ou un code (`password`,
+  `token`, `api_key`…) est montrée `(hidden)` à un agent.
+- **Ce que l'agent en sait** : leurs noms et descriptions, dans sa consigne et dans
+  `get_project_context` (`secrets`). Un secret qui manque au projet est signalé
+  (`no secret named "X"`) ; hors d'un enregistrement de projet, aucun secret n'est lu.
+- **En CI**, `IZITEST_SECRET_<NOM>` dans l'environnement du serveur remplace la valeur gardée (le
+  tableau de bord le signale : *from the environment*).
+- **À l'export Playwright**, un secret est la variable d'environnement du même nom
+  (`process.env.TIIME_PASSWORD`) : sa valeur n'est jamais écrite dans le code.
+
+| Route ou outil | Rôle |
+| :--- | :--- |
+| `GET /api/projects/:id/secrets` | Les secrets du projet : nom, description, date, `from_environment`. Jamais une valeur |
+| `PUT /api/projects/:id/secrets/:name` | Ajoute ou remplace (`value`, `description`) ; sans `value`, la valeur gardée reste |
+| `DELETE /api/projects/:id/secrets/:name` | Le supprime : les tests qui le tapent échoueront |
+
+### `ask_user` : l'agent demande ce qu'il lui manque
+
+Un test a besoin d'une valeur que ni la description, ni les jeux de données, ni les secrets ne
+donnent : un compte pour se connecter, son mot de passe, un code. L'agent ne l'invente pas et ne la
+demande pas dans sa réponse : il appelle `ask_user` et attend. La personne qui l'a lancé répond dans
+le tableau de bord, jamais dans la conversation de l'agent, où il lirait un mot de passe.
+
+```
+ask_user({
+  why: "Pour se connecter à Tiime avec le compte de test",
+  fields: [
+    { name: "email", label: "E-mail du compte de test" },
+    { name: "TIIME_PASSWORD", label: "Son mot de passe", secret: true }
+  ]
+})
+```
+
+- **Un champ `secret: true`** (mot de passe, clé, jeton, code) est gardé dans les secrets du projet, sa
+  description étant son libellé. L'agent reçoit sa référence, `{{secret.TIIME_PASSWORD}}`, à taper.
+  Un autre champ lui revient avec sa valeur.
+- **Le projet** est celui du test enregistré (`start_recording(project_id)`), ou `project_id`. Un
+  secret demandé sans projet est refusé.
+- **Où répondre** : à côté du navigateur de l'agent, dans la fenêtre *Create test with AI* qui l'a
+  lancé. Une question qu'aucune fenêtre n'affiche (celle d'un agent lancé ailleurs, Claude Code par
+  exemple, ou d'une fenêtre fermée pendant que l'agent travaille) apparaît en bas à droite de toutes
+  les pages. *Don't give* la refuse.
+- **L'attente** : un appel attend `IZITEST_ASK_WAIT_MS` (45 s) au plus, sous la limite d'un client MCP.
+  Sans réponse, il le dit, et l'agent rappelle `ask_user({ request_id })`. L'agent du tableau de bord,
+  lui, attend la réponse dans le même appel.
+- **Sans réponse** après `IZITEST_ASK_TIMEOUT_MS` (15 min), refusée, ou quand l'exécution de l'agent
+  s'arrête, l'agent est prié d'arrêter : fermer sa fenêtre, ne rien enregistrer, dire ce qu'il manque.
+
+| Route | Rôle |
+| :--- | :--- |
+| `GET /api/asks` | Les questions en attente : raison, champs, projet, exécution |
+| `POST /api/asks/:id/answer` | Répond : `{ values: { nom: valeur } }`, tous les champs |
+| `POST /api/asks/:id/cancel` | Refuse : l'agent s'arrête |
+
+L'agent de « Create Test with AI » lancé en CLI a droit à `ask_user` et `get_project_context`. L'agent du
+chat, qui parle à l'utilisateur, ne demande pas de mot de passe dans la conversation : il l'envoie
+l'ajouter aux secrets du projet, puis écrit `{{secret.NOM}}`.
 
 ### Étapes serveur : garder une valeur, appeler une API
 

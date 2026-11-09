@@ -25,6 +25,8 @@ import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './
 import { languageOf } from './gherkin/language.js';
 import { computeVariables } from './values.js';
 import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetOfTest, datasetRows, rowLabel, datasetLines } from './datasets.js';
+import { listSecrets, saveSecret, deleteSecret, secretLines, secretValue } from './secrets.js';
+import { pendingAsks, answerAsk, cancelAsk, cancelAsksOfRun, followAsks } from './asks.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
@@ -280,8 +282,11 @@ export async function apiRouter(req, res, url) {
     if (method === 'POST' && path === '/api/values/preview') {
       const body = await readBody(req);
       const raw = Object.fromEntries(Object.entries(body.values ?? {}).map(([name, value]) => [name, String(value ?? '')]));
-      const data = datasetRows(body.project_id ? Number(body.project_id) : null);
-      const { values, problems } = computeVariables(raw, { language: languageOf(body.language), datasets: (name) => data[name] });
+      const projectId = body.project_id ? Number(body.project_id) : null;
+      const data = datasetRows(projectId);
+      // A secret shows as dots: whether it is there, never its value.
+      const secrets = projectId ? (name) => (secretValue(projectId, name) === undefined ? undefined : '••••••') : undefined;
+      const { values, problems } = computeVariables(raw, { language: languageOf(body.language), datasets: (name) => data[name], secrets });
       return json(res, 200, { values, problems });
     }
 
@@ -1121,6 +1126,38 @@ export async function apiRouter(req, res, url) {
       return json(res, 200, { success: true });
     }
 
+    // ── Secrets of a project (lib/secrets.js): GET their names and descriptions, never a value;
+    // PUT one — { value, description }, the value left out to keep it —; DELETE one ──
+    params = matchRoute(path, '/api/projects/:id/secrets');
+    if (method === 'GET' && params) return json(res, 200, { secrets: listSecrets(parseInt(params.id, 10)) });
+    params = matchRoute(path, '/api/projects/:id/secrets/:name');
+    if (method === 'PUT' && params) {
+      const body = await readBody(req);
+      const saved = saveSecret(parseInt(params.id, 10), params.name, {
+        value: body.value == null ? undefined : String(body.value),
+        description: body.description == null ? undefined : String(body.description),
+      });
+      return saved?.error ? json(res, 400, { error: saved.error }) : json(res, 200, { secret: saved });
+    }
+    if (method === 'DELETE' && params) {
+      return deleteSecret(parseInt(params.id, 10), params.name) ? json(res, 200, { deleted: true }) : json(res, 404, { error: 'Secret not found' });
+    }
+
+    // ── Questions an agent asks the person who started it (lib/asks.js): GET those waiting;
+    // POST an answer — { values: { name: value } } — or a refusal ──
+    if (method === 'GET' && path === '/api/asks') return json(res, 200, { asks: pendingAsks() });
+    params = matchRoute(path, '/api/asks/:id/answer');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      const result = answerAsk(params.id, body.values);
+      return result.error ? json(res, 400, { error: result.error }) : json(res, 200, { answered: true });
+    }
+    params = matchRoute(path, '/api/asks/:id/cancel');
+    if (method === 'POST' && params) {
+      const result = cancelAsk(params.id);
+      return result.error ? json(res, 404, { error: result.error }) : json(res, 200, { cancelled: true });
+    }
+
     // ── Datasets of a project (lib/datasets.js): GET the list; POST a file — { filename, content }
     // as text, or { filename, content_base64 } (an Excel workbook) — or { name, rows }, as a new one
     // or the one of that name replaced ──
@@ -1445,12 +1482,18 @@ export async function apiRouter(req, res, url) {
       }
       // The app the test is for: where it is and what to know of it, as the project says.
       const project = body.project_id ? db.prepare('SELECT id, name, base_url, context, language FROM projects WHERE id = ?').get(body.project_id) : null;
-      body.prompt += `\n\n${projectBrief(project, { datasets: datasetLines(project?.id) })}`;
+      body.prompt += `\n\n${projectBrief(project, { datasets: datasetLines(project?.id), secrets: secretLines(project?.id) })}`;
 
       // The run's id, which its sessions carry: the tab the agent works in is told to the
       // dashboard as soon as it opens one ({ type: 'live', tabId }), which shows it live.
       const runId = `run-${randomBytes(6).toString('hex')}`;
-      const followTab = (send) => followRun(runId, (tabId) => send({ type: 'live', tabId }));
+      // The questions it asks the person (ask_user) are told the same way ({ type: 'ask' }), and
+      // given up when the run is over.
+      const followTab = (send) => {
+        const stopTab = followRun(runId, (tabId) => send({ type: 'live', tabId }));
+        const stopAsks = followAsks(runId, send);
+        return () => { stopTab(); stopAsks(); cancelAsksOfRun(runId); };
+      };
 
       // ── API mode: internal agent via Vercel AI SDK ──
       if (agentConfig.mode === 'api') {
@@ -1496,7 +1539,9 @@ export async function apiRouter(req, res, url) {
           'get_cookies', 'snapshot', 'start_recording', 'record_step', 'stop_recording',
           'list_tests', 'run_test', 'fix_test_step', 'delete_test', 'add_assertion', 'close_window',
           // What its brief tells it to use: a <select>, a file, a computed value, a value kept, an API.
-          'select', 'upload_file', 'add_test_variable', 'capture_value', 'call_api'
+          'select', 'upload_file', 'add_test_variable', 'capture_value', 'call_api',
+          // The project's context (its datasets, its secrets), and a value nobody gave, asked.
+          'get_project_context', 'ask_user'
         ].map(t => `mcp__izitest-agent__${t}`).join(',');
         args.push('-p', body.prompt, '--allowedTools', mcpToolNames, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
       } else if (agentConfig.cli?.provider === 'copilot') {

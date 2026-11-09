@@ -11,7 +11,7 @@ import { collectorLines, oracleCode, needsAxe, AXE_IMPORT } from './oracles.js';
 import { requirementTags } from './requirement-tags.js';
 import { keywordsOf, languageOf } from '../gherkin/language.js';
 import { translatedPattern } from '../gherkin/default-step-definitions.js';
-import { usesComputedValues, datasetsUsed } from './playwright-plain.js';
+import { usesComputedValues, usesSecrets, datasetsUsed } from './playwright-plain.js';
 
 // `valuesJs`: lib/values.js, carried by a test that holds computed values ({{today}}…).
 export function generatePlaywrightCucumber(test, definitions, { valuesJs = null } = {}) {
@@ -38,7 +38,7 @@ export function generatePlaywrightCucumber(test, definitions, { valuesJs = null 
   const files = [
     { path: `features/${slug}.feature`, content: feature },
     { path: 'features/steps/default.steps.js', content: steps(defaultStepsJs(test.language)) },
-    { path: 'features/support/world.js', content: computed ? worldWithValues(test.language, Object.keys(datasets).length > 0) : WORLD_JS },
+    { path: 'features/support/world.js', content: computed ? worldWithValues(test.language, Object.keys(datasets).length > 0, usesSecrets(test, datasets)) : WORLD_JS },
     ...(computed ? [{ path: 'features/support/values.js', content: valuesJs }] : []),
     ...(computed && Object.keys(datasets).length ? [{ path: 'features/support/datasets.js', content: `// The datasets of the project the scenario reads ({{users[2].email}}), rows numbered from 1.\nexport const DATASETS = ${JSON.stringify(datasets, null, 2)};\n` }] : []),
     { path: 'cucumber.js', content: CUCUMBER_CONFIG_JS },
@@ -117,11 +117,11 @@ function resolvingArgs(code) {
 }
 
 /** The World of a test with computed values: worked out once per scenario, in its language. */
-function worldWithValues(language, withDatasets = false) {
+function worldWithValues(language, withDatasets = false, withSecrets = false) {
   return WORLD_JS
     .replace(`import { chromium, request } from 'playwright';\n`, `import { chromium, request } from 'playwright';\nimport { resolveValues, valueContext } from './values.js';\n${withDatasets ? "import { DATASETS } from './datasets.js';\n" : ''}`)
     .replace(`  // A value of the last answer`, `  // Computed values in a step's arguments ({{today}}, {{unique}}, {{order}}…), the same all through the scenario.\n  values(...args) {\n    return args.map((arg) => (typeof arg === 'string' ? resolveValues(arg, this.run).text : arg));\n  }\n\n  // A value of the last answer`)
-    .replace(`Before(async function () {\n`, `Before(async function () {\n  this.run = valueContext({ language: '${language === 'fr' ? 'fr' : 'en'}', lookup: (name) => this.vars[name]${withDatasets ? ', datasets: (name) => DATASETS[name]' : ''} });\n`);
+    .replace(`Before(async function () {\n`, `Before(async function () {\n  this.run = valueContext({ language: '${language === 'fr' ? 'fr' : 'en'}', lookup: (name) => this.vars[name]${withDatasets ? ', datasets: (name) => DATASETS[name]' : ''}${withSecrets ? ', secrets: (name) => process.env[name]' : ''} });\n`);
 }
 
 // ─── Templates ──────────────────────────────────────────────────────

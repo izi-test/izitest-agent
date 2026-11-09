@@ -9,6 +9,10 @@ an agent through the MCP tools ([mcp-tools.md](mcp-tools.md)).
 written in (English or French), and what an agent should know about it — how to log in, what the
 data looks like. Tests, requirements, datasets and campaigns belong to a project.
 
+Its **secrets** (*Edit → Secrets*): the passwords and API keys its tests type, kept encrypted on
+this machine. A step writes `{{secret.NAME}}`; IziTest types the value, and the agent only ever knows
+the name.
+
 ## 2. Requirements
 
 *Requirements → New requirement*, or *Import*: a file (CSV, Excel, JSON, Markdown), Jira, or GitHub
@@ -46,6 +50,10 @@ With your own agent, ask it — for instance in Claude Code:
 
 The expected results come from the requirement, never from what the application shows: when the
 page does otherwise, the test reports a **non-conformity** rather than adapting to it.
+
+When the agent needs something nobody gave it — an account to log in with, its password — it
+**asks you** instead of making it up: the question shows beside its browser, you answer, it goes
+on. A password you give is kept in the project's secrets; the agent gets its name, not its value.
 
 ## 5. Run them
 

@@ -15,6 +15,7 @@ import { withScope } from '../scope';
 import { ProjectSwitcher } from './ProjectSelector';
 import { CreateTestModal } from './CreateTestModal';
 import { Toast } from './Toast';
+import { PendingAgentAsks } from './AgentAsk';
 import { Button } from './Button';
 
 // The shell around every page: the sidebar — the project in scope, the sections with their
@@ -49,6 +50,8 @@ export function AppLayout() {
         </main>
       </div>
       <Toast />
+      {/* A question from an agent the dashboard did not start (ask_user). */}
+      <PendingAgentAsks />
       <CreateTestModal
         isOpen={creating}
         onClose={() => setCreating(false)}

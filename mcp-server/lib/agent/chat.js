@@ -15,6 +15,7 @@ import { writingDefinitions } from '../gherkin/step-definition-store.js';
 import { keywordsOf } from '../gherkin/language.js';
 import { elementLines } from '../element-store.js';
 import { datasetLines } from '../datasets.js';
+import { secretLines } from '../secrets.js';
 
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 
@@ -36,6 +37,8 @@ function buildSystemPrompt(project) {
   const elements = elementLines(project.id, 80);
   // The values it has to test with: taken from there, not made up.
   const datasets = datasetLines(project.id);
+  // Its secrets, by name: a password is written {{secret.NAME}}, its value never read (lib/secrets.js).
+  const secrets = secretLines(project.id);
 
   const testList = tests.length > 0
     ? tests.map(t => `  - ${t.name}${t.description ? ': ' + t.description : ''}`).join('\n')
@@ -70,6 +73,10 @@ ${elements.length ? `Là où une phrase prend un sélecteur CSS, le nom d'un de 
 
 ## Jeux de données
 ${datasets.length ? `Des tables de valeurs pour tester, lignes numérotées à partir de 1 :\n${datasets.join('\n')}\nQuand un test a besoin d'une valeur qu'elles ont (un utilisateur pour se connecter, un produit à commander), prends-la là plutôt que de l'inventer : {{users[1].email}} dans le Gherkin. Pour un test à jouer avec chaque ligne, écris ses colonnes, {{email}}, {{password}}, puis rattache le test au jeu de données avec bind_dataset.` : '  (aucun jeu de données)'}
+
+## Secrets
+${secrets.length ? `Les secrets du projet (mots de passe, clés) : tu connais leur nom, jamais leur valeur.\n${secrets.join('\n')}\nUn test qui en tape un l'écrit {{secret.NOM}} dans le Gherkin : IziTest tape la valeur.` : '  (aucun secret)'}
+Ne demande jamais un mot de passe, une clé ou un code dans la conversation : dis à l'utilisateur de l'ajouter aux secrets du projet (Projects → Edit → Secrets), puis écris {{secret.NOM}}.
 
 ## Tests existants
 ${testList}

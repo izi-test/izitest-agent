@@ -13,6 +13,11 @@ import { hasExpression } from '../values.js';
  * Whether a test holds computed values ({{today}}, {{unique}}…) or keeps some as it runs
  * (capture, http): its code then carries izitest-values.js.
  */
+/** Whether a test types a secret of its project ({{secret.NAME}}), in a step, a variable or a dataset it carries. */
+export function usesSecrets(test, datasets = {}) {
+  return /\{\{\s*secret\./.test(JSON.stringify([test.steps ?? [], test.variables ?? {}, datasets]));
+}
+
 export function usesComputedValues(test) {
   return hasExpression(JSON.stringify(test.steps ?? []))
     || Object.values(test.variables ?? {}).some((v) => hasExpression(v?.defaultValue))
@@ -45,7 +50,9 @@ export function generatePlaywrightPlain(test) {
   const datasets = datasetsUsed(test);
   const bound = test.dataset && datasets[test.dataset] ? test.dataset : null;
   const language = test.language === 'fr' ? 'fr' : 'en';
-  const options = `{ language: '${language}'${Object.keys(datasets).length ? ', datasets: (name) => DATASETS[name]' : ''} }`;
+  // A secret of the project ({{secret.NAME}}) is the environment variable of that name: its
+  // value is never written in the code.
+  const options = `{ language: '${language}'${Object.keys(datasets).length ? ', datasets: (name) => DATASETS[name]' : ''}${usesSecrets(test, datasets) ? ', secrets: (name) => process.env[name]' : ''} }`;
   // Worked out once per run, as IziTest does: the date typed is the one checked. The values the
   // test keeps as it runs (capture) are in VARS too.
   const computing = (defaults) => [

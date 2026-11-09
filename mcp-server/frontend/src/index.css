@@ -3200,16 +3200,19 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
   margin-top: 12px;
 }
 
-/* The output is as tall as the browser beside it, and scrolls: it does not stretch the row. */
-.create-wf-run__log { position: relative; min-height: 240px; }
-.create-wf-run__log .create-wf-output-section {
+/* The output is as tall as the browser beside it, and scrolls: it does not stretch the row. A
+   question of the agent (ask_user) sits above it, in the flow: the output takes what is left. */
+.create-wf-run__log { display: flex; flex-direction: column; min-height: 240px; }
+.create-wf-run__log .agent-ask { flex: none; }
+.create-wf-run__output { position: relative; flex: 1; min-height: 160px; }
+.create-wf-run__output .create-wf-output-section {
   position: absolute;
   inset: 0;
   margin-top: 0;
   display: flex;
   flex-direction: column;
 }
-.create-wf-run__log .create-wf-output { flex: 1; max-height: none; min-height: 0; }
+.create-wf-run__output .create-wf-output { flex: 1; max-height: none; min-height: 0; }
 
 /* A run of a test: the browser beside its steps. */
 .live-exec-drawer--wide { max-width: min(1280px, 96vw); }
@@ -3227,9 +3230,10 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 
 @media (max-width: 900px) {
   .create-wf-run { grid-template-columns: 1fr; }
-  .create-wf-run__log { position: static; min-height: 0; }
-  .create-wf-run__log .create-wf-output-section { position: static; }
-  .create-wf-run__log .create-wf-output { max-height: 300px; }
+  .create-wf-run__log { min-height: 0; }
+  .create-wf-run__output { position: static; min-height: 0; }
+  .create-wf-run__output .create-wf-output-section { position: static; }
+  .create-wf-run__output .create-wf-output { max-height: 300px; }
 
   .live-body--with-screen { display: flex; flex-direction: column; }
   .live-body__screen { padding: 12px 16px 0; flex: none; }
@@ -3250,3 +3254,31 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 .level-badge--e2e { color: var(--blue); background: var(--blue-bg); border-color: var(--blue-border); }
 .level-badge--api { color: var(--green); background: var(--green-bg); border-color: var(--green-border); }
 .level-badge--unit { color: var(--text-muted); background: var(--surface-subtle); border-color: var(--border-strong); }
+
+/* ─── Secrets of a project (ProjectSecrets) ─── */
+.secrets { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.secrets__head { display: flex; align-items: center; justify-content: space-between; }
+.secrets__head .field__label { display: inline-flex; align-items: center; gap: 6px; }
+.secrets__empty { font-size: 13px; color: var(--text-muted); margin: 0; }
+.secrets__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); }
+.secrets__item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; }
+.secrets__item + .secrets__item { border-top: 1px solid var(--border); }
+.secrets__main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.secrets__name { font-size: 12.5px; font-weight: 600; }
+.secrets__desc { flex-basis: 100%; font-size: 12.5px; color: var(--text-secondary, var(--text-muted)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.secrets__when { font-size: 12px; }
+.secrets__actions { display: inline-flex; gap: 2px; }
+.secrets__actions .icon-btn:first-child:hover { color: var(--primary); background: var(--primary-tint); }
+.secrets__confirm { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--red-muted); }
+.secrets__form { display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px solid var(--primary-tint-border); background: var(--primary-tint); border-radius: var(--radius); }
+
+/* ─── A question from an agent (AgentAsk) ─── */
+.agent-ask { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--amber-border); background: var(--amber-bg); border-radius: var(--radius); }
+.agent-ask__head { display: flex; gap: 10px; align-items: flex-start; color: #92400E; }
+.agent-ask__head svg { flex-shrink: 0; margin-top: 2px; }
+.agent-ask__head strong { display: block; font-size: 14px; color: var(--text); }
+.agent-ask__head p { margin: 2px 0 0; font-size: 13px; color: var(--text); }
+.agent-ask .field__label { display: inline-flex; align-items: center; gap: 5px; }
+.agent-ask input { background: var(--surface, #fff); }
+.create-wf-run__log .agent-ask { margin-bottom: 12px; }
+.agent-ask-dock { position: fixed; right: 24px; bottom: 24px; width: min(420px, calc(100vw - 32px)); z-index: 1200; box-shadow: var(--shadow-lg, 0 12px 32px rgba(15, 23, 42, 0.18)); border-radius: var(--radius); }

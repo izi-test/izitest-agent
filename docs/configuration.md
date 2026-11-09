@@ -30,6 +30,18 @@ node mcp-server/server.js
 
 Voir [security.md](security.md).
 
+### Secrets et questions de l'agent
+
+| Variable | Défaut | Description |
+|----------|--------|-------------|
+| `IZITEST_SECRET_KEY` | aucune | La clé qui chiffre les secrets des projets : 32 octets en base64 (`openssl rand -base64 32`). Sans elle, `~/.izitest/secret.key`, créée au premier secret |
+| `IZITEST_SECRET_KEY_FILE` | `~/.izitest/secret.key` | Où lire ou créer cette clé (`IZITEST_HOME/secret.key` si `IZITEST_HOME` est défini) |
+| `IZITEST_SECRET_<NOM>` | aucune | Remplace la valeur gardée du secret `NOM`, dans tous les projets : une CI donne les siennes |
+| `IZITEST_ASK_WAIT_MS` | `45000` | Combien de temps un appel à `ask_user` attend la réponse avant de dire à l'agent de rappeler |
+| `IZITEST_ASK_TIMEOUT_MS` | `900000` (15 min) | Après quoi une question sans réponse est abandonnée, et l'agent prié d'arrêter |
+
+Voir [mcp-tools.md](mcp-tools.md#secrets--ce-quun-test-tape-sans-que-personne-le-lise).
+
 ### Vue en direct
 
 | Variable | Défaut | Description |

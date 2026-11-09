@@ -64,9 +64,19 @@ graph LR
 IziTest Agent stores data locally in the following locations:
 
 ### Database
-- **Location** : `mcp-server/data/tests.db` (SQLite)
+- **Location** : `mcp-server/data/izitest.db` (SQLite)
 - **Content** : Tests enregistrés, variables, étapes, assertions
 - **Protection** : Les fichiers ne sont accessibles que par l'utilisateur courant
+
+### Secrets of a project
+- **Location** : the `secrets` table of the database, each value encrypted (AES-256-GCM); the key is
+  `IZITEST_SECRET_KEY`, or `~/.izitest/secret.key` (0600), never in the database
+- **Read by** : the server only, to type it — recording and replaying. The API lists names, never a
+  value; what any tool answers an agent, the logs and a run's record carry `{{secret.NAME}}` in its
+  place; snapshots mask password fields
+- **Not covered** : a screenshot, or a run's video, of a page that shows a secret in plain text (a
+  password field shows dots). Keep secrets for test accounts. See
+  [mcp-tools.md](mcp-tools.md#secrets--ce-quun-test-tape-sans-que-personne-le-lise)
 
 ### Screenshots
 - **Location** : `mcp-server/data/baselines/` et `mcp-server/data/assertion-screenshots/`

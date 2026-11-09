@@ -3,6 +3,7 @@ import { toggleOf, isToggleInput, styledAwayToggleLabel, textAround, type Toggle
 import { pickedInputType, setPickedValue } from './picked-input';
 import { fileInputOf, putFiles, type FileData } from './file-input';
 import { fieldByLabel, fieldNames } from './field-label';
+import { shownInputValue } from './field-value';
 
 export type SnapshotPurpose = 'fill' | 'click' | 'read';
 
@@ -1474,11 +1475,9 @@ export function buildSnapshot(providedOptions: SnapshotOptions = {}): SnapshotRe
       if (tag === 'input') {
         if (htmlEl.type) line += ` type="${htmlEl.type}"`;
         if (htmlEl.placeholder) line += ` placeholder="${truncate(htmlEl.placeholder)}"`;
-        // Show current value for text-like inputs and sliders
-        const inputType = (htmlEl.type || 'text').toLowerCase();
-        if (!['checkbox', 'radio', 'submit', 'reset', 'button', 'hidden', 'file'].includes(inputType) && htmlEl.value) {
-          line += ` value="${truncate(htmlEl.value)}"`;
-        }
+        // Show current value for text-like inputs and sliders; a password's, never (field-value.ts)
+        const shown = shownInputValue(htmlEl.type, htmlEl.value);
+        if (shown !== null) line += ` value="${truncate(shown)}"`;
         if (htmlEl.required) line += ` [required]`;
         if (htmlEl.disabled) line += ` [disabled]`;
         if (htmlEl.readOnly) line += ` [readonly]`;

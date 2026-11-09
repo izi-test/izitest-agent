@@ -6,6 +6,7 @@ import { loadTest, fillStepPages } from './test-store.js';
 import { computeVariables, resolveValues } from './values.js';
 import { isServerStep, keptNames, runServerStep } from './server-steps.js';
 import { datasetOfTest, datasetRows, rowLabel } from './datasets.js';
+import { redact, secretValue } from './secrets.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
@@ -381,6 +382,12 @@ export function actionPlan(steps, startStep) {
  * campaign (lib/campaigns.js).
  */
 export async function executeTest(name, variables, substitutions, start_step, new_window, sendCommand, trigger = 'manual', onProgress = null, debugController = null, options = {}) {
+  // What the run tells as it goes, and keeps, holds a secret's reference, never its value
+  // (lib/secrets.js): a value typed shows in an error, an assertion reads what a field holds.
+  if (onProgress) {
+    const tell = onProgress;
+    onProgress = (event) => tell(redact(event));
+  }
   const test = options.test ?? loadTest(name);
   if (!test) {
     throw new Error(`Test "${name}" not found.`);
@@ -416,7 +423,9 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   // once for the run, in the language of the test's project (lib/values.js). One that does not
   // work out stops the run here, told: typed as it is, it would fail further on, unexplained.
   const projectData = datasetRows(test.project_id);
-  const computed = computeVariables(rawVariables, { language: test.language, datasets: (key) => projectData[key] });
+  // {{secret.NAME}}: a secret of the test's project, typed, never kept in the run's record.
+  const secrets = test.project_id != null ? (key) => secretValue(test.project_id, key) : undefined;
+  const computed = computeVariables(rawVariables, { language: test.language, datasets: (key) => projectData[key], secrets });
   const mergedVariables = computed.values;
   const valueProblems = [...computed.problems];
   // Values kept by steps of the run (capture): known by name now, given to the steps after.
@@ -499,7 +508,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   const execResult = db.prepare(
     `INSERT INTO test_executions (test_id, test_name, status, total_steps, variables, new_window, trigger, assertions_total, campaign_id, data_row)
      VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?) RETURNING id`
-  ).get(testId, name, hydratedSteps.length, JSON.stringify(mergedVariables), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null, dataRow);
+  ).get(testId, name, hydratedSteps.length, redact(JSON.stringify(mergedVariables)), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null, dataRow);
   const executionId = execResult.id;
 
   // ─── Initialize pending step rows ─────────────────────────────
@@ -675,8 +684,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
         new Date(startedAt).toISOString(),
         new Date(finishedAt).toISOString(),
         finishedAt - startedAt,
-        stepError,
-        JSON.stringify(assertionResult),
+        redact(stepError),
+        redact(JSON.stringify(assertionResult)),
         executionId,
         stepOrder
       );
@@ -741,7 +750,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       assertions_passed = ?,
       assertions_failed = ?
      WHERE id = ?`
-  ).run(finalStatus, extensionResult.durationMs || null, completedCount, failedStepOrder, globalError, assertionsPassed, assertionsFailed, executionId);
+  ).run(finalStatus, extensionResult.durationMs || null, completedCount, failedStepOrder, redact(globalError), assertionsPassed, assertionsFailed, executionId);
 
   log(`Execution #${executionId} finalized: ${finalStatus} (${completedCount}/${hydratedSteps.length} steps, assertions: ${assertionsPassed}/${assertionsTotal} passed, ${extensionResult.durationMs}ms)`);
 
@@ -795,7 +804,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     throw error;
   }
 
-  return { ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables };
+  return redact({ ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables });
 }
 
 /** Assertions on what the page does wrong on its own, not on an element's text or state. */
@@ -1096,7 +1105,7 @@ function persistStepResult(executionId, sr) {
     sr.finishedAt ? new Date(sr.finishedAt).toISOString() : null,
     sr.durationMs || null,
     sr.locator || sr.resolvedVia || null,
-    sr.error || null,
+    redact(sr.error || null),
     executionId,
     sr.step
   );

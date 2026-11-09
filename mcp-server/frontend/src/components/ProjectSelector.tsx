@@ -9,6 +9,7 @@ import { useGo, useSwitchProject } from '../navigation';
 import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
 import { Dialog, Drawer, ProjectAvatar } from './ui';
+import { ProjectSecrets } from './ProjectSecrets';
 import type { Project } from '../types';
 
 // Projects: the switcher at the top of the sidebar — which one is in scope, all of them, a new
@@ -214,6 +215,8 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
         {error && <div className="alert alert--error">{error}</div>}
         <button type="submit" hidden />
       </form>
+      {/* Its secrets, saved one by one: a new project has them once created. */}
+      {project && <ProjectSecrets projectId={project.id} />}
     </Drawer>
   );
 }

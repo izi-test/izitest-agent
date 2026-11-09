@@ -156,12 +156,30 @@ export function bindDataset(testName, dataset) {
  * The datasets of a project as an agent is told them, one line each: its columns, its number of
  * rows and its first row — what it has to test with ({{users[1].email}}).
  */
+// A column that holds a password, a key, a code: its values are not shown to an agent. Typed
+// as {{password}} they still are, by the server; a secret of the project is better
+// ({{secret.NAME}}, lib/secrets.js).
+const SENSITIVE_COLUMN = /pass|pwd|mot.?de.?passe|secret|token|api.?key|cl[eé].?api|otp|pin.?code|code.?pin/i;
+
+/** A value of a dataset as an agent is shown it: one of a sensitive column hidden, unless it is a reference. */
+export function shownValue(column, value) {
+  const text = String(value ?? '');
+  if (!SENSITIVE_COLUMN.test(column) || !text || /^\{\{\s*secret\.[A-Za-z_]\w*\s*\}\}$/.test(text)) return text;
+  return '(hidden)';
+}
+
+/** A row of a dataset as an agent is shown it (shownValue). */
+export function shownRow(row) {
+  if (!row) return row;
+  return Object.fromEntries(Object.entries(row).map(([column, value]) => [column, shownValue(column, value)]));
+}
+
 export function datasetLines(projectId) {
   if (!projectId) return [];
   const short = (value) => JSON.stringify(value.length > 40 ? `${value.slice(0, 39)}…` : value);
   return db.prepare('SELECT * FROM datasets WHERE project_id = ? ORDER BY name').all(projectId).map((row) => {
     const { name, columns, rows } = asDataset(row, { withRows: true });
-    const first = columns.map((column) => `${column} ${short(rows[0]?.[column] ?? '')}`).join(', ');
+    const first = columns.map((column) => `${column} ${short(shownValue(column, rows[0]?.[column]))}`).join(', ');
     return `- ${name}: ${columns.join(', ')} — ${rows.length} row(s); row 1: ${first}`;
   });
 }

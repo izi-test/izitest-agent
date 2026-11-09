@@ -18,7 +18,8 @@ import {
 import { log } from '../logger.js';
 import { CODEGEN_FRAMEWORKS, generateTestCode, formatCodeFiles } from '../codegen/index.js';
 import { addBusinessStep } from '../business-steps.js';
-import { listDatasets, saveDataset, bindDataset, datasetRows, datasetOfTest } from '../datasets.js';
+import { listDatasets, saveDataset, bindDataset, datasetRows, datasetOfTest, shownRow } from '../datasets.js';
+import { listSecrets } from '../secrets.js';
 import { addTestVariable } from '../test-variable.js';
 import { linkRecorded, requirementsOfTest } from '../requirements.js';
 
@@ -37,7 +38,7 @@ function projectDefinitions(projectId) {
 export const AGENT_TOOLS = [
   {
     name: 'get_project_context',
-    description: 'Get the full context of the current project: name, description, base URL, type, specs/context text, the language its tests are written in (en, fr), its step definitions in that language, and the elements its tests act on — in a Gherkin phrase, the name of one of them goes where a CSS selector goes.',
+    description: 'Get the full context of the current project: name, description, base URL, type, specs/context text, the language its tests are written in (en, fr), its step definitions in that language, its datasets, its secrets (names only: type {{secret.NAME}}, IziTest types the value), and the elements its tests act on — in a Gherkin phrase, the name of one of them goes where a CSS selector goes.',
     parameters: {
       type: 'object',
       properties: {
@@ -76,7 +77,9 @@ export const AGENT_TOOLS = [
           existing_tests: tests.map(t => t.name),
           // Tables of values to take a value from rather than make one up: a test bound to one runs
           // once per row ({{column}}); any reads one ({{name[2].column}}).
-          datasets: listDatasets(project_id).map(({ name, columns, row_count, used_by }) => ({ name, columns, rows: row_count, first_row: rows[name]?.[0], used_by })),
+          datasets: listDatasets(project_id).map(({ name, columns, row_count, used_by }) => ({ name, columns, rows: row_count, first_row: shownRow(rows[name]?.[0]), used_by })),
+          // Its secrets, by name and purpose — never a value: {{secret.NAME}} where one is typed.
+          secrets: listSecrets(project_id).map(({ name, description }) => ({ name, description, write: `{{secret.${name}}}` })),
           // By name: where a phrase takes a CSS selector, the name acts on that element.
           elements: listElements(project_id).filter(e => e.used_by.length).map(({ name, page, target }) => ({ name, page, target })),
         },

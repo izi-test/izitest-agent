@@ -452,6 +452,21 @@ export function initDatabase() {
     log(`Migration warning (datasets): ${err.message}`);
   }
 
+  // The secrets of a project (lib/secrets.js): a password, a key a test types, its value
+  // encrypted with a key of this machine; {{secret.NAME}} in a step.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS secrets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      value TEXT NOT NULL,
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE(project_id, name)
+    );
+  `);
+
   // The business steps the agent proposes for a test, until accepted or dismissed (lib/business-steps.js).
   db.exec(`
     CREATE TABLE IF NOT EXISTS business_proposals (

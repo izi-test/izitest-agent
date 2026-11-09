@@ -203,14 +203,20 @@ test('what the agent recording a case is told: the criteria, its own, and where 
   assert.doesNotMatch(recordingBrief(requirement), /case #|start_recording/, 'the internal agent links by itself');
 });
 
-test('what the agent recording a test is told of the app: its project, where to start, its context, and to stop when it cannot', () => {
+test('what the agent recording a test is told of the app: its project, where to start, its context, to ask for what it lacks, and to stop when it cannot', () => {
   const brief = projectBrief({ name: 'Shop', base_url: 'https://shop.test', context: 'Login at /login.\n' });
   assert.match(brief, /^The app under test is the project "Shop"\.\nIts tests are written in English: write the intent of each step in English\.\nIt is at https:\/\/shop\.test: start there, unless the description gives another URL\.\nWhat to know about it:\nLogin at \/login\.\n/);
   assert.match(projectBrief({ name: 'Boutique', language: 'fr' }), /Its tests are written in French: write the intent of each step in French\./);
-  assert.match(brief, /Nobody answers questions during this run\./);
+  // A value nobody gave is asked for (ask_user), never made up nor asked in its reply.
+  assert.match(brief, /call ask_user: the person who started this run answers it in the dashboard/);
+  assert.match(brief, /Never make such a value up, and never ask for it in your reply/);
   assert.match(brief, /close_window/);
-  // Without a project, or one with no base URL nor context: only what to do when it cannot record.
-  assert.match(projectBrief(null), /^Nobody answers questions/);
+  // Its secrets by name, typed as references; none, nothing said of them.
+  const withSecrets = projectBrief({ name: 'Shop' }, { secrets: ['- SHOP_PASSWORD: Password of the test account'] });
+  assert.match(withSecrets, /Its secrets \(a password, a key: you are told their names, never their values\):\n- SHOP_PASSWORD: Password of the test account\nType \{\{secret\.NAME\}\} where one goes/);
+  assert.doesNotMatch(brief, /Its secrets/);
+  // Without a project, or one with no base URL nor context: only what to do when it lacks something.
+  assert.match(projectBrief(null), /^If the test needs a value/);
   assert.doesNotMatch(projectBrief({ name: 'Bare', base_url: null, context: '' }), /It is at|What to know/);
 });
 

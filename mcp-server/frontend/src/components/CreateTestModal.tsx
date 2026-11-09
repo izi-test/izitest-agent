@@ -14,6 +14,9 @@ import {
   usePutTestFeatureMutation,
   useProposeBusinessStepsMutation,
 } from '../store/services/testsApi';
+import { AgentAskForm } from './AgentAsk';
+import { useRunWindow } from '../agent-asks';
+import type { AgentAsk } from '../types';
 
 export type CreateMode = 'ai' | 'gherkin';
 
@@ -107,6 +110,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   const [agentOutput, setAgentOutput] = useState('');
   // The tab the agent works in, once it has opened one: shown live beside its output.
   const [liveTabId, setLiveTabId] = useState<number | null>(null);
+  // A question the agent asks while it works (ask_user): answered here, beside its browser.
+  const [ask, setAsk] = useState<AgentAsk | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gherkinDraft, setGherkinDraft] = useState('');
   const [gherkinDraftDirty, setGherkinDraftDirty] = useState(false);
@@ -130,6 +135,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       setAgentStatus('idle');
       setAgentOutput('');
       setLiveTabId(null);
+      setAsk(null);
       setError(null);
       setGherkinDraft(preset?.gherkin ?? '');
       setGherkinDraftDirty(!!preset?.gherkin);
@@ -187,6 +193,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
     setAgentStatus('running');
     setAgentOutput('');
     setLiveTabId(null);
+    setAsk(null);
 
     const prompt = buildPrompt(name.trim(), description.trim(), useVrt, viewport);
     // The request is kept as a requirement (source "prompt"), and the test the agent records is
@@ -246,6 +253,10 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               setAgentOutput(prev => appendLine(prev, toolCallLine(event.tool, event.input)));
             } else if (event.type === 'live') {
               setLiveTabId(event.tabId);
+            } else if (event.type === 'ask') {
+              setAsk(event.ask);
+            } else if (event.type === 'ask_done') {
+              setAsk((current) => (current?.id === event.id ? null : current));
             } else if (event.type === 'error') {
               setError(event.error);
               setAgentStatus('error');
@@ -341,6 +352,9 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       setIsCreatingGherkin(false);
     }
   };
+
+  // While its agent works, the dock of this page leaves other runs' questions to their windows.
+  useRunWindow(isOpen && agentStatus === 'running');
 
   if (!isOpen) return null;
 
@@ -486,6 +500,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
             <div className="create-wf-run">
             <LiveScreen tabId={liveTabId} running={isRunning} waiting="Waiting for the agent to open a page…" />
             <div className="create-wf-run__log">
+            {ask && isRunning && <AgentAskForm ask={ask} onSettled={() => setAsk(null)} />}
+            <div className="create-wf-run__output">
             <div className="create-wf-output-section">
               <div className="create-wf-output-header">
                 <span className="create-wf-output-label">
@@ -502,6 +518,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               <div className="create-wf-output" ref={outputRef}>
                 <pre>{agentOutput || 'Waiting for agent output...'}</pre>
               </div>
+            </div>
             </div>
             </div>
             </div>
