@@ -18,6 +18,7 @@
 // new tab in place of an about:blank given on its command line).
 
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
@@ -40,6 +41,8 @@ export const PROFILE_DIR = laneDir(1);
 export const EXTENSION_DIR = process.env.IZITEST_EXTENSION_DIR
   || join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'extension', 'dist');
 const pidFile = (n) => join(laneDir(n), 'izitest-headless.pid');
+// Which build of the extension a profile's Chrome last started with: a digest of its background.js.
+const BUILD_FILE = 'izitest-extension-build';
 
 // How long the extension of a Chrome just started takes to connect, at most.
 const CONNECT_TIMEOUT_MS = 30_000;
@@ -71,6 +74,30 @@ export function chromeArgs({ profileDir = PROFILE_DIR, extensionDir = EXTENSION_
     '--window-size=1440,900',
     `data:text/html,${profile}#izitest-profile=${profile}`,
   ];
+}
+
+/**
+ * Makes a profile's Chrome run the extension as built now, not as it last ran there. Returns
+ * whether it had to.
+ *
+ * Chrome keeps an extension's service worker in the profile, its script included, and registers it
+ * again only when the extension's version changes. The headless Chrome is stopped and started
+ * again, never reloaded (a reload left its extension disabled): every build since a profile's first
+ * start, all of version 1.1.0, was never run there. Seen: the headless Chrome ran a build four days
+ * old, without the fixes made since, the one of its navigate's 15 s wait among them.
+ *
+ * When background.js has changed since the last start, the profile's service workers are dropped,
+ * and Chrome registers the extension's again from the build on disk. Those of the sites tested go
+ * with them (and their Cache Storage); cookies, logins and storage stay.
+ */
+export function forgetStaleExtension({ profileDir = PROFILE_DIR, extensionDir = EXTENSION_DIR } = {}) {
+  const build = createHash('sha256').update(readFileSync(join(extensionDir, 'background.js'))).digest('hex');
+  const file = join(profileDir, BUILD_FILE);
+  if (existsSync(file) && readFileSync(file, 'utf8').trim() === build) return false;
+  rmSync(join(profileDir, 'Default', 'Service Worker'), { recursive: true, force: true });
+  mkdirSync(profileDir, { recursive: true });
+  writeFileSync(file, build);
+  return true;
 }
 
 /** Sends a run's commands that name no profile to the headless Chrome — of lane `profile`. */
@@ -151,6 +178,8 @@ export function startHeadless(n = 1) {
     }
     const profileDir = laneDir(n);
     mkdirSync(profileDir, { recursive: true });
+    // Each lane's profile keeps the build it last ran: each is told of a new one.
+    if (forgetStaleExtension({ profileDir })) log(`Headless: the extension was built again since the last start${n > 1 ? ` of ${profile}` : ''}, Chrome registers its new build`);
     log(`Headless: starting Chrome for Testing ${chrome.buildId}${n > 1 ? ` (${profile})` : ''}`);
     const proc = spawn(chrome.executablePath, chromeArgs({ profileDir, profile }), { stdio: 'ignore' });
     children.set(n, proc);

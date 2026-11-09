@@ -8,9 +8,12 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import WebSocket from 'ws';
 
-const { chromeArgs, inHeadless, laneProfile, laneDir, HEADLESS_PROFILE } = await import('../lib/headless.js');
+const { chromeArgs, inHeadless, laneProfile, laneDir, forgetStaleExtension, HEADLESS_PROFILE } = await import('../lib/headless.js');
 const { startWebSocketServer, closeWebSocket, sendCommand, waitForProfile, isHeadlessProfile } = await import('../lib/websocket.js');
 
 test('Chrome is started without a window, with this extension only, in a profile of its own', () => {
@@ -31,6 +34,37 @@ test('a campaign\'s lanes: a Chrome each, in a profile of its own, registering u
   const args = chromeArgs({ profileDir: laneDir(2), profile: laneProfile(2) });
   assert.ok(args.includes(`--user-data-dir=${laneDir(2)}`));
   assert.equal(args.at(-1), 'data:text/html,headless-2#izitest-profile=headless-2');
+});
+
+test('a Chrome started again runs the extension as built now: its old service worker is forgotten, once per build', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'headless-build-'));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  const extensionDir = join(dir, 'dist');
+  const profileDir = join(dir, 'profile');
+  const workers = join(profileDir, 'Default', 'Service Worker');
+  const cookies = join(profileDir, 'Default', 'Cookies');
+  mkdirSync(extensionDir);
+  writeFileSync(join(extensionDir, 'background.js'), 'build 1');
+  // A profile some build already ran in: Chrome keeps that build's worker, script included.
+  const ranBefore = () => { mkdirSync(join(workers, 'ScriptCache'), { recursive: true }); writeFileSync(join(workers, 'ScriptCache', 'f1_0'), 'old build'); };
+  ranBefore();
+  writeFileSync(cookies, 'session=manager');
+
+  assert.equal(forgetStaleExtension({ profileDir, extensionDir }), true, 'no build known: the worker kept may be any');
+  assert.equal(existsSync(workers), false, 'Chrome registers the worker again, from the build on disk');
+  assert.equal(existsSync(cookies), true, 'logins stay');
+
+  ranBefore();
+  assert.equal(forgetStaleExtension({ profileDir, extensionDir }), false, 'the same build: nothing to forget');
+  assert.equal(existsSync(workers), true);
+
+  writeFileSync(join(extensionDir, 'background.js'), 'build 2');
+  assert.equal(forgetStaleExtension({ profileDir, extensionDir }), true, 'built again: the worker kept is the old one');
+  assert.equal(existsSync(workers), false);
+
+  const fresh = join(dir, 'fresh');
+  assert.equal(forgetStaleExtension({ profileDir: fresh, extensionDir }), true, 'a profile never started is made');
+  assert.equal(forgetStaleExtension({ profileDir: fresh, extensionDir }), false);
 });
 
 test('a run asked headless sends what names no profile to the headless Chrome, and what names one where it says', async () => {

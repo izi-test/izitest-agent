@@ -123,19 +123,33 @@ export async function assertTabIsNotAnotherSessions(
   );
 }
 
+/**
+ * Until the tab's page has loaded: called once navigation is under way (after page.goto), it
+ * waits for the tab's 'complete'.
+ *
+ * A page that has already loaded by then has already sent its 'complete', and no other comes:
+ * it is answered at once. That is a page served from the cache — DOMContentLoaded and load in the
+ * same instant, 'complete' told before page.goto returns. Seen in the headless Chrome: each
+ * navigate to a logout that redirects to the app's home waited out the 15 s, from the second visit.
+ */
 export function waitForTabLoad(tabId: number): Promise<void> {
   return new Promise((resolve) => {
-    const listener = (changedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
-      if (changedTabId === tabId && changeInfo.status === 'complete') {
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    };
-    chrome.tabs.onUpdated.addListener(listener);
-    setTimeout(() => {
+    const done = () => {
+      clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(listener);
       resolve();
-    }, TAB_LOAD_TIMEOUT_MS);
+    };
+    const listener = (changedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (changedTabId === tabId && changeInfo.status === 'complete') done();
+    };
+    // Listening first, then looking: a 'complete' between the two is not missed either.
+    chrome.tabs.onUpdated.addListener(listener);
+    const timer = setTimeout(done, TAB_LOAD_TIMEOUT_MS);
+    chrome.tabs.get(tabId).then(
+      (tab) => { if (tab.status === 'complete') done(); },
+      // The tab is gone: nothing will load in it. The caller fails on its own terms.
+      done,
+    );
   });
 }
 
