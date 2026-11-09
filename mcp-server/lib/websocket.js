@@ -158,6 +158,14 @@ export function startWebSocketServer(port) {
     });
 
     ws.on('close', () => {
+      // A command sent over this socket gets no answer now: told at once, not at its timeout
+      // (a replay waited its 120 s for a Chrome stopped under it).
+      for (const [id, pending] of pendingCommands) {
+        if (pending.ws !== ws) continue;
+        clearTimeout(pending.timeout);
+        pendingCommands.delete(id);
+        pending.reject(new Error(`The browser${registeredProfileId ? ` of profile "${registeredProfileId}"` : ''} disconnected while it ran ${pending.command}: it was closed, stopped or reloaded`));
+      }
       // A register under the same id from a newer socket replaced this one: it stays.
       if (registeredProfileId && profiles.get(registeredProfileId) === ws) {
         profiles.delete(registeredProfileId);
@@ -218,7 +226,7 @@ export function sendCommand(profileId, command, params, timeoutMs = 30000, onPro
         // Live view commands run every few seconds per recorded tab, and after every
         // action: logging them would bury the agents' own commands.
         const quiet = command.startsWith('live_');
-        pendingCommands.set(id, { resolve, reject, timeout, onProgress, quiet });
+        pendingCommands.set(id, { resolve, reject, timeout, onProgress, quiet, ws, command });
 
         if (!quiet) {
           const sessionTag = params?.sessionId ? `[${params.sessionId}] ` : '';

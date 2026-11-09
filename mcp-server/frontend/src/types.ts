@@ -346,8 +346,21 @@ export interface TestRequirement {
 /** How a test did in a campaign (mcp-server/lib/campaigns.js). */
 export type CampaignTestStatus = 'passed' | 'failed' | 'error' | 'running' | 'pending' | 'skipped';
 
+/** A stage of a campaign run in stages: its tests side by side, or one after the other. */
+export interface CampaignStage {
+  name?: string;
+  mode: 'parallel' | 'sequential';
+  tests: string[];
+  /** Runs only if every test of the stages before it passed. */
+  needs_previous: boolean;
+}
+
 export interface CampaignRun {
   name: string;
+  /** The stage it ran in, from 0. */
+  stage?: number;
+  /** Why it did not run: the campaign stopped, or a stage before did not pass. */
+  skipped_because?: string;
   /** The row of its dataset it played, and how it is told apart: "login [row 2]". */
   row?: number | null;
   label?: string;
@@ -376,7 +389,9 @@ export interface Campaign {
   name: string;
   project_id: number | null;
   project: string | null;
-  scope: { project_id?: number; requirement?: string; tests?: string[] };
+  scope: { project_id?: number; requirement?: string; tests?: string[]; stages?: CampaignStage[] };
+  /** Its stages, each with where it stands; null when its tests ran in one go. */
+  stages?: Array<CampaignStage & { number: number; status: 'passed' | 'failed' | 'skipped' | 'running' | 'pending'; totals: Record<CampaignTestStatus, number> }> | null;
   version: string | null;
   concurrency: number;
   status: 'running' | 'done' | 'stopped' | 'interrupted';

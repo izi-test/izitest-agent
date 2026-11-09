@@ -131,7 +131,7 @@ async function executeStepsInDebugMode(
   actionSteps, startIndex, newWindow, sendCommand,
   debugController, executionId, hydratedSteps,
   onProgress, streamedStepResults,
-  viewportWidth, viewportHeight, server = null
+  viewportWidth, viewportHeight, server = null, checkInPlace = null
 ) {
   const overallStartedAt = Date.now();
   const results = [];
@@ -171,6 +171,12 @@ async function executeStepsInDebugMode(
         command: step.command,
         intent: step.intent || null,
       });
+    }
+
+    // An assertion with steps after it is checked here, where it is.
+    if (step.command === 'assert' && checkInPlace) {
+      if (!(await checkInPlace(step, lastTabId))) { failed = true; break; }
+      continue;
     }
 
     // A server step (capture, http) runs here; a browser step gets the values kept so far.
@@ -281,18 +287,20 @@ async function playServerStep(step, stepNumber, { sendCommand, tabId, server }) 
 }
 
 /**
- * Plays a test holding server steps: the browser's steps sent in segments, each with the
- * values kept so far, in the window the one before used; the server's steps in between.
+ * Plays a test holding server steps, or assertions checked in place: the browser's steps sent
+ * in segments, each with the values kept so far, in the window the one before used; the
+ * server's steps and those assertions (`checkInPlace`, false when it failed) in between.
  */
 async function executeInSegments(
   actionSteps, startIndex, newWindow, sendCommand, executionId,
-  onProgress, streamedStepResults, viewportWidth, viewportHeight, server
+  onProgress, streamedStepResults, viewportWidth, viewportHeight, server, checkInPlace
 ) {
   const startedAt = Date.now();
   const results = [];
   let failed = false;
   let lastTabId = null;
   let first = true;
+  let replayError = null;
   const record = (stepResult) => {
     results.push(stepResult);
     streamedStepResults.push(stepResult);
@@ -304,7 +312,14 @@ async function executeInSegments(
   }
 
   let i = startIndex;
+  const between = (step) => isServerStep(step) || step.command === 'assert';
   while (i < actionSteps.length && !failed) {
+    if (actionSteps[i].command === 'assert') {
+      const step = actionSteps[i++];
+      // A failed check stops the test there: what follows was built on what it checked.
+      failed = !(await checkInPlace(step, lastTabId));
+      continue;
+    }
     if (isServerStep(actionSteps[i])) {
       const step = actionSteps[i++];
       if (onProgress) onProgress({ type: 'step_start', step: step._originalStepNumber, command: step.command, intent: step.intent || null });
@@ -316,7 +331,7 @@ async function executeInSegments(
     }
 
     const segment = [];
-    while (i < actionSteps.length && !isServerStep(actionSteps[i])) segment.push(actionSteps[i++]);
+    while (i < actionSteps.length && !between(actionSteps[i])) segment.push(actionSteps[i++]);
     const numberOf = (n) => segment[n - 1]?._originalStepNumber ?? n;
     // A capture after it reads the requests the page made from now on (lib/server-steps.js).
     server.state.since = Date.now();
@@ -347,6 +362,7 @@ async function executeInSegments(
       });
     } catch (err) {
       played = { results: err.results || [] };
+      replayError = err.message;
       failed = true;
     }
     first = false;
@@ -358,18 +374,32 @@ async function executeInSegments(
     }
   }
 
-  return { results, startedAt, finishedAt: Date.now(), durationMs: Date.now() - startedAt, _failed: failed };
+  return { results, startedAt, finishedAt: Date.now(), durationMs: Date.now() - startedAt, _failed: failed, _error: replayError };
 }
 
 /**
- * The steps the extension plays — every one but the assertions, checked here afterwards —
+ * The assertions of a test with an action after them (their index): checked where they are,
+ * between the steps around them — on the page the steps before led to. Checked after the
+ * last action, one on an employee's page before the test goes to a manager's read the
+ * manager's, and failed.
+ */
+export function assertionsInPlace(steps) {
+  const lastAction = steps.findLastIndex((step) => step.command !== 'assert');
+  const inPlace = new Set();
+  steps.forEach((step, i) => { if (step.command === 'assert' && step.assertion && i < lastAction) inPlace.add(i); });
+  return inPlace;
+}
+
+/**
+ * The steps the extension plays — every one but the assertions, checked here — with the
+ * assertions `inPlace` among them (checked by the server where they are, assertionsInPlace),
  * each with its number in the test, and where to start among them. The extension numbers
  * the steps it is given: an assertion in the middle of a test shifted every step after it,
  * and a failure was reported (and repaired) one step off.
  */
-export function actionPlan(steps, startStep) {
+export function actionPlan(steps, startStep, inPlace = new Set()) {
   const actions = [];
-  steps.forEach((step, i) => { if (step.command !== 'assert') actions.push({ ...step, _originalStepNumber: i + 1 }); });
+  steps.forEach((step, i) => { if (step.command !== 'assert' || inPlace.has(i)) actions.push({ ...step, _originalStepNumber: i + 1 }); });
   const first = startStep > 0 ? startStep - 1 : 0;
   const startIndex = actions.findIndex((step) => step._originalStepNumber - 1 >= first);
   return { actions, startIndex: startIndex < 0 ? actions.length : startIndex };
@@ -540,9 +570,105 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     });
   }
 
+  // ─── Assertions ────────────────────────────────────────────────
+  // Checked on `tabId`: where it is in the test when an action follows it (assertionsInPlace),
+  // after the last action otherwise. True when it passed.
+  let assertionsPassed = 0;
+  let assertionsFailed = 0;
+  let firstFailedAssertion = null;
+  const assertionStepResults = [];
+  const checked = new Set();
+  const checkAssertion = async (i, tabId) => {
+    checked.add(i);
+    // With the values the run kept by then (a captured order number, say).
+    let step = hydratedSteps[i];
+    if (withServerSteps) {
+      try { step = server.rehydrate(step); } catch (err) { log(err.message); }
+    }
+    const assertionTabId = tabId;
+
+    const stepOrder = i + 1;
+    const startedAt = Date.now();
+    let assertionResult;
+
+    try {
+      assertionResult = await evaluateAssertion(sendCommand, step.assertion, assertionTabId);
+    } catch (err) {
+      assertionResult = { passed: false, expected: step.assertion.expected || '', actual: `Error: ${err.message}`, type: step.assertion.type };
+    }
+
+    if (assertionResult.passed) {
+      assertionsPassed++;
+      if (assertionResult.isVrt && assertionResult.actualDataUrl) {
+        const screenshotUrl = await saveAssertionFailureScreenshot(assertionResult.actualDataUrl, executionId, stepOrder);
+        assertionResult = { ...assertionResult, screenshotUrl, refScreenshotUrl: '/' + step.assertion.expected };
+      }
+    } else {
+      assertionsFailed++;
+      const failureMessage = buildAssertionFailureMessage(step.assertion, assertionResult);
+      let screenshotUrl;
+      if (assertionResult.isVrt && assertionResult.actualDataUrl) {
+        screenshotUrl = await saveAssertionFailureScreenshot(assertionResult.actualDataUrl, executionId, stepOrder);
+        assertionResult = { ...assertionResult, message: failureMessage, screenshotUrl, refScreenshotUrl: '/' + step.assertion.expected };
+      } else {
+        screenshotUrl = await captureAssertionFailureScreenshot(sendCommand, executionId, stepOrder, assertionTabId);
+        assertionResult = { ...assertionResult, message: failureMessage, screenshotUrl };
+      }
+      if (!firstFailedAssertion) {
+        firstFailedAssertion = { stepOrder, message: failureMessage };
+      }
+    }
+
+    const finishedAt = Date.now();
+    const stepError = assertionResult.passed ? null : assertionResult.message;
+    assertionStepResults.push({
+      step: stepOrder,
+      command: 'assert',
+      intent: step.intent || `Assert: ${step.assertion.type}`,
+      status: assertionResult.passed ? 'success' : 'failed',
+      error: stepError,
+      assertionResult
+    });
+
+    // Persist assertion result
+    db.prepare(
+      `UPDATE execution_steps SET
+        status = ?,
+        started_at = ?,
+        finished_at = ?,
+        duration_ms = ?,
+        error = ?,
+        assertion_result = ?
+       WHERE execution_id = ? AND step_order = ?`
+    ).run(
+      assertionResult.passed ? 'success' : 'failed',
+      new Date(startedAt).toISOString(),
+      new Date(finishedAt).toISOString(),
+      finishedAt - startedAt,
+      redact(stepError),
+      redact(JSON.stringify(assertionResult)),
+      executionId,
+      stepOrder
+    );
+
+    if (onProgress) {
+      onProgress({
+        type: 'assertion_result',
+        stepOrder,
+        intent: step.intent || `Assert: ${step.assertion.type}`,
+        assertion: step.assertion,
+        result: assertionResult
+      });
+    }
+
+    return assertionResult.passed;
+  };
+  const checkInPlace = (step, tabId) => checkAssertion(step._originalStepNumber - 1, tabId ?? undefined);
+
   // ─── Send to extension and process results ────────────────────
   // Filter out assertion steps — the extension only handles browser actions
-  const { actions: actionSteps, startIndex } = actionPlan(hydratedSteps, start_step);
+  const inPlace = assertionsInPlace(hydratedSteps);
+  const { actions: actionSteps, startIndex } = actionPlan(hydratedSteps, start_step, inPlace);
   const testOrder = (n) => actionSteps[n - 1]?._originalStepNumber ?? n;
   const numbered = (msg) => {
     if (msg?.type === 'step_start') return { ...msg, step: testOrder(msg.step) };
@@ -552,6 +678,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   let extensionResult;
   let executionFailed = false;
+  // Why the replay itself stopped, when no step says it: timed out, its browser gone.
+  let replayError = null;
   // Accumulate step results from the streaming callback because
   // when replay_sequence throws, err.results is often empty.
   const streamedStepResults = [];
@@ -562,18 +690,20 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       actionSteps, startIndex, new_window, sendCommand,
       debugController, executionId, hydratedSteps,
       onProgress, streamedStepResults,
-      viewportWidth, viewportHeight, server
+      viewportWidth, viewportHeight, server, checkInPlace
     );
     executionFailed = extensionResult._failed || false;
     delete extensionResult._failed;
-  } else if (withServerSteps) {
+  } else if (withServerSteps || inPlace.size > 0) {
     // ─── Server steps: the browser's steps in segments, the server's in between ──
     extensionResult = await executeInSegments(
       actionSteps, startIndex, new_window, sendCommand, executionId,
-      onProgress, streamedStepResults, viewportWidth, viewportHeight, server
+      onProgress, streamedStepResults, viewportWidth, viewportHeight, server, checkInPlace
     );
     executionFailed = extensionResult._failed || false;
+    replayError = extensionResult._error ?? null;
     delete extensionResult._failed;
+    delete extensionResult._error;
   } else {
     // ─── Normal mode: bulk replay_sequence ───────────────────────
     try {
@@ -595,6 +725,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       });
     } catch (err) {
       executionFailed = true;
+      replayError = err.message;
       extensionResult = {
         results: err.results || [],
         startedAt: err.startedAt || Date.now(),
@@ -605,100 +736,17 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     extensionResult.results = (extensionResult.results ?? []).map((result) => ({ ...result, step: testOrder(result.step) }));
   }
 
-  // ─── Evaluate assertion steps ─────────────────────────────────
-  let assertionsPassed = 0;
-  let assertionsFailed = 0;
-  let firstFailedAssertion = null;
-  const assertionStepResults = [];
+  // The assertions after the last action, on the page it led to.
   // Prefer extensionResult.results when available (success path),
   // fall back to streamed results captured from progress callbacks (error path).
   const stepResults = (extensionResult.results && extensionResult.results.length > 0)
     ? extensionResult.results
     : streamedStepResults;
-  const assertionTabId = [...stepResults].reverse().find((stepResult) => stepResult?.tabId)?.tabId;
-
+  const lastTabId = [...stepResults].reverse().find((stepResult) => stepResult?.tabId)?.tabId;
   if (!executionFailed) {
     for (let i = 0; i < hydratedSteps.length; i++) {
-      if (hydratedSteps[i].command !== 'assert' || !hydratedSteps[i].assertion) continue;
-      // With the values the run kept by then (a captured order number, say).
-      let step = hydratedSteps[i];
-      if (withServerSteps) {
-        try { step = server.rehydrate(step); } catch (err) { log(err.message); }
-      }
-
-      const stepOrder = i + 1;
-      const startedAt = Date.now();
-      let assertionResult;
-
-      try {
-        assertionResult = await evaluateAssertion(sendCommand, step.assertion, assertionTabId);
-      } catch (err) {
-        assertionResult = { passed: false, expected: step.assertion.expected || '', actual: `Error: ${err.message}`, type: step.assertion.type };
-      }
-
-      if (assertionResult.passed) {
-        assertionsPassed++;
-        if (assertionResult.isVrt && assertionResult.actualDataUrl) {
-          const screenshotUrl = await saveAssertionFailureScreenshot(assertionResult.actualDataUrl, executionId, stepOrder);
-          assertionResult = { ...assertionResult, screenshotUrl, refScreenshotUrl: '/' + step.assertion.expected };
-        }
-      } else {
-        assertionsFailed++;
-        const failureMessage = buildAssertionFailureMessage(step.assertion, assertionResult);
-        let screenshotUrl;
-        if (assertionResult.isVrt && assertionResult.actualDataUrl) {
-          screenshotUrl = await saveAssertionFailureScreenshot(assertionResult.actualDataUrl, executionId, stepOrder);
-          assertionResult = { ...assertionResult, message: failureMessage, screenshotUrl, refScreenshotUrl: '/' + step.assertion.expected };
-        } else {
-          screenshotUrl = await captureAssertionFailureScreenshot(sendCommand, executionId, stepOrder, assertionTabId);
-          assertionResult = { ...assertionResult, message: failureMessage, screenshotUrl };
-        }
-        if (!firstFailedAssertion) {
-          firstFailedAssertion = { stepOrder, message: failureMessage };
-        }
-      }
-
-      const finishedAt = Date.now();
-      const stepError = assertionResult.passed ? null : assertionResult.message;
-      assertionStepResults.push({
-        step: stepOrder,
-        command: 'assert',
-        intent: step.intent || `Assert: ${step.assertion.type}`,
-        status: assertionResult.passed ? 'success' : 'failed',
-        error: stepError,
-        assertionResult
-      });
-
-      // Persist assertion result
-      db.prepare(
-        `UPDATE execution_steps SET
-          status = ?,
-          started_at = ?,
-          finished_at = ?,
-          duration_ms = ?,
-          error = ?,
-          assertion_result = ?
-         WHERE execution_id = ? AND step_order = ?`
-      ).run(
-        assertionResult.passed ? 'success' : 'failed',
-        new Date(startedAt).toISOString(),
-        new Date(finishedAt).toISOString(),
-        finishedAt - startedAt,
-        redact(stepError),
-        redact(JSON.stringify(assertionResult)),
-        executionId,
-        stepOrder
-      );
-
-      if (onProgress) {
-        onProgress({
-          type: 'assertion_result',
-          stepOrder,
-          intent: step.intent || `Assert: ${step.assertion.type}`,
-          assertion: step.assertion,
-          result: assertionResult
-        });
-      }
+      if (hydratedSteps[i].command !== 'assert' || !hydratedSteps[i].assertion || checked.has(i)) continue;
+      await checkAssertion(i, lastTabId);
     }
   }
 
@@ -728,6 +776,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   if (!failedStepOrder && firstFailedAssertion) {
     failedStepOrder = firstFailedAssertion.stepOrder;
   }
+  if (executionFailed && !globalError && !firstFailedAssertion) globalError = replayError ?? 'The replay stopped before its steps said why';
 
   // ─── Cleanup debug controller ──────────────────────────────────
   if (debugController) {
@@ -758,7 +807,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     pushOverlayState(null, {
       mode: finalStatus === 'success' ? 'success' : 'failed',
       error: finalStatus === 'success' ? 'Sequence completed gracefully.' : (globalError || 'Assertion failed')
-    }, assertionTabId);
+    }, lastTabId);
   }).catch(() => {});
 
   // Why it failed, on the page it failed on, and what would repair it: kept with the run.
@@ -767,7 +816,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   if (finalStatus === 'failed' && failedStepOrder && !isDebugMode && trigger !== 'repair' && trigger !== 'explore') {
     triage = await triageRun({
       name, test, executionId, failedStepOrder, globalError, stepResults, assertionStepResults,
-      hydratedSteps, tabId: assertionTabId, sendCommand, values: mergedVariables, runOptions: { variables, substitutions },
+      hydratedSteps, tabId: lastTabId, sendCommand, values: mergedVariables, runOptions: { variables, substitutions },
     });
   }
 

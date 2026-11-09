@@ -8,13 +8,17 @@
 
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
-import { ensureHeadless, inHeadless } from './headless.js';
+import { ensureHeadless, inHeadless, laneProfile, stopHeadless } from './headless.js';
 import { createAdHocSession, destroySession, runInSession, listSessions } from './session.js';
 import { datasetOfTest } from './datasets.js';
+import { loadTest } from './test-store.js';
+import { keptNames } from './server-steps.js';
 import { getRequirement, coverageOf, requirementsOfTest } from './requirements.js';
 
 // The campaigns running now, and whether each was asked to stop.
 const running = new Map();
+// The headless campaigns running now: the Chromes of lanes 2… stop when none is.
+let headlessCampaigns = 0;
 
 export const MAX_CONCURRENCY = 6;
 
@@ -57,22 +61,57 @@ function defaultName(scope, projectId, names) {
 }
 
 /**
+ * The stages of a campaign, checked: each its tests (by name, each in one stage only), run
+ * side by side (`parallel`) or one after the other in their order (`sequential`); one with
+ * `needs_previous` runs only when every test of the stages before it passed.
+ */
+export function checkStages(stages) {
+  if (!Array.isArray(stages) || !stages.length) throw new Error('stages: a list of stages, each with its tests');
+  const seen = new Set();
+  return stages.map((stage, i) => {
+    const tests = Array.isArray(stage?.tests) ? stage.tests.map(String) : [];
+    if (!tests.length) throw new Error(`Stage ${i + 1} has no test`);
+    const mode = stage.mode ?? 'parallel';
+    if (!['parallel', 'sequential'].includes(mode)) throw new Error(`Stage ${i + 1}: mode is "parallel" or "sequential", not "${mode}"`);
+    for (const name of tests) {
+      if (seen.has(name)) throw new Error(`"${name}" is in two stages: a test runs once in a campaign`);
+      seen.add(name);
+      if (!db.prepare('SELECT 1 FROM tests WHERE name = ?').get(name)) throw new Error(`No test "${name}"`);
+    }
+    return {
+      ...(stage.name?.trim() ? { name: stage.name.trim() } : {}),
+      mode, tests, needs_previous: i > 0 && stage.needs_previous === true,
+    };
+  });
+}
+
+/**
  * Start a campaign: its tests replayed `concurrency` at a time, each in a new window closed
- * after — of the headless Chrome with `headless` (lib/headless.js), started if it is not.
+ * after — with `headless`, of a headless Chrome per lane (lib/headless.js), started if it is
+ * not: each lane has its cookies, and its tests run side by side whatever they log in to. In
+ * the user's Chrome, whose windows share its cookies, the tests of a site one of them logs in
+ * to run one at a time (sharedSessions).
+ * With `stages` (checkStages), the tests run stage after stage; the values a test kept
+ * (capture) are given to the tests after it (runCampaign).
  * `sendCommand` is the extension's, unscoped: the campaign runs in a session of its own. The
  * campaign as it starts, and `finished`, settled once its last test ran.
  */
-export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false }, { sendCommand }) {
-  const scope = tests?.length ? { tests: [...new Set(tests)] }
+export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false, stages = null }, { sendCommand }) {
+  const staged = stages?.length ? checkStages(stages) : null;
+  if (staged) tests = staged.flatMap((stage) => stage.tests);
+  const scope = tests?.length ? { tests: [...new Set(tests)], ...(staged ? { stages: staged } : {}) }
     : requirement ? { requirement: getRequirement(requirement)?.key ?? String(requirement) }
       : { project_id: projectId };
   const names = testsOfScope({ tests, requirement, projectId });
   if (!names.length) throw new Error('No test to run: none in that scope');
+  // Without stages, the tests are one stage, side by side.
+  const plan = staged ?? [{ mode: 'parallel', tests: names, needs_previous: false }];
   // A test bound to a dataset (lib/datasets.js) runs once per row.
-  const entries = names.flatMap((name) => {
+  const entries = plan.flatMap((stage, s) => stage.tests.flatMap((name) => {
     const dataset = datasetOfTest(name);
-    return dataset ? dataset.rows.map((_, i) => ({ test: name, row: i + 1 })) : [name];
-  });
+    const rows = dataset ? dataset.rows.map((_, i) => i + 1) : [null];
+    return rows.map((row) => (staged ? { test: name, ...(row ? { row } : {}), stage: s } : row ? { test: name, row } : name));
+  }));
   const lanes = Math.min(Math.max(1, Math.floor(Number(concurrency)) || 3), MAX_CONCURRENCY);
   // Chosen tests all of one project belong to it: the campaign is listed with the project's.
   const project = projectId ?? (scope.requirement ? getRequirement(scope.requirement).project_id : projectOfTests(names));
@@ -83,58 +122,211 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
     version?.trim() || null, JSON.stringify(entries), lanes, headless ? 1 : 0);
   const state = { stop: false };
   running.set(id, state);
-  log(`Campaign #${id} started: ${entries.length} run(s) of ${names.length} test(s), ${lanes} at a time${version ? `, version ${version}` : ''}`);
-  const finished = runCampaign(id, entries.map(entryOf), lanes, state, headless ? inHeadless(sendCommand) : sendCommand, headless)
+  log(`Campaign #${id} started: ${entries.length} run(s) of ${names.length} test(s), ${lanes} at a time${staged ? `, in ${staged.length} stage(s)` : ''}${version ? `, version ${version}` : ''}`);
+  const finished = runCampaign(id, plan, entries.map(entryOf), lanes, state, sendCommand, headless)
     .catch((err) => log(`Campaign #${id} failed: ${err.message}`))
     .finally(() => running.delete(id));
   return { campaign: getCampaign(id), finished };
 }
 
-/** A campaign's entry: a test, or a row of the dataset of one. */
+/**
+ * Stages proposed for `names`: a test using a value another one keeps (capture) runs in a stage
+ * after it, only if it passed; the others side by side in the first. Without such a value, one
+ * stage. A stage of one test is sequential.
+ */
+export function proposeStages(names) {
+  const tests = [...new Set(names)].map((name) => loadTest(name)).filter(Boolean);
+  const keeper = new Map();
+  for (const test of tests) for (const kept of keptNames(test.steps)) if (!keeper.has(kept)) keeper.set(kept, test.name);
+  const needs = new Map(tests.map((test) => {
+    const own = new Set([...Object.keys(test.variables ?? {}), ...keptNames(test.steps)]);
+    const used = new Set([...JSON.stringify(test.steps).matchAll(/\{\{\s*([A-Za-z_]\w*)/g)].map((m) => m[1]));
+    return [test.name, new Set([...used].filter((v) => !own.has(v) && keeper.has(v)).map((v) => keeper.get(v)).filter((n) => n !== test.name))];
+  }));
+  const stageOf = new Map();
+  const depth = (name, path = new Set()) => {
+    if (stageOf.has(name)) return stageOf.get(name);
+    if (path.has(name)) return 0; // a cycle: not ordered
+    path.add(name);
+    const d = Math.max(-1, ...[...needs.get(name) ?? []].map((n) => depth(n, path))) + 1;
+    path.delete(name);
+    stageOf.set(name, d);
+    return d;
+  };
+  for (const test of tests) depth(test.name);
+  const count = Math.max(0, ...stageOf.values()) + 1;
+  return Array.from({ length: count }, (_, i) => {
+    const inIt = tests.map((t) => t.name).filter((name) => stageOf.get(name) === i);
+    return { mode: inIt.length > 1 ? 'parallel' : 'sequential', tests: inIt, needs_previous: i > 0 };
+  }).filter((stage) => stage.tests.length);
+}
+
+// A field a password is typed into, by its selector.
+const PASSWORD_FIELD = /pass(word)?|pwd|mot.?de.?passe|passwort|contrase/i;
+
+/** Whether a test logs in: it types a secret ({{secret.NAME}}), or into a password field. */
+export function logsIn(steps) {
+  return (steps ?? []).some((step) => step.command === 'fill'
+    && (String(step.params?.value ?? '').includes('{{secret.') || PASSWORD_FIELD.test(String(step.params?.selector ?? ''))));
+}
+
+const originOf = (url) => { try { return new URL(url).origin; } catch { return null; } };
+
+/** The site a test plays on: where it first goes, else its project's base URL; null if neither says. */
+function siteOf(test) {
+  const first = test.steps?.find((step) => step.command === 'navigate' && step.params?.url && !step.params.url.includes('{{'));
+  const base = test.project_id ? db.prepare('SELECT base_url FROM projects WHERE id = ?').get(test.project_id)?.base_url : null;
+  return (first && originOf(first.params.url)) || (base && originOf(base)) || null;
+}
+
+/**
+ * The tests that cannot run side by side: those of a site one of them logs in to. The windows
+ * of one Chrome share its cookies: a test logging in as a manager logged out the one logged in
+ * as an employee next to it, and both failed. Per site, its tests — two or more.
+ */
+export function sharedSessions(names) {
+  const sites = new Map();
+  for (const name of new Set(names)) {
+    const test = loadTest(name);
+    if (!test) continue;
+    const site = siteOf(test) ?? 'a site not known';
+    const group = sites.get(site) ?? { site, tests: [], logsIn: false };
+    group.tests.push(name);
+    group.logsIn ||= logsIn(test.steps);
+    sites.set(site, group);
+  }
+  return [...sites.values()].filter((g) => g.logsIn && g.tests.length > 1).map(({ site, tests }) => ({ site, tests }));
+}
+
+/** A campaign's entry: a test, or a row of the dataset of one; the stage it runs in. */
 function entryOf(entry) {
-  return typeof entry === 'string' ? { name: entry, row: null } : { name: entry.test, row: entry.row ?? null };
+  return typeof entry === 'string' ? { name: entry, row: null, stage: 0 } : { name: entry.test, row: entry.row ?? null, stage: entry.stage ?? 0 };
 }
 
 /** How a run of a campaign is told apart: its test, and its row when it plays one. */
 export const labelOf = ({ name, row }) => (row ? `${name} [row ${row}]` : name);
 
-async function runCampaign(id, entries, lanes, state, dispatch, headless) {
+async function runCampaign(id, plan, entries, lanes, state, dispatch, headless) {
   const { executeTest } = await import('./test-execute.js');
+  // As many lanes as tests to run at once, at most.
+  const widest = Math.max(1, ...plan.map((stage, s) => (stage.mode === 'parallel' ? entries.filter((e) => e.stage === s).length : 1)));
+  lanes = Math.max(1, Math.min(lanes, widest));
   if (headless) {
+    headlessCampaigns++;
     // No headless Chrome to run in: every test is told why it did not run.
     try {
-      await ensureHeadless();
+      await ensureHeadless(lanes);
     } catch (err) {
       for (const entry of entries) noteError(id, labelOf(entry), `Not run: ${err.message}`);
       entries = [];
     }
   }
   const session = createAdHocSession(`campaign-${id}`);
-  const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, session.scope(params), ...rest);
-  let next = 0;
-  const lane = async () => {
-    while (next < entries.length && !state.stop) {
-      const entry = entries[next++];
-      let tabId = null;
-      try {
-        const result = await executeTest(entry.name, null, null, null, true, sendCommand, 'campaign', null, null, { campaignId: id, ...(entry.row ? { row: entry.row } : {}) });
-        tabId = result.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
-      } catch (err) {
-        tabId = err.tabId ?? null;
-        // A failed run is kept with its execution; one that never started is told here.
-        if (!err.executionId) noteError(id, labelOf(entry), err.message);
-      }
-      if (tabId) await sendCommand(undefined, 'close_window', { tabId, liveSessions: listSessions().map((s) => s.id) }).catch(() => {});
-    }
+  // The commands of lane `n`: to its own headless Chrome, or to the user's.
+  const commandsOf = (n) => {
+    const to = headless ? inHeadless(dispatch, laneProfile(n)) : dispatch;
+    return (profile, command, params, ...rest) => to(profile, command, session.scope(params), ...rest);
   };
+  // The values tests kept (capture), given to the tests after them that do not make their own.
+  const kept = {};
+  const givenTo = (name, values) => {
+    const test = loadTest(name);
+    const own = new Set([...Object.keys(test?.variables ?? {}), ...keptNames(test?.steps)]);
+    const given = Object.fromEntries(Object.entries(values).filter(([key]) => !own.has(key)));
+    return Object.keys(given).length ? given : null;
+  };
+  const keep = (name, values) => {
+    if (!values) return;
+    for (const key of keptNames(loadTest(name)?.steps)) if (values[key] !== undefined) kept[key] = values[key];
+  };
+
+  /** Plays the entries of one stage, `width` at a time. True when they all passed. */
+  const playStage = async (stageEntries, width, snapshot) => {
+    // In the user's Chrome, the tests of a site one of them logs in to run one at a time; the
+    // others, side by side. Each headless lane has cookies of its own.
+    const siteOfTest = new Map(width > 1 && !headless ? sharedSessions(stageEntries.map((e) => e.name)).flatMap((g) => g.tests.map((name) => [name, g.site])) : []);
+    const pending = [...stageEntries];
+    const busy = new Set();
+    let wake = [];
+    let allPassed = true;
+    const take = async () => {
+      for (;;) {
+        if (state.stop || !pending.length) return null;
+        const i = pending.findIndex((e) => !busy.has(siteOfTest.get(e.name)));
+        if (i >= 0) {
+          const [entry] = pending.splice(i, 1);
+          if (siteOfTest.has(entry.name)) busy.add(siteOfTest.get(entry.name));
+          return entry;
+        }
+        await new Promise((resolve) => wake.push(resolve));
+      }
+    };
+    const done = (entry) => {
+      busy.delete(siteOfTest.get(entry.name));
+      const waiting = wake;
+      wake = [];
+      for (const resolve of waiting) resolve();
+    };
+    const lane = async (n) => {
+      const sendCommand = commandsOf(n);
+      for (let entry = await take(); entry; entry = await take()) {
+        let tabId = null;
+        // Side by side, the values kept before the stage; one after the other, those kept so far.
+        const variables = givenTo(entry.name, snapshot ?? kept);
+        try {
+          const result = await executeTest(entry.name, variables, null, null, true, sendCommand, 'campaign', null, null, { campaignId: id, ...(entry.row ? { row: entry.row } : {}) });
+          tabId = result.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
+          keep(entry.name, result.values);
+        } catch (err) {
+          allPassed = false;
+          tabId = err.tabId ?? null;
+          keep(entry.name, err.values);
+          // A failed run is kept with its execution; one that never started is told here.
+          if (!err.executionId) noteError(id, labelOf(entry), err.message);
+        }
+        if (tabId) await sendCommand(undefined, 'close_window', { tabId, liveSessions: listSessions().map((s) => s.id) }).catch(() => {});
+        done(entry);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(width, stageEntries.length) }, (_, i) => lane(i + 1)));
+    return allPassed && !pending.length;
+  };
+
   try {
-    await runInSession(session, {}, () => Promise.all(Array.from({ length: Math.min(lanes, entries.length) }, lane)));
+    await runInSession(session, {}, async () => {
+      let passedSoFar = true;
+      for (let s = 0; s < plan.length && !state.stop; s++) {
+        const stage = plan[s];
+        const stageEntries = entries.filter((e) => e.stage === s);
+        if (!stageEntries.length) continue;
+        if (stage.needs_previous && !passedSoFar) {
+          for (const entry of stageEntries) noteSkip(id, labelOf(entry), `not run: ${stageName(plan, s - 1)} did not pass`);
+          passedSoFar = false;
+          continue;
+        }
+        const parallel = stage.mode === 'parallel';
+        const passed = await playStage(stageEntries, parallel ? lanes : 1, parallel ? { ...kept } : null);
+        passedSoFar &&= passed;
+      }
+    });
   } finally {
     destroySession(session.id);
+    if (headless && --headlessCampaigns === 0) {
+      await stopHeadless({ from: 2 }).catch((err) => log(`Campaign #${id}: the headless Chromes of its lanes did not stop: ${err.message}`));
+    }
     db.prepare(`UPDATE campaigns SET status = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
       .run(state.stop ? 'stopped' : 'done', id);
     log(`Campaign #${id} ${state.stop ? 'stopped' : 'done'}`);
   }
+}
+
+/** How a stage is called: its name, else its number. */
+const stageName = (plan, s) => (plan[s]?.name ? `the stage "${plan[s].name}"` : `stage ${s + 1}`);
+
+function noteSkip(id, label, why) {
+  const skips = parseJson(db.prepare('SELECT skips FROM campaigns WHERE id = ?').get(id)?.skips) ?? {};
+  skips[label] = why;
+  db.prepare('UPDATE campaigns SET skips = ? WHERE id = ?').run(JSON.stringify(skips), id);
 }
 
 function noteError(id, name, message) {
@@ -160,20 +352,23 @@ export function closeInterruptedCampaigns() {
 /** Where each test of a campaign stands, from its run in the campaign. */
 function testsOf(row) {
   const errors = parseJson(row.errors) ?? {};
+  const skips = parseJson(row.skips) ?? {};
   const runs = new Map(db.prepare(
     `SELECT id, test_name, data_row, status, failed_step, total_steps, error, duration_ms, triage, assertions_total, assertions_failed
      FROM test_executions WHERE campaign_id = ? ORDER BY id`
   ).all(row.id).map((run) => [labelOf({ name: run.test_name, row: run.data_row }), run]));
   const live = running.has(row.id);
   return parseJson(row.tests).map((entry) => {
-    const { name, row: dataRow } = entryOf(entry);
+    const { name, row: dataRow, stage } = entryOf(entry);
     const label = labelOf({ name, row: dataRow });
     const run = runs.get(label);
     const triage = parseJson(run?.triage);
     const status = run ? ({ success: 'passed', failed: 'failed' }[run.status] ?? 'running')
-      : errors[label] ? 'error' : live ? 'pending' : 'skipped';
+      : errors[label] ? 'error' : skips[label] ? 'skipped' : live ? 'pending' : 'skipped';
     return {
-      name, row: dataRow, label, status, execution_id: run?.id ?? null, duration_ms: run?.duration_ms ?? null,
+      name, row: dataRow, label, stage, status, execution_id: run?.id ?? null, duration_ms: run?.duration_ms ?? null,
+      // Why it did not run: the campaign stopped, or a stage before it did not pass.
+      ...(status === 'skipped' ? { skipped_because: skips[label] ?? 'not run: the campaign was stopped' } : {}),
       failed_step: run?.failed_step ?? null, total_steps: run?.total_steps ?? null,
       error: status === 'failed' || status === 'error' ? (run?.error ?? errors[label]) : null,
       triage: triage ? { cause: triage.cause, confidence: triage.confidence, summary: triage.summary } : null,
@@ -182,6 +377,23 @@ function testsOf(row) {
 }
 
 const STATUSES = ['passed', 'failed', 'error', 'running', 'pending', 'skipped'];
+
+/**
+ * The stages of a campaign run in stages, each with where it stands: passed (all its tests),
+ * failed (one of them failed or could not run), skipped (none ran), running, pending (not
+ * started yet); null without.
+ */
+function stagesOf(stages, runs) {
+  if (!stages?.length) return null;
+  return stages.map((stage, s) => {
+    const its = runs.filter((t) => t.stage === s);
+    const status = its.every((t) => t.status === 'pending') ? 'pending'
+      : its.some((t) => t.status === 'running' || t.status === 'pending') ? 'running'
+        : its.every((t) => t.status === 'skipped') ? 'skipped'
+        : its.every((t) => t.status === 'passed') ? 'passed' : 'failed';
+    return { ...stage, number: s + 1, status, totals: Object.fromEntries(STATUSES.map((x) => [x, its.filter((t) => t.status === x).length])) };
+  });
+}
 
 /**
  * Where each requirement the campaign's tests check stands, from the campaign's runs: per
@@ -255,6 +467,8 @@ export function getCampaign(id) {
     running: running.has(row.id), totals, total: tests.length,
     duration_ms: row.finished_at ? Date.parse(row.finished_at) - Date.parse(row.created_at) : null,
     changes, requirements: requirementsOf(tests),
+    one_at_a_time: row.concurrency > 1 && !row.headless ? sharedSessions(tests.map((t) => t.name)) : [],
+    stages: stagesOf(parseJson(row.scope)?.stages, tests),
     non_conformities: tests.filter((t) => t.triage?.cause === 'non_conformity').map((t) => t.label),
     runs: tests,
   };
@@ -286,6 +500,13 @@ export function formatCampaign(c) {
   const lines = [
     `Campaign #${c.id} "${c.name}"${c.version ? ` — version ${c.version}` : ''} — ${c.running ? 'RUNNING' : c.status}: ${counts} (${c.total} test(s), ${c.concurrency} at a time${c.headless ? ', headless' : ''}${c.duration_ms != null ? `, ${seconds(c.duration_ms)}` : ''})`,
   ];
+  for (const st of c.stages ?? []) {
+    const done = STATUSES.filter((x) => st.totals[x]).map((x) => `${st.totals[x]} ${x}`).join(', ');
+    lines.push(`Stage ${st.number}${st.name ? ` "${st.name}"` : ''} (${st.mode}${st.needs_previous ? ', only if the stages before passed' : ''}) — ${st.status}: ${done} — ${st.tests.join(', ')}`);
+  }
+  for (const g of c.one_at_a_time ?? []) {
+    lines.push(`One at a time: the ${g.tests.length} tests of ${g.site}, which log in there (the windows of one Chrome share its cookies)`);
+  }
   if (c.changes) {
     const { since, regressed, fixed } = c.changes;
     lines.push(`Since campaign #${since.id}${since.version ? ` (version ${since.version})` : ''}: ${regressed.length ? `REGRESSED ${regressed.join(', ')}` : 'nothing regressed'}${fixed.length ? `; fixed ${fixed.join(', ')}` : ''}`);
@@ -332,7 +553,7 @@ export function junitReport(c) {
     const body = t.status === 'failed'
       ? `\n      <failure message="${xml(message)}" type="${xml(t.triage?.cause ?? 'failed')}">${xml([t.triage && `${t.triage.cause} (${t.triage.confidence}): ${t.triage.summary}`, t.error].filter(Boolean).join('\n\n'))}</failure>`
       : t.status === 'error' ? `\n      <error message="${xml(message)}"/>`
-        : t.status !== 'passed' ? `\n      <skipped message="${xml(t.status === 'skipped' ? 'not run: the campaign was stopped' : `still ${t.status}`)}"/>` : '';
+        : t.status !== 'passed' ? `\n      <skipped message="${xml(t.status === 'skipped' ? t.skipped_because ?? 'not run: the campaign was stopped' : `still ${t.status}`)}"/>` : '';
     return `    <testcase name="${xml(t.label ?? t.name)}" classname="${xml(c.project ?? 'izitest')}" time="${time(t.duration_ms)}">${properties}${body}${properties || body ? '\n    ' : ''}</testcase>`;
   });
   return [

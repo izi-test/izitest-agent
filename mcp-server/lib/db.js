@@ -350,6 +350,10 @@ export function initDatabase() {
     if (!campaignCols.includes('headless')) {
       db.exec('ALTER TABLE campaigns ADD COLUMN headless INTEGER NOT NULL DEFAULT 0');
     }
+    // Why a test was not run: a stage after one that did not pass (lib/campaigns.js).
+    if (!campaignCols.includes('skips')) {
+      db.exec("ALTER TABLE campaigns ADD COLUMN skips TEXT NOT NULL DEFAULT '{}'");
+    }
   } catch (err) {
     log(`Migration warning (campaigns): ${err.message}`);
   }

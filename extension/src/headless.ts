@@ -4,6 +4,21 @@
 
 export const HEADLESS_PROFILE = 'headless';
 
+const START_PAGE_PROFILE = /[#&]izitest-profile=([A-Za-z0-9_-]+)/;
+
+/**
+ * The profile a headless Chrome is, told by the page it was started on
+ * (data:text/html,headless-2#izitest-profile=headless-2): one per lane of a campaign, each with cookies of
+ * its own. Null when no page tells it.
+ */
+export function profileOfStartPage(urls: Array<string | undefined>): string | null {
+  for (const url of urls) {
+    const found = url ? START_PAGE_PROFILE.exec(url) : null;
+    if (found) return found[1];
+  }
+  return null;
+}
+
 export function isHeadless(userAgent: string = navigator.userAgent): boolean {
   return userAgent.includes('HeadlessChrome');
 }

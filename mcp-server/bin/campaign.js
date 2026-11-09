@@ -10,12 +10,15 @@
 //   node bin/campaign.js --requirement REQ-12 --html reports/campaign.html
 //   node bin/campaign.js --tests login,checkout --concurrency 2
 //   node bin/campaign.js --project 3 --headless      (in the server's Chrome without windows)
+//   node bin/campaign.js --stages stages.json        (the tests in stages: [{ "mode": "sequential",
+//                                                     "tests": ["create_order"] }, { "tests": […],
+//                                                     "needs_previous": true }])
 //
 // The token is read from IZITEST_TOKEN, the server from IZITEST_URL (default
 // http://127.0.0.1:3467). Exit code 0: every test passed; 1: a test failed or did not run;
 // 2: the campaign could not be run.
 
-import { writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 
 const args = process.argv.slice(2);
@@ -42,7 +45,9 @@ function save(file, content) {
 
 try {
   const project = option('project');
+  const stagesFile = option('stages');
   const { campaign: started } = await api('POST', '/api/campaigns', {
+    stages: stagesFile ? JSON.parse(readFileSync(stagesFile, 'utf8')) : undefined,
     project_id: project ? Number(project) : undefined,
     requirement: option('requirement'),
     tests: option('tests')?.split(',').map((t) => t.trim()).filter(Boolean),

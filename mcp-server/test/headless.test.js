@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 import WebSocket from 'ws';
 
-const { chromeArgs, inHeadless, HEADLESS_PROFILE } = await import('../lib/headless.js');
+const { chromeArgs, inHeadless, laneProfile, laneDir, HEADLESS_PROFILE } = await import('../lib/headless.js');
 const { startWebSocketServer, closeWebSocket, sendCommand, waitForProfile, isHeadlessProfile } = await import('../lib/websocket.js');
 
 test('Chrome is started without a window, with this extension only, in a profile of its own', () => {
@@ -21,6 +21,16 @@ test('Chrome is started without a window, with this extension only, in a profile
   assert.ok(args.includes('--disable-extensions-except=/repo/extension/dist'));
   assert.ok(args.includes('--silent-debugger-extension-api'));
   assert.ok(args.includes('--disable-background-timer-throttling'), 'nothing of it is slowed down for being out of sight');
+  assert.equal(args.at(-1), 'data:text/html,headless#izitest-profile=headless', 'its first page tells its extension its profile');
+});
+
+test('a campaign\'s lanes: a Chrome each, in a profile of its own, registering under its name', () => {
+  assert.deepEqual([1, 2, 3].map(laneProfile), ['headless', 'headless-2', 'headless-3']);
+  assert.notEqual(laneDir(2), laneDir(1));
+  assert.match(laneDir(2), /profiles[\\/]headless-2$/);
+  const args = chromeArgs({ profileDir: laneDir(2), profile: laneProfile(2) });
+  assert.ok(args.includes(`--user-data-dir=${laneDir(2)}`));
+  assert.equal(args.at(-1), 'data:text/html,headless-2#izitest-profile=headless-2');
 });
 
 test('a run asked headless sends what names no profile to the headless Chrome, and what names one where it says', async () => {
@@ -68,6 +78,18 @@ test('a command naming no profile goes to a Chrome with windows, even when the h
   await waitForProfile('main', 2000);
   assert.deepEqual(await sendCommand(undefined, 'get_tabs', {}), { answeredBy: 'main' });
   assert.deepEqual(await sendCommand(HEADLESS_PROFILE, 'get_tabs', {}), { answeredBy: HEADLESS_PROFILE }, 'named, it answers');
+
+  // A Chrome stopped while it runs a command: the command fails at once, not at its timeout.
+  const silent = await new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, { origin: 'chrome-extension://izitest' });
+    ws.on('open', () => { ws.send(JSON.stringify({ type: 'register', profileId: 'headless-2', headless: true })); resolve(ws); });
+    ws.on('message', (data) => { if (JSON.parse(data.toString()).type === 'command') ws.close(); });
+  });
+  await waitForProfile('headless-2', 2000);
+  const startedAt = Date.now();
+  await assert.rejects(sendCommand('headless-2', 'replay_sequence', { steps: [] }, 60000), /browser of profile "headless-2" disconnected while it ran replay_sequence/);
+  assert.ok(Date.now() - startedAt < 5000, 'told at once');
+  silent.close();
 
   headless.close();
   main.close();

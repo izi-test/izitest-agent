@@ -9,7 +9,7 @@ import { randomBytes } from 'crypto';
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 import { executeTest } from './tests.js';
-import { sendCommand, broadcastToExtensions, getProfiles, waitForProfileReregister, getClientErrors, clearClientErrors } from './websocket.js';
+import { sendCommand, broadcastToExtensions, getProfiles, waitForProfileReregister, getClientErrors, clearClientErrors, isHeadlessProfile } from './websocket.js';
 import { DebugController, activeDebugControllers } from './debug-controller.js';
 import {
   seedProjectStepDefinitions,
@@ -38,11 +38,11 @@ import {
   describeConnectors, connectorOf, saveConnectorConfig, testConnector, connectorConfig, importFromConnector, sendCoverage, sendResults, sentTo,
 } from './connectors/index.js';
 import { complete, agentName } from './agent/complete.js';
-import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport } from './campaigns.js';
+import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport, proposeStages, testsOfScope } from './campaigns.js';
 import { generateTestCode } from './codegen/index.js';
 import { listSessions } from './session.js';
 import { followRun } from './live.js';
-import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless, HEADLESS_PROFILE } from './headless.js';
+import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless } from './headless.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
 // How long to wait for a reloaded extension to register again. A reload drops the socket
@@ -138,17 +138,18 @@ export async function apiRouter(req, res, url) {
       // Not the headless Chrome's: an extension loaded from its command line that reloads itself
       // stays disabled in its profile, and every later start waits 30 s for it in vain. It is
       // stopped instead, and starts with the new build at the next run (lib/headless.js).
-      if (getProfiles().has(HEADLESS_PROFILE)) {
+      const headlessOnes = [...getProfiles().keys()].filter((id) => isHeadlessProfile(id));
+      if (headlessOnes.length) {
         await stopHeadless().catch((err) => log(`Extension reload: could not stop the headless Chrome: ${err.message}`));
         log('Extension reload: the headless Chrome is stopped, it starts with the new build at the next run');
       }
-      if ([...getProfiles().keys()].every((id) => id === HEADLESS_PROFILE)) {
+      if ([...getProfiles().keys()].every((id) => headlessOnes.includes(id))) {
         log('Extension reload requested, but no extension is connected');
         return json(res, 200, { notified: 0, reloaded: false });
       }
       // Listener first: the extension can be back before this request finishes.
       const reconnected = waitForProfileReregister(RELOAD_RECONNECT_TIMEOUT_MS);
-      const notified = broadcastToExtensions({ type: 'reload_extension' }, { except: [HEADLESS_PROFILE] });
+      const notified = broadcastToExtensions({ type: 'reload_extension' }, { except: headlessOnes });
       const reloaded = await reconnected;
       log(reloaded
         ? `Extension reload confirmed (${notified} profile(s) notified, extension re-registered)`
@@ -755,14 +756,26 @@ export async function apiRouter(req, res, url) {
       return json(res, 200, { campaigns: listCampaigns({ projectId: projectId ? Number(projectId) : undefined }) });
     }
 
-    // POST /api/campaigns — { project_id | requirement | tests, version, name, concurrency }: started, runs on its own
+    // POST /api/campaigns/plan — { project_id | requirement | tests }: its tests, and the stages
+    // proposed for them (a test using a value another keeps after it)
+    if (method === 'POST' && path === '/api/campaigns/plan') {
+      const body = await readBody(req);
+      try {
+        const tests = testsOfScope({ tests: Array.isArray(body.tests) ? body.tests : undefined, requirement: body.requirement || undefined, projectId: body.project_id ?? null });
+        return json(res, 200, { tests, stages: proposeStages(tests) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/campaigns — { project_id | requirement | tests | stages, version, name, concurrency }: started, runs on its own
     if (method === 'POST' && path === '/api/campaigns') {
       const body = await readBody(req);
       try {
         const { campaign } = startCampaign({
           name: body.name, tests: Array.isArray(body.tests) ? body.tests : undefined, requirement: body.requirement || undefined,
           projectId: body.project_id ?? null, version: body.version ?? null, concurrency: body.concurrency ?? 3,
-          headless: body.headless === true,
+          headless: body.headless === true, stages: Array.isArray(body.stages) ? body.stages : null,
         }, { sendCommand });
         return json(res, 201, { campaign });
       } catch (err) {

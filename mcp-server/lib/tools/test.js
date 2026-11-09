@@ -322,7 +322,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
   server.tool(
     'run_test',
-    'RUN a saved test autonomously inside the browser extension. The extension will execute ALL steps in one incredibly fast sequence without LLM intervention. Supports dynamic variables: pass "variables" to override {{placeholders}} recorded in fill steps and list/box item selections. Use list_tests to see available variables for each test. Use "substitutions" for raw find-and-replace across all params. After execution, assertions are evaluated and reported. Set debug=true to enable step-by-step debug mode with breakpoints — use debug_action to control the paused execution.',
+    'RUN a saved test autonomously inside the browser extension. The extension will execute ALL steps in one incredibly fast sequence without LLM intervention. Supports dynamic variables: pass "variables" to override {{placeholders}} recorded in fill steps and list/box item selections. Use list_tests to see available variables for each test. Use "substitutions" for raw find-and-replace across all params. Each assertion is checked where it is in the test, on the page the steps before it led to (one that fails there stops the run), and reported. Set debug=true to enable step-by-step debug mode with breakpoints — use debug_action to control the paused execution.',
     {
       name: z.string().describe('Name of the test to run'),
       variables: z.record(z.string()).optional().describe('Template variables: replaces {{key}} placeholders in params. For list/box items, pass the index (e.g. "2") or text content to select.'),

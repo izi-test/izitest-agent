@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.IZITEST_DB_PATH = join(await mkdtemp(join(tmpdir(), 'campaigns-')), 'test.db');
+// The headless Chromes' profiles, and the pids of those left running, are this test's own.
+process.env.IZITEST_HOME = await mkdtemp(join(tmpdir(), 'campaigns-home-'));
 // A failing assertion is told at once: these tests are about campaigns, not about waiting (test/assertion-wait.test.js).
 process.env.IZITEST_ASSERT_TIMEOUT_MS = '0';
 const { db, initDatabase } = await import('../lib/db.js');
@@ -176,4 +178,135 @@ test('campaigns left running by a stopped server are marked interrupted', () => 
   const interrupted = getCampaign(id);
   assert.equal(interrupted.status, 'interrupted');
   assert.deepEqual(interrupted.runs.map((t) => t.status), ['skipped']);
+});
+
+test('the tests of a site one of them logs in to run one at a time; the others side by side', async () => {
+  const at = (site, name, steps) => saveTest({ name, variables: {}, steps: [{ command: 'navigate', params: { url: `https://${site}/start` } }, ...steps] });
+  const login = (password) => [{ command: 'fill', params: { selector: '[data-testid=login-password]', value: password } }, { command: 'click', params: { selector: '#go' } }];
+  at('notes.test', 'notes_employee', login('typed-here'));
+  at('notes.test', 'notes_manager', [{ command: 'fill', params: { selector: '#pwd', value: 'not-a-secret' } }]);
+  at('notes.test', 'notes_home', []);
+  at('blog.test', 'blog_a', []);
+  at('blog.test', 'blog_b', []);
+  const names = ['notes_employee', 'notes_manager', 'notes_home', 'blog_a', 'blog_b'];
+  const { sharedSessions, logsIn } = await import('../lib/campaigns.js');
+  assert.deepEqual(sharedSessions(names), [{ site: 'https://notes.test', tests: ['notes_employee', 'notes_manager', 'notes_home'] }]);
+  assert.equal(logsIn([{ command: 'fill', params: { selector: '#email', value: 'a@b.c' } }]), false);
+  assert.equal(logsIn([{ command: 'fill', params: { selector: '#code', value: '{{secret.PIN}}' } }]), true, 'a secret typed');
+
+  // How many replays of each site run at once, at most.
+  const active = new Map();
+  const most = new Map();
+  const { calls } = extension();
+  const sendCommand = async (_profile, command, params) => {
+    calls.push({ command, params });
+    if (command !== 'replay_sequence') return {};
+    const site = new URL(params.steps[0].params.url).host;
+    active.set(site, (active.get(site) ?? 0) + 1);
+    most.set(site, Math.max(most.get(site) ?? 0, active.get(site)));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    active.set(site, active.get(site) - 1);
+    return { results: params.steps.map((s, i) => ({ step: i + 1, command: s.command, status: 'success', tabId: 500 })), durationMs: 20 };
+  };
+  const { campaign, finished } = startCampaign({ tests: names, concurrency: 3 }, { sendCommand });
+  await finished;
+  const done = getCampaign(campaign.id);
+  assert.deepEqual(done.runs.map((t) => t.status), ['passed', 'passed', 'passed', 'passed', 'passed']);
+  assert.equal(most.get('notes.test'), 1, 'one notes test at a time');
+  assert.equal(most.get('blog.test'), 2, 'the blog tests side by side');
+  assert.match(formatCampaign(done), /One at a time: the 3 tests of https:\/\/notes\.test, which log in there/);
+});
+
+test('headless, each lane has a Chrome of its own: the tests of a site one logs in to run side by side', async () => {
+  // The headless Chromes of three lanes, connected: their extensions stood in for.
+  const { createServer } = await import('node:net');
+  const { default: WebSocket } = await import('ws');
+  const { startWebSocketServer, closeWebSocket } = await import('../lib/websocket.js');
+  const port = await new Promise((resolve) => { const srv = createServer().listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => resolve(p)); }); });
+  startWebSocketServer(port);
+  const sockets = await Promise.all(['headless', 'headless-2', 'headless-3'].map((profileId) => new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, { origin: 'chrome-extension://izitest' });
+    ws.on('open', () => { ws.send(JSON.stringify({ type: 'register', profileId, headless: true })); resolve(ws); });
+  })));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  const names = ['notes_employee', 'notes_manager', 'notes_home'];
+  const lanesUsed = new Set();
+  let active = 0;
+  let most = 0;
+  const sendCommand = async (profile, command, params) => {
+    if (command !== 'replay_sequence') return {};
+    lanesUsed.add(profile);
+    most = Math.max(most, ++active);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    active--;
+    return { results: params.steps.map((s, i) => ({ step: i + 1, command: s.command, status: 'success', tabId: 600 })), durationMs: 30 };
+  };
+  const { campaign, finished } = startCampaign({ tests: names, concurrency: 3, headless: true }, { sendCommand });
+  await finished;
+  const done = getCampaign(campaign.id);
+  assert.deepEqual(done.runs.map((t) => t.status), ['passed', 'passed', 'passed']);
+  assert.deepEqual([...lanesUsed].sort(), ['headless', 'headless-2', 'headless-3'], 'each lane in its own Chrome');
+  assert.equal(most, 3, 'side by side');
+  assert.deepEqual(done.one_at_a_time, []);
+  for (const ws of sockets) ws.close();
+  closeWebSocket();
+});
+
+test('stages: one after the other; a value kept is given to the tests after; a stage after a failure, skipped', async () => {
+  const { checkStages, proposeStages } = await import('../lib/campaigns.js');
+  const shop = (name, steps) => saveTest({ name, variables: {}, steps: [{ command: 'navigate', params: { url: 'https://shop.test/' } }, ...steps] });
+  shop('st_order', [{ command: 'capture', params: { selector: '#order', name: 'order', pattern: '#(\\d+)' } }]);
+  saveTest({ name: 'st_track', variables: {}, steps: [{ command: 'navigate', params: { url: 'https://shop.test/orders/{{order}}' } }] });
+  shop('st_home', []);
+  shop('st_broken', [{ command: 'assert', params: {}, assertion: { type: 'text_contains', selector: '#ko', expected: 'Welcome' } }]);
+
+  assert.throws(() => checkStages([]), /a list of stages/);
+  assert.throws(() => checkStages([{ tests: [] }]), /Stage 1 has no test/);
+  assert.throws(() => checkStages([{ tests: ['st_home'] }, { tests: ['st_home'] }]), /"st_home" is in two stages/);
+  assert.throws(() => checkStages([{ tests: ['st_home'], mode: 'random' }]), /"parallel" or "sequential"/);
+  assert.throws(() => checkStages([{ tests: ['nope'] }]), /No test "nope"/);
+  assert.equal(checkStages([{ tests: ['st_home'], needs_previous: true }])[0].needs_previous, false, 'the first stage has none before it');
+
+  // Proposed: the test using the order number after the one keeping it, only if it passed.
+  assert.deepEqual(proposeStages(['st_track', 'st_order', 'st_home']), [
+    { mode: 'parallel', tests: ['st_order', 'st_home'], needs_previous: false },
+    { mode: 'sequential', tests: ['st_track'], needs_previous: true },
+  ]);
+  assert.deepEqual(proposeStages(['st_home', 'st_broken']), [{ mode: 'parallel', tests: ['st_home', 'st_broken'], needs_previous: false }]);
+
+  const order = [];
+  const sendCommand = async (_profile, command, params) => {
+    if (command === 'replay_sequence') {
+      order.push(params.steps[0].params.url);
+      return { results: params.steps.map((s, i) => ({ step: i + 1, command: s.command, status: 'success', tabId: 700 })), durationMs: 5 };
+    }
+    if (command === 'execute_js') {
+      if (params.code.includes('#order')) return { result: 'Order #4521 confirmed' };
+      return { result: { value: params.code.includes('#ok') ? 'Welcome' : 'Oops', pageUrl: 'https://shop.test/' } };
+    }
+    return {};
+  };
+  const first = startCampaign({ stages: [
+    { name: 'Order', mode: 'sequential', tests: ['st_order'] },
+    { mode: 'parallel', tests: ['st_track', 'st_home'], needs_previous: true },
+  ] }, { sendCommand });
+  await first.finished;
+  const done = getCampaign(first.campaign.id);
+  assert.deepEqual(done.runs.map((t) => [t.name, t.stage, t.status]), [['st_order', 0, 'passed'], ['st_track', 1, 'passed'], ['st_home', 1, 'passed']]);
+  assert.equal(order[0], 'https://shop.test/', 'the first stage first');
+  assert.ok(order.includes('https://shop.test/orders/4521'), 'the order number kept by the first stage');
+  assert.deepEqual(done.stages.map((st) => [st.number, st.status, st.mode]), [[1, 'passed', 'sequential'], [2, 'passed', 'parallel']]);
+  assert.deepEqual(done.scope.stages.map((st) => st.tests), [['st_order'], ['st_track', 'st_home']], 'kept to run again');
+  assert.match(formatCampaign(done), /Stage 1 "Order" \(sequential\) — passed: 1 passed — st_order\nStage 2 \(parallel, only if the stages before passed\) — passed: 2 passed — st_track, st_home/);
+
+  const second = startCampaign({ stages: [
+    { tests: ['st_broken'] },
+    { tests: ['st_home'], needs_previous: true },
+  ] }, { sendCommand });
+  await second.finished;
+  const skipped = getCampaign(second.campaign.id);
+  assert.deepEqual(skipped.runs.map((t) => [t.name, t.status, t.skipped_because ?? null]), [['st_broken', 'failed', null], ['st_home', 'skipped', 'not run: stage 1 did not pass']]);
+  assert.deepEqual(skipped.stages.map((st) => st.status), ['failed', 'skipped']);
+  assert.match(junitReport(skipped), /<skipped message="not run: stage 1 did not pass"\/>/);
 });

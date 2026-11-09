@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { Layers, ArrowLeft, Square, RotateCcw, Download, ExternalLink, Trash2, FlaskConical, Loader2, Play, Search, ChevronRight, AlertTriangle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Layers, ArrowLeft, Square, RotateCcw, Download, ExternalLink, Trash2, FlaskConical, Loader2, Play, Search, ChevronRight, AlertTriangle, Wand2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
   campaignsApi, useGetCampaignsQuery, useGetCampaignQuery, useStartCampaignMutation, useStopCampaignMutation, useDeleteCampaignMutation,
-  type CampaignInput,
+  usePlanCampaignMutation, type CampaignInput,
 } from '../store/services/campaignsApi';
 import { useGetRequirementsQuery } from '../store/services/requirementsApi';
 import { useGetTestsQuery } from '../store/services/testsApi';
@@ -15,12 +15,13 @@ import { withScope } from '../scope';
 import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
 import { CampaignWriteBack } from './CampaignWriteBack';
+import { StageEditor } from './StageEditor';
 import { HeadlessSwitch } from './HeadlessSwitch';
 import { useRunHeadless } from '../headless';
 import { Card, Dialog, EmptyState, KeyChip, Menu, PageHeader, Pill, ProjectChip, ResultBar, Segmented, StatusPill } from './ui';
 import { dateTime, formatDuration } from '../format';
 import { CAUSE_LABELS } from '../triage-labels';
-import type { Campaign, CampaignTestStatus } from '../types';
+import type { Campaign, CampaignRun, CampaignStage, CampaignTestStatus } from '../types';
 
 // Campaigns: tests replayed together for a version of the app (mcp-server/lib/campaigns.js) —
 // a project's, a requirement's, or a chosen list —, a few at a time, each in its own window.
@@ -36,6 +37,7 @@ const errorOf = (err: unknown) => (err as { data?: { error?: string } })?.data?.
 
 /** What a campaign ran: a project, a requirement, or tests. */
 function scopeLabel(c: Pick<Campaign, 'scope' | 'project'>) {
+  if (c.scope.stages?.length) return `${c.scope.tests?.length ?? 0} tests in ${c.scope.stages.length} stage${c.scope.stages.length === 1 ? '' : 's'}`;
   if (c.scope.requirement) return `Requirement ${c.scope.requirement}`;
   if (c.scope.project_id) return `Project ${c.project ?? `#${c.scope.project_id}`}`;
   return `${c.scope.tests?.length ?? 0} chosen test${c.scope.tests?.length === 1 ? '' : 's'}`;
@@ -140,6 +142,7 @@ export function CampaignsPage() {
 }
 
 type ScopeKind = 'project' | 'requirement' | 'tests';
+type Ordering = 'together' | 'stages';
 
 function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | null; onStarted: (id: number) => void; onCancel: () => void }) {
   const { data: projects = [] } = useGetProjectsQuery(undefined);
@@ -155,18 +158,45 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
   const [concurrency, setConcurrency] = useState(3);
   const [error, setError] = useState<string | null>(null);
   const [start, { isLoading }] = useStartCampaignMutation();
+  const [plan, { isLoading: planning }] = usePlanCampaignMutation();
+  const [ordering, setOrdering] = useState<Ordering>('together');
+  const [stages, setStages] = useState<CampaignStage[] | null>(null);
   const headless = useRunHeadless();
 
   const scope: CampaignInput | null = kind === 'project' ? (project ? { project_id: project } : null)
     : kind === 'requirement' ? (requirement ? { requirement } : null)
       : chosen.length ? { tests: chosen } : null;
+  const scopeKey = JSON.stringify(scope);
+
+  // In stages: those proposed for the tests chosen, each time they change (a test using a
+  // value another one keeps runs after it).
+  const propose = async () => {
+    if (!scope) return setStages(null);
+    try {
+      setStages((await plan(scope).unwrap()).stages);
+    } catch (err) {
+      setError(errorOf(err));
+    }
+  };
+  useEffect(() => {
+    if (ordering === 'stages') propose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordering, scopeKey]);
+
+  // In stages, the campaign is of tests: named after what they were chosen from.
+  const defaultName = kind === 'project' ? projects.find((p) => p.id === project)?.name
+    : kind === 'requirement' ? (() => { const r = requirements.find((x) => x.key === requirement); return r ? `${r.key} — ${r.title}` : undefined; })() : undefined;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!scope) return;
     setError(null);
+    const staged = ordering === 'stages' && stages?.length;
     try {
-      const { campaign } = await start({ ...scope, version: version.trim() || undefined, name: name.trim() || undefined, concurrency, headless }).unwrap();
+      const { campaign } = await start({
+        ...(staged ? { stages: stages! } : scope), version: version.trim() || undefined,
+        name: name.trim() || (staged ? defaultName : undefined) || undefined, concurrency, headless,
+      }).unwrap();
       onStarted(campaign.id);
     } catch (err) {
       setError(errorOf(err));
@@ -209,6 +239,27 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
               </label>
             ))}
           </div>
+        </div>
+      )}
+      {scope && (
+        <div className="field">
+          <span className="field__label">Order</span>
+          <Segmented<Ordering>
+            label="How the tests run" value={ordering} onChange={setOrdering}
+            options={[{ value: 'together', label: 'All together' }, { value: 'stages', label: 'In stages' }]}
+          />
+          {ordering === 'together' ? (
+            <p className="field__hint">Side by side, {concurrency} at a time, in no set order.</p>
+          ) : (
+            <>
+              <p className="field__hint">
+                Stage after stage: a set-up first, the tests that use what it made after it. A value a test keeps (capture) is given
+                to the tests after it. Keep tests independent when they can be.
+                {' '}<button type="button" className="link-btn" onClick={propose} disabled={planning}><Wand2 size={12} /> Propose again</button>
+              </p>
+              {planning && !stages ? <p className="muted">Proposing…</p> : stages && <StageEditor stages={stages} onChange={setStages} />}
+            </>
+          )}
         </div>
       )}
       <div className="form__row">
@@ -270,8 +321,9 @@ export function CampaignPage({ id }: { id: number }) {
   const again = async () => {
     setError(null);
     try {
-      const scope = c.scope.requirement ? { requirement: c.scope.requirement } : c.scope.project_id ? { project_id: c.scope.project_id } : { tests: c.scope.tests };
-      const { campaign: next } = await start({ ...scope, version: c.version ?? undefined, concurrency: c.concurrency, headless: c.headless }).unwrap();
+      const scope = c.scope.stages?.length ? { stages: c.scope.stages }
+        : c.scope.requirement ? { requirement: c.scope.requirement } : c.scope.project_id ? { project_id: c.scope.project_id } : { tests: c.scope.tests };
+      const { campaign: next } = await start({ ...scope, name: c.scope.stages?.length ? c.name : undefined, version: c.version ?? undefined, concurrency: c.concurrency, headless: c.headless }).unwrap();
       navigate(withScope(`/campaigns/${next.id}`, c.project_id), { replace: true, state: back.state });
     } catch (err) {
       setError(errorOf(err));
@@ -351,20 +403,24 @@ export function CampaignPage({ id }: { id: number }) {
         <div className="table-wrap">
           <table className="table">
             <thead><tr><th>Test</th><th>Status</th><th className="col-num">Duration</th><th>Why</th></tr></thead>
-            <tbody>
-              {c.runs.map((t) => (
-                <tr key={t.label ?? t.name}>
-                  <td><button className="test-link" onClick={() => openTest(t.name)}><FlaskConical size={12} /> {t.label ?? t.name}</button></td>
-                  <td><StatusPill status={t.status} icon={t.status === 'running' ? Loader2 : undefined} /></td>
-                  <td className="col-num cell-muted">{t.duration_ms != null ? formatDuration(t.duration_ms) : '—'}</td>
-                  <td className="why">
-                    {t.error && <div className="why__error">{t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}{t.error.split('\n')[0]}</div>}
-                    {t.triage && <div><strong>{CAUSE_LABELS[t.triage.cause] ?? t.triage.cause}</strong> — {t.triage.summary}</div>}
-                    {!t.error && !t.triage && <span className="cell-muted">—</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
+            {(c.stages ?? [null]).map((stage, s) => {
+              const runs = stage ? c.runs.filter((t) => (t.stage ?? 0) === s) : c.runs;
+              return (
+                <tbody key={s}>
+                  {stage && (
+                    <tr className="stage-row">
+                      <td colSpan={4}>
+                        <span className="stage-card__number">{stage.number}</span>
+                        <strong>{stage.name || `Stage ${stage.number}`}</strong>
+                        <span className="cell-muted"> · {stage.mode === 'parallel' ? 'side by side' : 'one after the other'}{stage.needs_previous ? ' · only if the stages before passed' : ''}</span>
+                        {' '}<StatusPill status={stage.status} icon={stage.status === 'running' ? Loader2 : undefined} />
+                      </td>
+                    </tr>
+                  )}
+                  {runs.map((t) => <RunRow key={t.label ?? t.name} run={t} onOpen={openTest} />)}
+                </tbody>
+              );
+            })}
           </table>
         </div>
       </Card>
@@ -396,6 +452,23 @@ export function CampaignPage({ id }: { id: number }) {
         onConfirm={destroy} onCancel={() => setDeleting(false)}
       />
     </>
+  );
+}
+
+/** A test of a campaign: how it did, and why. */
+function RunRow({ run: t, onOpen }: { run: CampaignRun; onOpen: (name: string) => void }) {
+  return (
+    <tr>
+      <td><button className="test-link" onClick={() => onOpen(t.name)}><FlaskConical size={12} /> {t.label ?? t.name}</button></td>
+      <td><StatusPill status={t.status} icon={t.status === 'running' ? Loader2 : undefined} /></td>
+      <td className="col-num cell-muted">{t.duration_ms != null ? formatDuration(t.duration_ms) : '—'}</td>
+      <td className="why">
+        {t.error && <div className="why__error">{t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}{t.error.split('\n')[0]}</div>}
+        {t.triage && <div><strong>{CAUSE_LABELS[t.triage.cause] ?? t.triage.cause}</strong> — {t.triage.summary}</div>}
+        {t.status === 'skipped' && t.skipped_because && <span className="cell-muted">{t.skipped_because}</span>}
+        {!t.error && !t.triage && !(t.status === 'skipped' && t.skipped_because) && <span className="cell-muted">—</span>}
+      </td>
+    </tr>
   );
 }
 

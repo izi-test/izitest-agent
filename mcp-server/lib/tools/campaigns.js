@@ -22,21 +22,30 @@ export function registerCampaignTools(server, { sendCommand }) {
       'The answer is the report: what passed, what failed and why (the triage), what regressed or was fixed since the last',
       'campaign of the same tests, where each requirement stands criterion by criterion, the non-conformities. It waits for',
       'the end (up to 10 minutes; past that, get_campaign follows it). The dashboard shows it too, with JUnit and HTML reports.',
+      'With stages, the tests run stage after stage — a stage side by side or one test after the other —, and a value a test',
+      'keeps (capture) is given to the tests after it: a test that creates an order, then those that use its number. Keep tests',
+      'independent when they can be (each creates its own data); stages are for what cannot.',
     ].join('\n'),
     {
       project_id: z.number().optional().describe('All the tests of this project'),
       requirement: z.string().optional().describe('The tests linked to this requirement (its key, e.g. "REQ-12")'),
       tests: z.array(z.string()).optional().describe('These tests, by name'),
+      stages: z.array(z.object({
+        name: z.string().optional(),
+        tests: z.array(z.string()).min(1).describe('Its tests, by name: each test in one stage only'),
+        mode: z.enum(['parallel', 'sequential']).optional().describe('parallel (default): side by side, concurrency at a time; sequential: one after the other, in this order'),
+        needs_previous: z.boolean().optional().describe('Runs only if every test of the stages before passed; otherwise its tests are skipped, told why'),
+      })).optional().describe('Instead of project_id, requirement or tests: the tests in stages, run one stage after the other'),
       version: z.string().optional().describe('The version of the app tested (e.g. "1.4.0", a commit): campaigns are compared by it'),
       name: z.string().optional().describe('Default: the project\'s or the requirement\'s name'),
-      concurrency: z.number().int().min(1).max(MAX_CONCURRENCY).optional().describe('Tests run at a time (default 3)'),
+      concurrency: z.number().int().min(1).max(MAX_CONCURRENCY).optional().describe('Tests run at a time (default 3). In the user\'s Chrome, whose windows share its cookies, the tests of a site one of them logs in to still run one at a time; headless, each lane has a Chrome of its own and they run side by side'),
       wait: z.boolean().optional().describe('Wait for the end and answer with the report (default true); false answers at once'),
       headless: z.boolean().optional().describe('Run in the Chrome without windows the server starts (its own profile: no login of the user\'s Chrome), out of the user\'s sight. Installed from the dashboard: Settings → Headless browser'),
     },
-    async ({ project_id, requirement, tests, version, name, concurrency, wait, headless }) => {
+    async ({ project_id, requirement, tests, stages, version, name, concurrency, wait, headless }) => {
       let started;
       try {
-        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true }, { sendCommand });
+        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true, stages: stages ?? null }, { sendCommand });
       } catch (err) {
         return text(err.message, true);
       }

@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Campaign, CampaignSummary, ResultsSend, CoverageSend } from '../../types';
+import type { Campaign, CampaignStage, CampaignSummary, ResultsSend, CoverageSend } from '../../types';
 
 /** What a campaign is started with: a project's tests, a requirement's, or a list. */
 export interface CampaignInput {
@@ -11,6 +11,8 @@ export interface CampaignInput {
   concurrency?: number;
   /** In the Chrome without windows. */
   headless?: boolean;
+  /** Instead of a project, a requirement or tests: the tests in stages. */
+  stages?: CampaignStage[];
 }
 
 // Campaigns: tests replayed together for a version of the app (mcp-server/lib/campaigns.js).
@@ -32,6 +34,10 @@ export const campaignsApi = createApi({
     startCampaign: builder.mutation<{ campaign: Campaign }, CampaignInput>({
       query: (body) => ({ url: 'api/campaigns', method: 'POST', body }),
       invalidatesTags: ['Campaigns'],
+    }),
+    // The tests of a scope, and the stages proposed for them (mcp-server/lib/campaigns.js proposeStages).
+    planCampaign: builder.mutation<{ tests: string[]; stages: CampaignStage[] }, Pick<CampaignInput, 'project_id' | 'requirement' | 'tests'>>({
+      query: (body) => ({ url: 'api/campaigns/plan', method: 'POST', body }),
     }),
     stopCampaign: builder.mutation<{ campaign: Campaign }, number>({
       query: (id) => ({ url: `api/campaigns/${id}/stop`, method: 'POST' }),
@@ -58,6 +64,7 @@ export const {
   useGetCampaignsQuery,
   useGetCampaignQuery,
   useStartCampaignMutation,
+  usePlanCampaignMutation,
   useStopCampaignMutation,
   useDeleteCampaignMutation,
   useSendResultsMutation,

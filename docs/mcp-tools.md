@@ -471,6 +471,23 @@ compare donc les phrases éditées à celles du test :
 Seules les phrases modifiées ou ajoutées doivent correspondre à une step definition : une erreur
 cite leur ligne.
 
+#### Une assertion est vérifiée à sa place
+
+Une assertion suivie d'autres actions est vérifiée là où elle est dans le test, sur la page où les
+étapes d'avant ont mené. Un test peut ainsi vérifier la page d'un employé, puis passer à celle d'un
+manager et la vérifier aussi.
+
+- Le navigateur joue les étapes jusqu'à l'assertion, le serveur la vérifie, puis la suite part dans
+  le même onglet.
+- Une assertion qui échoue à sa place arrête l'exécution là : ce qui suit reposait sur ce qu'elle
+  vérifiait. Elle est l'étape en échec du rapport et du triage.
+- Les assertions placées après la dernière action sont toutes vérifiées sur la dernière page, et
+  chacune est rapportée, comme avant.
+- Le mode debug les vérifie aussi à leur place, pas à pas.
+
+Avant, toutes les assertions étaient vérifiées après la dernière action : une vérification placée
+avant un changement de page lisait la mauvaise page, et échouait.
+
 #### Une assertion attend ce qu'elle vérifie
 
 À l'exécution, une assertion est relue jusqu'à ce qu'elle passe, pendant 5 s au plus, comme
@@ -742,9 +759,9 @@ Deux sortes d'étapes s'exécutent sur le serveur, entre celles que joue le navi
 
 Un test qui en contient est joué par segments : le navigateur joue les étapes jusqu'à la prochaine
 étape serveur, le serveur l'exécute, puis le segment suivant part dans le même onglet avec les valeurs
-gardées. Les assertions, vérifiées à la fin, voient ces valeurs. Une étape serveur qui échoue arrête
+gardées. Les assertions voient les valeurs gardées avant elles. Une étape serveur qui échoue arrête
 l'exécution là. Le mode debug les exécute aussi, pas à pas. Les tests sans étape serveur sont joués
-comme avant, en un seul envoi.
+comme avant, en un seul envoi, sauf une assertion suivie d'actions, vérifiée à sa place.
 
 | Outil | Rôle |
 | :--- | :--- |
@@ -1045,6 +1062,46 @@ dans sa propre fenêtre, fermée après, quelques-uns à la fois (`concurrency`,
 dans une session à la campagne : pas celle de l'agent qui l'a lancée. Un échec est diagnostiqué comme
 au `run_test` ; ces rejeux comptent dans la couverture des exigences (déclencheur `campaign`).
 
+**Par étapes.** Une campagne peut aussi jouer ses tests étape après étape (`stages`) : par exemple
+une préparation, puis les tests qui utilisent ce qu'elle a créé.
+
+- Chaque étape joue ses tests **côte à côte** (`parallel`, `concurrency` à la fois) ou **l'un après
+  l'autre**, dans leur ordre (`sequential`). Une étape commence quand la précédente a fini.
+- Une étape marquée `needs_previous` ne part que si tous les tests des étapes d'avant sont passés.
+  Sinon ses tests sont `skipped`, avec la raison : « not run: the stage "Préparation" did not pass ».
+  Le JUnit la reprend dans son `skipped`.
+- Une valeur qu'un test garde (`capture`) est donnée aux tests qui viennent après lui et qui ne la
+  font pas eux-mêmes. Par exemple, un test crée une commande et garde son numéro ; ceux de l'étape
+  suivante l'ouvrent avec `{{order}}`. Dans une étape côte à côte, les tests reçoivent les valeurs
+  gardées avant l'étape ; l'un après l'autre, celles gardées jusque-là.
+- Une connexion, elle, ne passe pas d'un test à l'autre : chaque test se connecte lui-même.
+- Mieux vaut des tests indépendants, chacun avec ses propres données. Les étapes servent à ce qui ne
+  peut pas l'être.
+- `POST /api/campaigns/plan` (un projet, une exigence ou des tests) propose des étapes : un test qui
+  utilise une valeur gardée par un autre passe dans une étape après lui, `needs_previous`. Sans telle
+  valeur, une seule étape.
+- Dans le tableau de bord, *New campaign → Order → In stages* montre cette proposition ; on y nomme
+  les étapes, on choisit côte à côte ou l'un après l'autre, et on déplace les tests d'une étape à
+  l'autre en les glissant, ou avec leurs flèches. Le rapport groupe les tests par étape, avec l'état
+  de chacune. « Run again » rejoue les mêmes étapes.
+- MCP : `run_campaign(stages: [{ name, tests, mode, needs_previous }])`. CI : `--stages stages.json`.
+
+Un rejeu qui s'arrête de lui-même dit pourquoi : délai dépassé, ou navigateur fermé, arrêté ou
+rechargé pendant qu'il jouait. Dans ce dernier cas, il échoue tout de suite au lieu d'attendre son
+délai.
+
+**Des tests qui se connectent, côte à côte.** Les fenêtres d'un même Chrome partagent ses cookies, mode
+privé compris : un test qui se connecte comme manager déconnecte celui d'à côté, connecté comme employé,
+et les deux échouent.
+
+- **Headless**, chaque voie de la campagne a son propre Chrome sans fenêtre, avec son profil, donc ses
+  cookies. Les tests tournent côte à côte, quoi qu'ils connectent.
+- **Dans le Chrome de l'utilisateur**, les tests d'un site où l'un d'eux se connecte passent un par un ;
+  les autres, côte à côte. Un test se connecte quand il tape un secret (`{{secret.NAME}}`) ou dans un
+  champ de mot de passe. Son site est l'origine de sa première navigation, à défaut l'URL de base de son
+  projet. Le rapport le dit : « One at a time: the 9 tests of http://127.0.0.1:5173, which log in there »
+  (`one_at_a_time` dans l'API).
+
 Le rapport dit :
 - ce qui est passé, ce qui a échoué et pourquoi (la cause du triage) ;
 - **ce qui a régressé** (passait à la dernière campagne des mêmes tests, échoue maintenant) et ce qui a
@@ -1086,7 +1143,10 @@ Pour ne plus les voir du tout, un **Chrome sans fenêtre** : Chrome for Testing 
 n'accepte plus d'extension chargée par la ligne de commande), installé une fois depuis le tableau de bord
 (**Settings → Headless browser → Install**, ~150 Mo dans `~/.izitest/browsers`), lancé avec l'extension
 du dépôt et un profil à lui (`~/.izitest/profiles/headless`). Il démarre au premier rejeu demandé
-headless et s'arrête avec le serveur. Son extension s'annonce comme le profil **`headless`** : une
+headless et s'arrête avec le serveur. Une campagne headless de 3 à la fois en lance deux de plus,
+`headless-2` et `headless-3`, chacun avec son profil (`~/.izitest/profiles/headless-2`, …), arrêtés à la
+fin de la campagne. Chacun apprend son nom de la page où il démarre
+(`data:text/html,headless-2#izitest-profile=headless-2`). Son extension s'annonce comme le profil **`headless`** : une
 commande qui ne nomme pas de profil n'y va **jamais**, même s'il s'est connecté le premier (`list_profiles`
 le signale) ; un agent ne s'en sert qu'en le nommant (`profile: "headless"`). Ses pages voient un Chrome
 ordinaire (sans « HeadlessChrome » dans le user agent).
@@ -1098,7 +1158,7 @@ ordinaire (sans « HeadlessChrome » dans le user agent).
   headless est fermée après.
 - **MCP** : `run_campaign(…, headless: true)`.
 - **CI** : `node mcp-server/bin/campaign.js --project 3 --headless`.
-- **API** : `GET /api/headless` (installé, en cours d'installation, lancé, connecté), `POST
+- **API** : `GET /api/headless` (installé, en cours d'installation, lancé, connecté, les voies connectées), `POST
   /api/headless/install|start|stop` ; `headless: true` dans `POST /api/tests/:name/execute` et `POST
   /api/campaigns`.
 

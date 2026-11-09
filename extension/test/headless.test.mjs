@@ -36,3 +36,11 @@ test('the pages of a headless Chrome are told the usual name of the browser', as
   assert.equal(pageUserAgent(HEADLESS_UA), WINDOWED_UA);
   assert.equal(pageUserAgent(WINDOWED_UA), WINDOWED_UA, 'a Chrome with windows keeps its own');
 });
+
+test('a headless Chrome of a campaign lane is told its profile by the page it started on', async () => {
+  const { profileOfStartPage } = await load();
+  assert.equal(profileOfStartPage(['data:text/html,headless-2#izitest-profile=headless-2']), 'headless-2');
+  assert.equal(profileOfStartPage([undefined, 'https://app.test/', 'about:blank#izitest-profile=headless']), 'headless');
+  assert.equal(profileOfStartPage(['https://app.test/#x', undefined]), null, 'no page tells it');
+  assert.equal(profileOfStartPage(['about:blank#izitest-profile=a b']), 'a', 'a name is letters, digits, - and _');
+});

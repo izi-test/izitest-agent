@@ -13,7 +13,7 @@ import { cmdNetworkRequests, cmdNetworkResponse, cmdNetworkSearch } from './comm
 import { cmdConsoleMessages, cmdCheckLinks, cmdRunAxe } from './commands/checks';
 
 import { restoreOwnedWindows } from './owned-windows';
-import { HEADLESS_PROFILE, isHeadless } from './headless';
+import { HEADLESS_PROFILE, isHeadless, profileOfStartPage } from './headless';
 import { actsOnPage, withPageUrl } from './page-url';
 import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecordStart, cmdLiveRecordStop, cmdLiveRecordList, setLiveSink } from './live';
 
@@ -166,6 +166,21 @@ async function executeCommand(command: string, params: Record<string, unknown>, 
 
 // ─── WebSocket Connection ───────────────────────────────────────────
 
+/**
+ * The headless profile this Chrome is: told by the page it started on, else the one kept,
+ * else "headless". Its first page can open a moment after the extension: looked for 2 s.
+ */
+async function headlessProfile(kept: string | undefined): Promise<string> {
+  for (let tries = 0; tries < 10; tries++) {
+    const tabs = await chrome.tabs.query({});
+    const told = profileOfStartPage(tabs.flatMap((tab) => [tab.url, tab.pendingUrl]));
+    if (told) return told;
+    if (kept) return kept;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return HEADLESS_PROFILE;
+}
+
 function connect(): void {
   if (websocket && (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING)) return;
 
@@ -173,11 +188,13 @@ function connect(): void {
 
   websocket.onopen = () => {
     isConnected = true;
-    chrome.storage.local.get(['profileId'], (result) => {
-      // The Chrome without windows the server starts is always the "headless" profile: runs
-      // asked out of sight go to it, and never an agent's commands that name no profile.
-      profileId = isHeadless() ? HEADLESS_PROFILE : result.profileId || `profile-${Date.now()}`;
+    chrome.storage.local.get(['profileId', 'headlessProfile'], async (result) => {
+      // A Chrome without windows the server starts is a "headless" profile: runs asked out of
+      // sight go to it, and never an agent's commands that name no profile. Which one — a
+      // campaign starts one per lane — its first page tells, kept for when it is gone.
+      profileId = isHeadless() ? await headlessProfile(result.headlessProfile) : result.profileId || `profile-${Date.now()}`;
       chrome.storage.local.set({ profileId });
+      if (isHeadless()) chrome.storage.local.set({ headlessProfile: profileId } as Record<string, string>);
       websocket!.send(JSON.stringify({
         type: 'register',
         profileId,

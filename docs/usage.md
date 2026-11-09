@@ -83,6 +83,15 @@ for a version of the application, a few at a time, with or without windows. A ca
 - its results sent to Xray, and IziTest's word on each story sent to Jira, when those connectors
   are set (*Settings → Connectors*).
 
+*Order → In stages* runs the tests stage after stage: a set-up first, then the tests that use what it
+made. Each stage runs its tests side by side or one after the other, and can wait for the stages
+before it to pass. A value a test keeps is given to the tests after it. Drag a test from a stage to
+another, or move it with its arrows.
+
+Side by side without windows, each lane has a Chrome of its own, so tests logging in as different
+users do not log each other out. In your Chrome, whose windows share their cookies, the tests of a
+site one of them logs in to run one at a time.
+
 From a CI job:
 
 ```bash
