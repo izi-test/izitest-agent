@@ -1,8 +1,9 @@
-// Campaigns: tests replayed together — a project's, a requirement's, or a list of them — for
-// a version of the app. Each test runs in a window of its own, a few at a time, in a session
-// of the campaign's own; a failure is diagnosed as any run's is (lib/triage.js). The report
-// says, for that version: what passed, what failed and why, what regressed or was fixed since
-// the last campaign of the same tests, and where each requirement they check stands —
+// Campaigns: tests replayed together — a project's, a requirement's, a list of them, or those a
+// commit's change needs (lib/regression.js) — for a version of the app. Each test runs in a
+// window of its own, a few at a time, in a session of the campaign's own; a failure is
+// diagnosed as any run's is (lib/triage.js). The report says, for that version: what passed,
+// what failed and why, what regressed or was fixed since each test's last campaign, the commit
+// tested and why each of its tests was chosen, and where each requirement they check stands —
 // criterion by criterion, from this campaign's runs. It is also written as JUnit XML, for a
 // CI, and as an HTML page to share.
 
@@ -14,6 +15,7 @@ import { datasetOfTest } from './datasets.js';
 import { loadTest } from './test-store.js';
 import { keptNames } from './server-steps.js';
 import { getRequirement, coverageOf, requirementsOfTest } from './requirements.js';
+import { selectTests, formatSelection } from './regression.js';
 
 // The campaigns running now, and whether each was asked to stop.
 const running = new Map();
@@ -51,7 +53,24 @@ function scopeKeyOf(scope, names) {
   return `tests:${[...names].sort().join(',')}`;
 }
 
-function defaultName(scope, projectId, names) {
+/** The commit a campaign tests, its fields checked: { sha, branch, message, dirty }; null without. */
+function commitOf(commit) {
+  if (!commit) return null;
+  const info = {
+    sha: commit.sha ? String(commit.sha).trim() : null,
+    branch: commit.branch ? String(commit.branch).trim() : null,
+    message: commit.message ? String(commit.message).trim().slice(0, 2000) : null,
+    ...(commit.dirty ? { dirty: true } : {}),
+  };
+  if (info.sha && !/^[0-9a-f]{4,64}$/i.test(info.sha)) throw new Error(`commit.sha: "${info.sha}" is no commit hash`);
+  return info.sha || info.branch || info.message ? info : null;
+}
+
+function defaultName(scope, projectId, names, selection) {
+  if (selection) {
+    const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(selection.project_id)?.name ?? `Project #${selection.project_id}`;
+    return selection.full ? project : `${project} — ${names.length} of ${selection.total} tests`;
+  }
   if (scope.requirement) {
     const requirement = getRequirement(scope.requirement);
     return `${requirement.key} — ${requirement.title}`;
@@ -93,10 +112,33 @@ export function checkStages(stages) {
  * to run one at a time (sharedSessions).
  * With `stages` (checkStages), the tests run stage after stage; the values a test kept
  * (capture) are given to the tests after it (runCampaign).
+ * With `changes` ({ changed_files, touched, include }) and a project, its tests the change
+ * needs (lib/regression.js), kept with why, in stages when one keeps a value for another.
+ * `commit` ({ sha, branch, message }): what was tested; its short sha is the version by default.
  * `sendCommand` is the extension's, unscoped: the campaign runs in a session of its own. The
  * campaign as it starts, and `finished`, settled once its last test ran.
  */
-export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false, stages = null }, { sendCommand }) {
+export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false, stages = null, changes = null, commit = null }, { sendCommand }) {
+  const commitInfo = commitOf(commit);
+  let selection = null;
+  if (changes) {
+    if (!projectId) throw new Error('project_id: the project whose tests the change needs');
+    selection = selectTests({
+      projectId, changedFiles: changes.changed_files ?? [], touched: changes.touched ?? [], include: changes.include ?? [],
+      commitMessage: changes.commit_message ?? commitInfo?.message ?? '',
+    });
+    if (!selection.tests.length) {
+      const error = new Error(`Nothing to run: the change touches no test.\n${formatSelection(selection)}`);
+      error.code = 'NOTHING_TO_RUN';
+      error.selection = selection;
+      throw error;
+    }
+    tests = selection.tests.map((t) => t.name);
+    const proposed = proposeStages(tests);
+    stages = proposed.length > 1 ? proposed : null;
+    projectId = null;
+  }
+  if (!version && commitInfo?.sha) version = commitInfo.sha.slice(0, 7);
   const staged = stages?.length ? checkStages(stages) : null;
   if (staged) tests = staged.flatMap((stage) => stage.tests);
   const scope = tests?.length ? { tests: [...new Set(tests)], ...(staged ? { stages: staged } : {}) }
@@ -114,12 +156,13 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
   }));
   const lanes = Math.min(Math.max(1, Math.floor(Number(concurrency)) || 3), MAX_CONCURRENCY);
   // Chosen tests all of one project belong to it: the campaign is listed with the project's.
-  const project = projectId ?? (scope.requirement ? getRequirement(scope.requirement).project_id : projectOfTests(names));
+  const project = projectId ?? selection?.project_id ?? (scope.requirement ? getRequirement(scope.requirement).project_id : projectOfTests(names));
   const { id } = db.prepare(
-    `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency, headless)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
-  ).get(name?.trim() || defaultName(scope, project, names), project, JSON.stringify(scope), scopeKeyOf(scope, names),
-    version?.trim() || null, JSON.stringify(entries), lanes, headless ? 1 : 0);
+    `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency, headless, commit_info, selection)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+  ).get(name?.trim() || defaultName(scope, project, names, selection), project, JSON.stringify(scope), scopeKeyOf(scope, names),
+    version?.trim() || null, JSON.stringify(entries), lanes, headless ? 1 : 0,
+    commitInfo ? JSON.stringify(commitInfo) : null, selection ? JSON.stringify(selection) : null);
   const state = { stop: false };
   running.set(id, state);
   log(`Campaign #${id} started: ${entries.length} run(s) of ${names.length} test(s), ${lanes} at a time${staged ? `, in ${staged.length} stage(s)` : ''}${version ? `, version ${version}` : ''}`);
@@ -436,9 +479,30 @@ function requirementsOf(tests) {
   });
 }
 
-/** The last campaign of the same tests before this one that went to its end. */
-function previousOf(row) {
-  return db.prepare(`SELECT * FROM campaigns WHERE scope_key = ? AND id < ? AND status = 'done' ORDER BY id DESC LIMIT 1`).get(row.scope_key, row.id) ?? null;
+/**
+ * What changed since each test last ran in a campaign — whatever that campaign ran with it: a
+ * campaign of the tests a commit touches runs another list each time, and is compared all the
+ * same. Regressed: passed there, fails here; fixed: the other way. `since` is the latest of
+ * those campaigns, `campaigns` all of them. Null when none of its tests ran in one before.
+ */
+function changesOf(row, tests) {
+  const lastRun = db.prepare(
+    `SELECT e.status, e.campaign_id FROM test_executions e
+     WHERE e.test_name = ? AND e.data_row IS ? AND e.campaign_id < ? AND e.status IN ('success', 'failed')
+     ORDER BY e.campaign_id DESC, e.id DESC LIMIT 1`
+  );
+  const compared = tests.flatMap((t) => {
+    const before = lastRun.get(t.name, t.row ?? null, row.id);
+    return before ? [{ label: t.label, now: t.status, before: before.status === 'success' ? 'passed' : 'failed', campaign: before.campaign_id }] : [];
+  });
+  if (!compared.length) return null;
+  const campaigns = [...new Set(compared.map((c) => c.campaign))].sort((a, b) => b - a);
+  return {
+    since: db.prepare('SELECT id, version, created_at FROM campaigns WHERE id = ?').get(campaigns[0]),
+    campaigns,
+    regressed: compared.filter((c) => c.now === 'failed' && c.before === 'passed').map((c) => c.label),
+    fixed: compared.filter((c) => c.now === 'passed' && c.before === 'failed').map((c) => c.label),
+  };
 }
 
 /**
@@ -451,19 +515,11 @@ export function getCampaign(id) {
   if (!row) return null;
   const tests = testsOf(row);
   const totals = Object.fromEntries(STATUSES.map((s) => [s, tests.filter((t) => t.status === s).length]));
-  const previous = previousOf(row);
-  let changes = null;
-  if (previous) {
-    const before = new Map(testsOf(previous).map((t) => [t.label, t.status]));
-    changes = {
-      since: { id: previous.id, version: previous.version, created_at: previous.created_at },
-      regressed: tests.filter((t) => t.status === 'failed' && before.get(t.label) === 'passed').map((t) => t.label),
-      fixed: tests.filter((t) => t.status === 'passed' && before.get(t.label) === 'failed').map((t) => t.label),
-    };
-  }
+  const changes = changesOf(row, tests);
   const project = row.project_id ? db.prepare('SELECT name FROM projects WHERE id = ?').get(row.project_id)?.name ?? null : null;
   return {
     ...row, scope: parseJson(row.scope), tests: undefined, errors: undefined, project, headless: !!row.headless,
+    commit_info: undefined, commit: parseJson(row.commit_info), selection: parseJson(row.selection),
     running: running.has(row.id), totals, total: tests.length,
     duration_ms: row.finished_at ? Date.parse(row.finished_at) - Date.parse(row.created_at) : null,
     changes, requirements: requirementsOf(tests),
@@ -491,6 +547,13 @@ export function deleteCampaign(id) {
   if (!changes) throw new Error(`No campaign #${id}`);
 }
 
+/** What a campaign is compared with: one campaign, or each test's last one. */
+export function sinceLabel({ since, campaigns }) {
+  return campaigns?.length > 1
+    ? `Since each test's last campaign (${campaigns.map((id) => `#${id}`).join(', ')})`
+    : `Since campaign #${since.id}${since.version ? ` (version ${since.version})` : ''}`;
+}
+
 const seconds = (ms) => (ms == null ? '' : ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m${String(Math.round((ms % 60_000) / 1000)).padStart(2, '0')}s`);
 
 /** A campaign as the agent reads it. */
@@ -500,6 +563,14 @@ export function formatCampaign(c) {
   const lines = [
     `Campaign #${c.id} "${c.name}"${c.version ? ` — version ${c.version}` : ''} — ${c.running ? 'RUNNING' : c.status}: ${counts} (${c.total} test(s), ${c.concurrency} at a time${c.headless ? ', headless' : ''}${c.duration_ms != null ? `, ${seconds(c.duration_ms)}` : ''})`,
   ];
+  if (c.commit) lines.push(`Commit ${c.commit.sha ? c.commit.sha.slice(0, 10) : '?'}${c.commit.dirty ? ' (with changes not committed)' : ''}${c.commit.branch ? ` on ${c.commit.branch}` : ''}${c.commit.message ? `: ${c.commit.message.split('\n')[0].slice(0, 120)}` : ''}`);
+  if (c.selection) {
+    const s = c.selection;
+    lines.push(s.full
+      ? `Every test, for the change: ${s.why_full[0]}${s.why_full.length > 1 ? ` (and ${s.why_full.length - 1} more)` : ''}`
+      : `Chosen for the change: ${s.tests.length} of ${s.total} test(s)${s.left_out.length ? `; left out, touching nothing it does: ${s.left_out.map((t) => t.name).join(', ')}` : ''}`);
+    if (s.uncovered?.length) lines.push(`No test goes to ${s.uncovered.join(', ')}: what the change does there is not tested.`);
+  }
   for (const st of c.stages ?? []) {
     const done = STATUSES.filter((x) => st.totals[x]).map((x) => `${st.totals[x]} ${x}`).join(', ');
     lines.push(`Stage ${st.number}${st.name ? ` "${st.name}"` : ''} (${st.mode}${st.needs_previous ? ', only if the stages before passed' : ''}) — ${st.status}: ${done} — ${st.tests.join(', ')}`);
@@ -508,8 +579,8 @@ export function formatCampaign(c) {
     lines.push(`One at a time: the ${g.tests.length} tests of ${g.site}, which log in there (the windows of one Chrome share its cookies)`);
   }
   if (c.changes) {
-    const { since, regressed, fixed } = c.changes;
-    lines.push(`Since campaign #${since.id}${since.version ? ` (version ${since.version})` : ''}: ${regressed.length ? `REGRESSED ${regressed.join(', ')}` : 'nothing regressed'}${fixed.length ? `; fixed ${fixed.join(', ')}` : ''}`);
+    const { regressed, fixed } = c.changes;
+    lines.push(`${sinceLabel(c.changes)}: ${regressed.length ? `REGRESSED ${regressed.join(', ')}` : 'nothing regressed'}${fixed.length ? `; fixed ${fixed.join(', ')}` : ''}`);
   }
   const failed = c.runs.filter((t) => t.status === 'failed' || t.status === 'error');
   if (failed.length) {
@@ -581,7 +652,7 @@ export function htmlReport(c) {
   const chip = (text, color) => `<span class="chip" style="color:${color};border-color:${color}">${html(text)}</span>`;
   const when = new Date(c.created_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
   const changes = c.changes
-    ? `<section><h2>Since campaign #${c.changes.since.id}${c.changes.since.version ? ` (version ${html(c.changes.since.version)})` : ''}</h2>
+    ? `<section><h2>${html(sinceLabel(c.changes))}</h2>
        <p>${c.changes.regressed.length ? `<strong class="bad">Regressed:</strong> ${c.changes.regressed.map(html).join(', ')}` : 'Nothing regressed.'}
        ${c.changes.fixed.length ? `<br><strong class="good">Fixed:</strong> ${c.changes.fixed.map(html).join(', ')}` : ''}</p></section>`
     : '';

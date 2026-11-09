@@ -40,6 +40,7 @@ import {
 } from './connectors/index.js';
 import { complete, agentName } from './agent/complete.js';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport, proposeStages, testsOfScope } from './campaigns.js';
+import { selectTests } from './regression.js';
 import { generateTestCode } from './codegen/index.js';
 import { listSessions } from './session.js';
 import { followRun } from './live.js';
@@ -769,17 +770,39 @@ export async function apiRouter(req, res, url) {
       }
     }
 
-    // POST /api/campaigns — { project_id | requirement | tests | stages, version, name, concurrency }: started, runs on its own
+    // POST /api/campaigns/select — { project_id, changed_files, touched, include, commit_message }: the
+    // tests a change needs, each with why, and those left out (lib/regression.js); nothing is run
+    if (method === 'POST' && path === '/api/campaigns/select') {
+      const body = await readBody(req);
+      const list = (value) => (Array.isArray(value) ? value.map(String) : []);
+      try {
+        return json(res, 200, { selection: selectTests({
+          projectId: body.project_id ?? null, changedFiles: list(body.changed_files), touched: list(body.touched),
+          include: list(body.include), commitMessage: body.commit_message ?? '',
+        }) });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/campaigns — { project_id | requirement | tests | stages, version, name, concurrency,
+    // changed_files, touched, include, commit }: started, runs on its own. With changed_files (or
+    // touched) and a project: the tests the change needs; none: 200 { nothing_to_run, selection }
     if (method === 'POST' && path === '/api/campaigns') {
       const body = await readBody(req);
+      const list = (value) => (Array.isArray(value) ? value.map(String) : []);
+      const changes = list(body.changed_files).length || list(body.touched).length
+        ? { changed_files: list(body.changed_files), touched: list(body.touched), include: list(body.include) } : null;
       try {
         const { campaign } = startCampaign({
           name: body.name, tests: Array.isArray(body.tests) ? body.tests : undefined, requirement: body.requirement || undefined,
           projectId: body.project_id ?? null, version: body.version ?? null, concurrency: body.concurrency ?? 3,
           headless: body.headless === true, stages: Array.isArray(body.stages) ? body.stages : null,
+          changes, commit: body.commit && typeof body.commit === 'object' ? body.commit : null,
         }, { sendCommand });
         return json(res, 201, { campaign });
       } catch (err) {
+        if (err.code === 'NOTHING_TO_RUN') return json(res, 200, { nothing_to_run: true, message: err.message, selection: err.selection });
         return json(res, 400, { error: err.message });
       }
     }

@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Campaign, CampaignStage, CampaignSummary, ResultsSend, CoverageSend } from '../../types';
+import type { Campaign, CampaignCommit, CampaignStage, CampaignSummary, ResultsSend, CoverageSend, RegressionSelection } from '../../types';
 
 /** What a campaign is started with: a project's tests, a requirement's, or a list. */
 export interface CampaignInput {
@@ -13,6 +13,20 @@ export interface CampaignInput {
   headless?: boolean;
   /** Instead of a project, a requirement or tests: the tests in stages. */
   stages?: CampaignStage[];
+  /** With project_id: only the tests a change needs (mcp-server/lib/regression.js). */
+  changed_files?: string[];
+  touched?: string[];
+  include?: string[];
+  commit?: CampaignCommit;
+}
+
+/** What a change is, to choose the tests it needs. */
+export interface ChangeInput {
+  project_id: number;
+  changed_files: string[];
+  touched?: string[];
+  include?: string[];
+  commit_message?: string;
 }
 
 // Campaigns: tests replayed together for a version of the app (mcp-server/lib/campaigns.js).
@@ -35,9 +49,19 @@ export const campaignsApi = createApi({
       query: (body) => ({ url: 'api/campaigns', method: 'POST', body }),
       invalidatesTags: ['Campaigns'],
     }),
+    // The tests a change needs, run; a change that touches no test: { nothing_to_run, message }, no campaign.
+    startChangeCampaign: builder.mutation<{ campaign: Campaign; nothing_to_run?: undefined } | { campaign?: undefined; nothing_to_run: true; message: string }, CampaignInput & ChangeInput>({
+      query: (body) => ({ url: 'api/campaigns', method: 'POST', body }),
+      invalidatesTags: ['Campaigns'],
+    }),
     // The tests of a scope, and the stages proposed for them (mcp-server/lib/campaigns.js proposeStages).
     planCampaign: builder.mutation<{ tests: string[]; stages: CampaignStage[] }, Pick<CampaignInput, 'project_id' | 'requirement' | 'tests'>>({
       query: (body) => ({ url: 'api/campaigns/plan', method: 'POST', body }),
+    }),
+    // The tests a change needs, each with why; nothing is run.
+    selectTests: builder.mutation<RegressionSelection, ChangeInput>({
+      query: (body) => ({ url: 'api/campaigns/select', method: 'POST', body }),
+      transformResponse: (response: { selection: RegressionSelection }) => response.selection,
     }),
     stopCampaign: builder.mutation<{ campaign: Campaign }, number>({
       query: (id) => ({ url: `api/campaigns/${id}/stop`, method: 'POST' }),
@@ -64,7 +88,9 @@ export const {
   useGetCampaignsQuery,
   useGetCampaignQuery,
   useStartCampaignMutation,
+  useStartChangeCampaignMutation,
   usePlanCampaignMutation,
+  useSelectTestsMutation,
   useStopCampaignMutation,
   useDeleteCampaignMutation,
   useSendResultsMutation,

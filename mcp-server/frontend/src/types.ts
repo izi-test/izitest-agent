@@ -383,7 +383,35 @@ export interface CampaignRequirement {
   criteria: Array<{ number: number; text: string; status: 'passing' | 'failing' | 'not_run' | 'not_covered' }>;
 }
 
-/** Tests replayed together for a version of the app: a project's, a requirement's, or a list. */
+/** The commit a campaign tested. */
+export interface CampaignCommit {
+  sha: string | null;
+  branch: string | null;
+  message: string | null;
+  /** Changes not committed yet were tested with it. */
+  dirty?: boolean;
+}
+
+/**
+ * The tests a change needs (mcp-server/lib/regression.js): each chosen with why, each left out
+ * with why; every test when a file can break any of them (full).
+ */
+export interface RegressionSelection {
+  project_id: number;
+  total: number;
+  full: boolean;
+  why_full: string[];
+  tests: Array<{ name: string; reasons: string[] }>;
+  left_out: Array<{ name: string; why: string }>;
+  /** Each changed file: ignored (docs, the app's own tests), shared, general (its name says no part of the app), code (tied to tests) or untied. */
+  files: Array<{ path: string; kind: 'ignored' | 'shared' | 'general' | 'code' | 'untied'; why?: string; tests?: string[] }>;
+  /** Routes told touched that no test goes to. */
+  uncovered: string[];
+  /** Requirements the commit message names. */
+  requirements: string[];
+}
+
+/** Tests replayed together for a version of the app: a project's, a requirement's, a list, or those a change needs. */
 export interface Campaign {
   id: number;
   name: string;
@@ -401,7 +429,11 @@ export interface Campaign {
   totals: Record<CampaignTestStatus, number>;
   total: number;
   duration_ms: number | null;
-  changes: { since: { id: number; version: string | null; created_at: string }; regressed: string[]; fixed: string[] } | null;
+  /** Against each test's last campaign: `since` the latest of them, `campaigns` all of them. */
+  changes: { since: { id: number; version: string | null; created_at: string }; campaigns?: number[]; regressed: string[]; fixed: string[] } | null;
+  commit: CampaignCommit | null;
+  /** Its tests chosen for what a change touches; null when it ran a scope. */
+  selection: RegressionSelection | null;
   requirements: CampaignRequirement[];
   non_conformities: string[];
   runs: CampaignRun[];

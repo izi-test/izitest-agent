@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Layers, ArrowLeft, Square, RotateCcw, Download, ExternalLink, Trash2, FlaskConical, Loader2, Play, Search, ChevronRight, AlertTriangle, Wand2 } from 'lucide-react';
+import { Layers, ArrowLeft, Square, RotateCcw, Download, ExternalLink, Trash2, FlaskConical, Loader2, Play, Search, ChevronRight, AlertTriangle, Wand2, GitCommit, Plus, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
   campaignsApi, useGetCampaignsQuery, useGetCampaignQuery, useStartCampaignMutation, useStopCampaignMutation, useDeleteCampaignMutation,
-  usePlanCampaignMutation, type CampaignInput,
+  usePlanCampaignMutation, useSelectTestsMutation, useStartChangeCampaignMutation, type CampaignInput,
 } from '../store/services/campaignsApi';
 import { useGetRequirementsQuery } from '../store/services/requirementsApi';
 import { useGetTestsQuery } from '../store/services/testsApi';
@@ -21,12 +21,13 @@ import { useRunHeadless } from '../headless';
 import { Card, Dialog, EmptyState, KeyChip, Menu, PageHeader, Pill, ProjectChip, ResultBar, Segmented, StatusPill } from './ui';
 import { dateTime, formatDuration } from '../format';
 import { CAUSE_LABELS } from '../triage-labels';
-import type { Campaign, CampaignRun, CampaignStage, CampaignTestStatus } from '../types';
+import type { Campaign, CampaignRun, CampaignStage, CampaignTestStatus, RegressionSelection } from '../types';
 
 // Campaigns: tests replayed together for a version of the app (mcp-server/lib/campaigns.js) —
-// a project's, a requirement's, or a chosen list —, a few at a time, each in its own window.
-// The report says what failed and why, what regressed since the last campaign of the same
-// tests, and where each requirement stands; it downloads as JUnit for a CI, or opens as HTML,
+// a project's, a requirement's, a chosen list, or those a change needs (mcp-server/lib/
+// regression.js) —, a few at a time, each in its own window. The report says what failed and
+// why, what regressed since each test's last campaign, the commit tested and why each test was
+// chosen, and where each requirement stands; it downloads as JUnit for a CI, or opens as HTML,
 // and is sent to the tools set as connectors — Xray, the Jira stories it checks (CampaignWriteBack).
 
 const STATUS_ORDER: CampaignTestStatus[] = ['passed', 'failed', 'error', 'running', 'pending', 'skipped'];
@@ -35,8 +36,12 @@ const CRITERION_LABELS = { passing: 'passing', failing: 'failing', not_run: 'not
 
 const errorOf = (err: unknown) => (err as { data?: { error?: string } })?.data?.error ?? 'The request failed';
 
-/** What a campaign ran: a project, a requirement, or tests. */
-function scopeLabel(c: Pick<Campaign, 'scope' | 'project'>) {
+/** Its version: a commit's short sha as it is, a version number after a v. */
+const versionLabel = (c: Pick<Campaign, 'version' | 'commit'>) => (c.commit?.sha && c.version === c.commit.sha.slice(0, 7) ? c.version : `v${c.version}`);
+
+/** What a campaign ran: a project, a requirement, tests, or those a change needs. */
+function scopeLabel(c: Pick<Campaign, 'scope' | 'project' | 'selection'>) {
+  if (c.selection) return c.selection.full ? `Every test, for a change` : `${c.selection.tests.length} of ${c.selection.total} tests, for a change`;
   if (c.scope.stages?.length) return `${c.scope.tests?.length ?? 0} tests in ${c.scope.stages.length} stage${c.scope.stages.length === 1 ? '' : 's'}`;
   if (c.scope.requirement) return `Requirement ${c.scope.requirement}`;
   if (c.scope.project_id) return `Project ${c.project ?? `#${c.scope.project_id}`}`;
@@ -108,7 +113,7 @@ export function CampaignsPage() {
                   <tr key={c.id} className="clickable" onClick={() => open(c.id)}>
                     <td className="mono cell-muted">#{c.id}</td>
                     <td>
-                      <div className="cell-title">{c.name}{c.version && <span className="campaign-version">v{c.version}</span>}</div>
+                      <div className="cell-title">{c.name}{c.version && <span className="campaign-version">{versionLabel(c)}</span>}</div>
                       <div className="cell-sub">{scopeLabel(c)}{c.headless && ' · headless'}</div>
                     </td>
                     {projectId === null && <td><ProjectChip project={projects.find((p) => p.id === c.project_id)} /></td>}
@@ -141,7 +146,9 @@ export function CampaignsPage() {
   );
 }
 
-type ScopeKind = 'project' | 'requirement' | 'tests';
+type ScopeKind = 'project' | 'requirement' | 'tests' | 'change';
+
+const lines = (text: string) => text.split('\n').map((l) => l.trim()).filter(Boolean);
 type Ordering = 'together' | 'stages';
 
 function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | null; onStarted: (id: number) => void; onCancel: () => void }) {
@@ -162,8 +169,29 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
   const [ordering, setOrdering] = useState<Ordering>('together');
   const [stages, setStages] = useState<CampaignStage[] | null>(null);
   const headless = useRunHeadless();
+  // A change: its files, the routes it touches, the tests to run anyway, and what they come to.
+  const [files, setFiles] = useState('');
+  const [touched, setTouched] = useState('');
+  const [include, setInclude] = useState<string[]>([]);
+  const [selection, setSelection] = useState<RegressionSelection | null>(null);
+  const [selectError, setSelectError] = useState<string | null>(null);
+  const [select, { isLoading: selecting }] = useSelectTestsMutation();
+  const [startChange, { isLoading: startingChange }] = useStartChangeCampaignMutation();
+  const change = kind === 'change' && project && (lines(files).length || lines(touched).length)
+    ? { project_id: project, changed_files: lines(files), touched: lines(touched), include } : null;
+  const changeKey = JSON.stringify(change);
+  useEffect(() => {
+    if (!change) { setSelection(null); setSelectError(null); return undefined; }
+    const timer = setTimeout(() => {
+      select(change).unwrap()
+        .then((s) => { setSelection(s); setSelectError(null); })
+        .catch((err) => { setSelection(null); setSelectError(errorOf(err)); });
+    }, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changeKey]);
 
-  const scope: CampaignInput | null = kind === 'project' ? (project ? { project_id: project } : null)
+  const scope: CampaignInput | null = kind === 'change' ? null : kind === 'project' ? (project ? { project_id: project } : null)
     : kind === 'requirement' ? (requirement ? { requirement } : null)
       : chosen.length ? { tests: chosen } : null;
   const scopeKey = JSON.stringify(scope);
@@ -189,8 +217,18 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!scope) return;
     setError(null);
+    if (change) {
+      try {
+        const answer = await startChange({ ...change, version: version.trim() || undefined, name: name.trim() || undefined, concurrency, headless }).unwrap();
+        if (answer.nothing_to_run) setError(answer.message.split('\n')[0]);
+        else onStarted(answer.campaign.id);
+      } catch (err) {
+        setError(errorOf(err));
+      }
+      return;
+    }
+    if (!scope) return;
     const staged = ordering === 'stages' && stages?.length;
     try {
       const { campaign } = await start({
@@ -207,9 +245,9 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
     <form className="form" onSubmit={submit}>
       <Segmented<ScopeKind>
         label="What to run" value={kind} onChange={setKind}
-        options={[{ value: 'project', label: 'A project\'s tests' }, { value: 'requirement', label: 'A requirement\'s tests' }, { value: 'tests', label: 'Chosen tests' }]}
+        options={[{ value: 'project', label: 'A project\'s tests' }, { value: 'requirement', label: 'A requirement\'s tests' }, { value: 'tests', label: 'Chosen tests' }, { value: 'change', label: 'What a change touches' }]}
       />
-      {kind === 'project' && (
+      {(kind === 'project' || kind === 'change') && (
         <label className="field">
           <span className="field__label">Project</span>
           <select value={project ?? ''} onChange={(e) => setProject(e.target.value ? Number(e.target.value) : null)}>
@@ -240,6 +278,22 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
             ))}
           </div>
         </div>
+      )}
+      {kind === 'change' && (
+        <>
+          <label className="field">
+            <span className="field__label">Files the change touches</span>
+            <textarea className="mono" rows={4} placeholder={'api/src/server.js\nweb/src/ManagerPage.tsx'} value={files} onChange={(e) => setFiles(e.target.value)} />
+            <span className="field__hint">One per line, from the repository's root: <code>git diff --name-only main</code>.</span>
+          </label>
+          <label className="field">
+            <span className="field__label">Routes it touches <span className="field__optional">optional</span></span>
+            <textarea className="mono" rows={2} placeholder={'POST /api/review/notes/:id/approve\n/notes/*'} value={touched} onChange={(e) => setTouched(e.target.value)} />
+            <span className="field__hint">What the change does in the app, as its code says. Without it, a file whose name says no part of the app (server.js, App.tsx) runs every test.</span>
+          </label>
+          {selectError && <div className="alert alert--error">{selectError}</div>}
+          {selection && <SelectionPreview selection={selection} include={include} onInclude={setInclude} busy={selecting} />}
+        </>
       )}
       {scope && (
         <div className="field">
@@ -282,9 +336,65 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
       {error && <div className="alert alert--error">{error}</div>}
       <div className="form__actions">
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" icon={Play} disabled={!scope || isLoading}>{headless ? 'Start headless' : 'Start'}</Button>
+        <Button type="submit" icon={Play} disabled={kind === 'change' ? !change || startingChange : !scope || isLoading}>{headless ? 'Start headless' : 'Start'}</Button>
       </div>
     </form>
+  );
+}
+
+const FILE_KINDS: Record<RegressionSelection['files'][number]['kind'], { label: string; tone: 'slate' | 'amber' | 'blue' | 'green' | 'red' }> = {
+  ignored: { label: 'ignored', tone: 'slate' },
+  shared: { label: 'shared', tone: 'amber' },
+  general: { label: 'used everywhere', tone: 'amber' },
+  code: { label: 'tied', tone: 'blue' },
+  untied: { label: 'tied to no test', tone: 'red' },
+};
+
+/** The files of a change, and how each was weighed. */
+function SelectionFiles({ selection: s }: { selection: RegressionSelection }) {
+  return (
+    <ul className="selection-files">
+      {s.files.map((f) => (
+        <li key={f.path}>
+          <span className="mono">{f.path}</span> <Pill tone={FILE_KINDS[f.kind].tone}>{FILE_KINDS[f.kind].label}</Pill>
+          <span className="selection-detail"> {f.kind === 'code' ? `→ ${f.tests?.join(', ')}` : f.why}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** What a change comes to before it runs: the tests chosen, why, those left out — one can be run anyway. */
+function SelectionPreview({ selection: s, include, onInclude, busy }: {
+  selection: RegressionSelection; include: string[]; onInclude: (names: string[]) => void; busy: boolean;
+}) {
+  return (
+    <div className={`selection-preview${busy ? ' is-busy' : ''}`}>
+      <div className="selection-preview__head">
+        <strong>{s.full ? `Every test runs (${s.total})` : `${s.tests.length} of ${s.total} tests run`}</strong>
+        {s.full && <span className="cell-muted"> — {s.why_full[0]}</span>}
+      </div>
+      <SelectionFiles selection={s} />
+      {s.uncovered.length > 0 && <div className="alert alert--warning">No test goes to {s.uncovered.join(', ')}: what the change does there is not tested.</div>}
+      {!s.full && (
+        <ul className="selection-tests">
+          {s.tests.map((t) => (
+            <li key={t.name}>
+              <span className="mono">{t.name}</span>
+              <span className="selection-detail">{t.reasons.join(' · ')}</span>
+              {include.includes(t.name) && <button type="button" className="link-btn" onClick={() => onInclude(include.filter((n) => n !== t.name))}><X size={12} /> Not anyway</button>}
+            </li>
+          ))}
+          {s.left_out.map((t) => (
+            <li key={t.name} className="is-left-out">
+              <span className="mono">{t.name}</span>
+              <span className="selection-detail">left out: {t.why}</span>
+              <button type="button" className="link-btn" onClick={() => onInclude([...include, t.name])}><Plus size={12} /> Run it anyway</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -343,7 +453,7 @@ export function CampaignPage({ id }: { id: number }) {
         <div className="detail-head__top">
           <div className="detail-head__titles">
             <h1 className="page-title">
-              <span className="mono cell-muted">#{c.id}</span> {c.name}{c.version && <span className="campaign-version">v{c.version}</span>}
+              <span className="mono cell-muted">#{c.id}</span> {c.name}{c.version && <span className="campaign-version">{versionLabel(c)}</span>}
               {' '}<StatusPill status={c.running ? 'running' : c.status} icon={c.running ? Loader2 : undefined} label={c.running ? `Running · ${done}/${c.total}` : undefined} />
             </h1>
             <div className="detail-meta-row">
@@ -356,6 +466,14 @@ export function CampaignPage({ id }: { id: number }) {
               {c.headless && <span className="tag tag--blue">headless</span>}
               {c.duration_ms != null && <span className="meta-item">· {formatDuration(c.duration_ms)}</span>}
             </div>
+            {c.commit && (
+              <div className="campaign-commit" title={c.commit.message ?? undefined}>
+                <GitCommit size={14} /><span className="mono">{c.commit.sha?.slice(0, 7) ?? '?'}</span>
+                {c.commit.branch && <span>on {c.commit.branch}</span>}
+                {c.commit.dirty && <span className="tag tag--amber">+ changes not committed</span>}
+                {c.commit.message && <span className="campaign-commit__message">{c.commit.message.split('\n')[0]}</span>}
+              </div>
+            )}
           </div>
           <div className="detail-head__actions">
             {c.running
@@ -386,8 +504,26 @@ export function CampaignPage({ id }: { id: number }) {
         </Card>
       )}
 
+      {c.selection && (
+        <Card title="Chosen for the change" icon={GitCommit}
+          subtitle={c.selection.full ? `Every test: ${c.selection.why_full.join('; ')}` : `${c.selection.tests.length} of ${c.selection.total} tests: those the changed files touch, each with why. The others were left out.`}>
+          <SelectionFiles selection={c.selection} />
+          {c.selection.uncovered.length > 0 && <div className="alert alert--warning">No test goes to {c.selection.uncovered.join(', ')}: what the change does there is not tested.</div>}
+          {!c.selection.full && (
+            <ul className="selection-tests">
+              {c.selection.tests.map((t) => (
+                <li key={t.name}><button className="test-link" onClick={() => openTest(t.name)}><FlaskConical size={12} /> {t.name}</button><span className="selection-detail">{t.reasons.join(' · ')}</span></li>
+              ))}
+              {c.selection.left_out.map((t) => (
+                <li key={t.name} className="is-left-out"><button className="test-link" onClick={() => openTest(t.name)}><FlaskConical size={12} /> {t.name}</button><span className="selection-detail">left out: {t.why}</span></li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+
       {c.changes && (
-        <Card title={<>Since campaign #{c.changes.since.id}{c.changes.since.version && ` (v${c.changes.since.version})`}{c.running && ', so far'}</>}
+        <Card title={<>{(c.changes.campaigns?.length ?? 1) > 1 ? `Since each test's last campaign (${c.changes.campaigns!.map((x) => `#${x}`).join(', ')})` : <>Since campaign #{c.changes.since.id}{c.changes.since.version && ` (${c.changes.since.version})`}</>}{c.running && ', so far'}</>}
           actions={<button className="link-btn" onClick={() => go(`/campaigns/${c.changes!.since.id}`, { from: label })}>Open #{c.changes.since.id}</button>}>
           {!c.changes.regressed.length && !c.changes.fixed.length && <p className="muted">Nothing regressed, nothing fixed.</p>}
           {c.changes.regressed.length > 0 && (

@@ -77,7 +77,7 @@ its values from there rather than making them up.
 *Campaigns → New campaign*: the tests of a project, of a requirement, or a list, replayed together
 for a version of the application, a few at a time, with or without windows. A campaign gives:
 
-- what passed, failed and was not run, compared with the previous campaign of the same tests;
+- what passed, failed and was not run, each test compared with the last campaign it ran in;
 - each requirement's coverage for that version;
 - a JUnit report for a CI and an HTML report;
 - its results sent to Xray, and IziTest's word on each story sent to Jira, when those connectors
@@ -92,13 +92,25 @@ Side by side without windows, each lane has a Chrome of its own, so tests loggin
 users do not log each other out. In your Chrome, whose windows share their cookies, the tests of a
 site one of them logs in to run one at a time.
 
+*What a change touches* runs only the tests a change needs, each chosen with why: those whose
+pages or API calls the changed files are about, those of the requirements the commit names, a
+test that failed last time, and the tests you always run. A shared file — dependencies, the
+configuration, the database schema — runs every test. The preview shows the tests left out; run
+one anyway with *Run it anyway*.
+
 From a CI job:
 
 ```bash
 node mcp-server/bin/campaign.js --project 3 --version 1.4.0 --headless --junit reports/junit.xml
 ```
 
-Exit code 0 when every test passed.
+Only what the branch changed since `origin/main`, the commit kept with the campaign:
+
+```bash
+node mcp-server/bin/campaign.js --project 3 --changed origin/main --headless --junit reports/junit.xml
+```
+
+Exit code 0 when every test passed, or when the change touches no test.
 
 ## 8. Take the tests elsewhere
 

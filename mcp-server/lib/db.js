@@ -354,6 +354,13 @@ export function initDatabase() {
     if (!campaignCols.includes('skips')) {
       db.exec("ALTER TABLE campaigns ADD COLUMN skips TEXT NOT NULL DEFAULT '{}'");
     }
+    // The commit a campaign tested ({ sha, branch, message }), and the tests chosen for what it
+    // changed, each with why, and those left out (lib/regression.js).
+    if (!campaignCols.includes('commit_info')) db.exec('ALTER TABLE campaigns ADD COLUMN commit_info TEXT DEFAULT NULL');
+    if (!campaignCols.includes('selection')) db.exec('ALTER TABLE campaigns ADD COLUMN selection TEXT DEFAULT NULL');
+    // What a run that passed touched: its pages, the API it called (lib/footprint.js).
+    if (!execCols.includes('footprint')) db.exec('ALTER TABLE test_executions ADD COLUMN footprint TEXT DEFAULT NULL');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_executions_test_name ON test_executions(test_name)');
   } catch (err) {
     log(`Migration warning (campaigns): ${err.message}`);
   }

@@ -11,6 +11,7 @@ import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
 import { requirementsOfTest } from './requirements.js';
+import { readFootprint, saveFootprint } from './footprint.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -678,6 +679,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   let extensionResult;
   let executionFailed = false;
+  // From when the requests its pages make are the run's (its footprint, lib/footprint.js).
+  const replayStartedAt = Date.now();
   // Why the replay itself stopped, when no step says it: timed out, its browser gone.
   let replayError = null;
   // Accumulate step results from the streaming callback because
@@ -800,6 +803,19 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       assertions_failed = ?
      WHERE id = ?`
   ).run(finalStatus, extensionResult.durationMs || null, completedCount, failedStepOrder, redact(globalError), assertionsPassed, assertionsFailed, executionId);
+
+  // What a run that passed from its first step touched: its pages, the API they called.
+  if (finalStatus === 'success' && !isDebugMode && !(Number(start_step) > 1)) {
+    try {
+      const baseUrl = test.project_id ? db.prepare('SELECT base_url FROM projects WHERE id = ?').get(test.project_id)?.base_url ?? null : null;
+      const pageUrls = [...stepResults, ...assertionStepResults.map((r) => ({ pageUrl: r.assertionResult?.pageUrl }))].map((r) => r?.pageUrl).filter(Boolean);
+      saveFootprint(executionId, await readFootprint(sendCommand, {
+        tabIds: stepResults.map((r) => r?.tabId), since: replayStartedAt, pageUrls, steps: test.steps, baseUrl,
+      }));
+    } catch (err) {
+      log(`Could not keep what run #${executionId} of "${name}" touched: ${err.message}`);
+    }
+  }
 
   log(`Execution #${executionId} finalized: ${finalStatus} (${completedCount}/${hydratedSteps.length} steps, assertions: ${assertionsPassed}/${assertionsTotal} passed, ${extensionResult.durationMs}ms)`);
 

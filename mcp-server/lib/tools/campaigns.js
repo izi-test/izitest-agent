@@ -1,16 +1,30 @@
-// Campaign MCP tools (lib/campaigns.js): run a project's tests, a requirement's or a list
-// together, for a version of the app, and read what came of it — what failed and why, what
-// regressed since the last campaign of the same tests, where each requirement stands — and its
-// results sent to a tool (lib/connectors: Xray).
+// Campaign MCP tools (lib/campaigns.js): run a project's tests, a requirement's, a list, or those
+// a change needs (lib/regression.js, plan_regression), for a version of the app, and read what
+// came of it — what failed and why, what regressed since each test's last campaign, where each
+// requirement stands — and its results sent to a tool (lib/connectors: Xray).
 
 import { z } from 'zod';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, formatCampaign, MAX_CONCURRENCY } from '../campaigns.js';
 import { connectorsFor, sendResults, formatResults } from '../connectors/index.js';
+import { selectTests, formatSelection } from '../regression.js';
 
 const text = (t, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: 'text', text: t }] });
 
 // How long run_campaign waits for the end before answering with where it stands.
 const WAIT_MS = 10 * 60_000;
+
+// What a change is, as the tools take it.
+const changeParams = {
+  changed_files: z.array(z.string()).optional().describe('The files the change touches, from the app\'s repository root (git diff --name-only)'),
+  touched: z.array(z.string()).optional().describe('What the change touches in the app, as you know from its code: routes and pages — "POST /api/notes", "/api/review/notes/:id/approve", "/notes/*". Narrows a file whose name says no part of the app (server.js holding every route, App.tsx, api.ts) to what it changes; without it, such a file runs every test'),
+  include: z.array(z.string()).optional().describe('Tests to run anyway, by name: the critical paths (logging in, the main flow)'),
+};
+const commitParam = z.object({
+  sha: z.string().optional().describe('git rev-parse HEAD'),
+  branch: z.string().optional(),
+  message: z.string().optional().describe('Its message: the requirements it names (NDF-3) bring their tests'),
+  dirty: z.boolean().optional().describe('true: changes not committed yet are tested with it'),
+}).optional();
 
 export function registerCampaignTools(server, { sendCommand }) {
   // --- Tool: run_campaign ---
@@ -19,12 +33,14 @@ export function registerCampaignTools(server, { sendCommand }) {
     [
       'Run a campaign: the tests of a project, of a requirement (the tests linked to it), or a list, replayed together for a',
       'version of the app — each in a window of its own, closed after, a few at a time. A failure is diagnosed as with run_test.',
-      'The answer is the report: what passed, what failed and why (the triage), what regressed or was fixed since the last',
-      'campaign of the same tests, where each requirement stands criterion by criterion, the non-conformities. It waits for',
+      'The answer is the report: what passed, what failed and why (the triage), what regressed or was fixed since each test\'s',
+      'last campaign, where each requirement stands criterion by criterion, the non-conformities. It waits for',
       'the end (up to 10 minutes; past that, get_campaign follows it). The dashboard shows it too, with JUnit and HTML reports.',
       'With stages, the tests run stage after stage — a stage side by side or one test after the other —, and a value a test',
       'keeps (capture) is given to the tests after it: a test that creates an order, then those that use its number. Keep tests',
       'independent when they can be (each creates its own data); stages are for what cannot.',
+      'With changed_files (and project_id): only the tests the change needs, each chosen with why — plan_regression shows',
+      'the choice first. commit: the commit tested, kept with the campaign; its short sha is the version.',
     ].join('\n'),
     {
       project_id: z.number().optional().describe('All the tests of this project'),
@@ -41,13 +57,17 @@ export function registerCampaignTools(server, { sendCommand }) {
       concurrency: z.number().int().min(1).max(MAX_CONCURRENCY).optional().describe('Tests run at a time (default 3). In the user\'s Chrome, whose windows share its cookies, the tests of a site one of them logs in to still run one at a time; headless, each lane has a Chrome of its own and they run side by side'),
       wait: z.boolean().optional().describe('Wait for the end and answer with the report (default true); false answers at once'),
       headless: z.boolean().optional().describe('Run in the Chrome without windows the server starts (its own profile: no login of the user\'s Chrome), out of the user\'s sight. Installed from the dashboard: Settings → Headless browser'),
+      ...changeParams,
+      commit: commitParam.describe('The commit tested: kept with the campaign, its short sha the version by default'),
     },
-    async ({ project_id, requirement, tests, stages, version, name, concurrency, wait, headless }) => {
+    async ({ project_id, requirement, tests, stages, version, name, concurrency, wait, headless, changed_files, touched, include, commit }) => {
       let started;
+      const changes = changed_files?.length || touched?.length ? { changed_files: changed_files ?? [], touched: touched ?? [], include: include ?? [] } : null;
       try {
-        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true, stages: stages ?? null }, { sendCommand });
+        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true, stages: stages ?? null, changes, commit: commit ?? null }, { sendCommand });
       } catch (err) {
-        return text(err.message, true);
+        // A change that touches no test: nothing to run is an answer, not a failure.
+        return text(err.message, err.code !== 'NOTHING_TO_RUN');
       }
       const { campaign, finished } = started;
       if (wait !== false) await Promise.race([finished, new Promise((resolve) => setTimeout(resolve, WAIT_MS))]);
@@ -55,10 +75,37 @@ export function registerCampaignTools(server, { sendCommand }) {
     }
   );
 
+  // --- Tool: plan_regression ---
+  server.tool(
+    'plan_regression',
+    [
+      'Before a commit, or for one: the tests of a project that the change needs, each with why, and those left out with',
+      'why — nothing is run. A test is chosen when a changed file\'s words are in the routes it went to or called the last',
+      'time it passed (server/routes/notes.js → POST /api/notes), or in its name; when touched names a route it goes to;',
+      'when the commit message names a requirement it checks; when what it touches is not known yet (no run kept it);',
+      'when it failed last time; when a chosen test uses a value it keeps. Every test is chosen when a file is shared',
+      '(dependencies, configuration, a middleware, the database schema, global styles), or when touched is not given and',
+      'a file says no part of the app (server.js, App.tsx) or ties to no test. Run them with run_campaign(project_id,',
+      'changed_files, touched, include, commit). The left-out tests are the risk: widen with include when in doubt.',
+    ].join('\n'),
+    {
+      project_id: z.number().int().describe('The project whose tests are chosen (list_projects)'),
+      ...changeParams,
+      commit_message: z.string().optional().describe('The commit message: a requirement it names (NDF-3) brings its tests'),
+    },
+    async ({ project_id, changed_files, touched, include, commit_message }) => {
+      try {
+        return text(formatSelection(selectTests({ projectId: project_id, changedFiles: changed_files ?? [], touched: touched ?? [], include: include ?? [], commitMessage: commit_message ?? '' })));
+      } catch (err) {
+        return text(err.message, true);
+      }
+    }
+  );
+
   // --- Tool: get_campaign ---
   server.tool(
     'get_campaign',
-    'A campaign\'s report: each test and how it did, the failures and their triage, what regressed or was fixed since the last campaign of the same tests, the requirements criterion by criterion.',
+    'A campaign\'s report: each test and how it did, the failures and their triage, what regressed or was fixed since each test\'s last campaign, the requirements criterion by criterion, the commit tested and why its tests were chosen.',
     { id: z.number().int() },
     async ({ id }) => {
       const campaign = getCampaign(id);

@@ -3310,3 +3310,20 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 .stage-editor__new { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border: 2px dashed var(--border-strong); border-radius: var(--radius); color: var(--text-muted); font-size: 12px; }
 .stage-row td { background: var(--surface-muted); font-size: 13px; padding-top: 8px; padding-bottom: 8px; }
 .stage-row .stage-card__number { vertical-align: middle; }
+
+/* The tests a change needs (Campaigns: "What a change touches"; the report's "Chosen for the change"). */
+.selection-preview { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface-muted); transition: opacity .15s; }
+.selection-preview.is-busy { opacity: .6; }
+.selection-preview__head { margin-bottom: 6px; font-size: 13px; }
+.selection-files, .selection-tests { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.selection-files li, .selection-tests li { padding: 3px 0; line-height: 1.5; }
+.selection-files { margin-bottom: 8px; }
+.selection-files .pill { margin: 0 4px; vertical-align: middle; }
+.selection-tests li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; border-top: 1px solid var(--border); padding: 5px 0; }
+.selection-tests li:first-child { border-top: 0; }
+.selection-tests li.is-left-out > .mono, .selection-tests li.is-left-out > .test-link { opacity: .6; }
+.selection-tests .link-btn { margin-left: auto; font-size: 12px; display: inline-flex; align-items: center; gap: 3px; }
+.selection-detail { color: var(--text-muted); overflow-wrap: anywhere; min-width: 0; }
+.campaign-commit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--text-secondary); min-width: 0; }
+.campaign-commit__message { color: var(--text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.field textarea.mono { font-family: var(--mono); font-size: 12px; }

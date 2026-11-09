@@ -131,7 +131,8 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `list_repairs` | Lists the repairs proposed for failed runs, and where each stands. |
 | `verify_repair` | Replays the test with a proposed repair made, without saving it. |
 | `resolve_repair` | Applies a repair to the saved test, or rejects it — on the user's word. |
-| `run_campaign` | Replays a project's tests, a requirement's or a list together, for a version of the app, and answers with the report (see below). |
+| `run_campaign` | Replays a project's tests, a requirement's, a list, or those a change needs (`changed_files`), together, for a version of the app, and answers with the report (see below). |
+| `plan_regression` | The tests of a project a change needs — its changed files, the routes it touches, the requirements its commit names —, each with why, and those left out with why; nothing is run (see below). |
 | `get_campaign` / `list_campaigns` / `stop_campaign` | A campaign's report; the campaigns, newest first; stop one that runs. |
 | `send_results` | Sends a campaign's results to a tool (a connector: Xray, a Test Execution, each test linked to the stories it covers); a dry run first (see below). |
 | `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
@@ -1107,8 +1108,10 @@ et les deux échouent.
 
 Le rapport dit :
 - ce qui est passé, ce qui a échoué et pourquoi (la cause du triage) ;
-- **ce qui a régressé** (passait à la dernière campagne des mêmes tests, échoue maintenant) et ce qui a
-  été corrigé ;
+- **ce qui a régressé** (passait à la dernière campagne où ce test a tourné, quelle qu'elle soit, échoue
+  maintenant) et ce qui a été corrigé. La comparaison se fait test par test : une campagne d'un commit,
+  qui ne joue pas la même liste à chaque fois, se compare quand même. `changes.since` est la plus récente
+  de ces campagnes, `changes.campaigns` toutes ;
 - **où en est chaque exigence**, critère par critère, d'après les rejeux de cette campagne : `passing`,
   `failing`, `not run` (un de ses tests n'a pas tourné ici), `no test` ;
 - les **non-conformités** : à signaler, pas à « réparer » dans les tests.
@@ -1135,6 +1138,78 @@ IZITEST_TOKEN=… node mcp-server/bin/campaign.js --project 3 --version 1.4.0 --
 du triage est le `type` de chaque `failure`, et les exigences d'un test sont ses `property
 name="requirement"`. Une campagne laissée en cours par un serveur arrêté est marquée `interrupted` au
 redémarrage.
+
+#### Pour un commit : les tests que le changement touche
+
+Plutôt que tous les tests d'un projet, une campagne peut jouer **ceux qu'un changement touche**, chacun
+choisi avec sa raison, les autres laissés de côté avec la leur. Le risque est un test laissé de côté
+qui aurait échoué : dans le doute, plus de tests tournent, et la sélection le dit.
+
+**Ce que chaque test touche** (son empreinte). Un rejeu qui passe depuis sa première étape garde :
+- les pages où il est allé ;
+- les requêtes de données (fetch, XHR) que ses pages ont faites à l'appli, front et API, quel que soit
+  le port. Les scripts, les styles, le serveur de dev et les autres sites ne comptent pas ;
+- les appels HTTP de ses étapes serveur.
+
+Les identifiants sont remplacés par `*` : `GET /api/notes/*`. Sans rejeu qui l'ait gardée, un test n'a
+que ce que ses étapes disent (ses navigations, ses pages), et ce que ses pages appellent n'est pas
+connu.
+
+**Comment un fichier changé est pesé** (`lib/regression.js`) :
+- **ignoré** : documentation, les tests de l'appli elle-même (`test/`, `*.test.js`, `*.spec.ts`),
+  réglages d'éditeur et de CI ;
+- **partagé**, donc tous les tests : dépendances (`package.json`, lockfiles), configuration et build
+  (`vite.config.ts`, `.env*`, `Dockerfile`), un middleware, le schéma de la base (migrations, `*.sql`),
+  les styles globaux, `index.html`, les traductions ;
+- **utilisé partout** : son nom ne dit aucune partie de l'appli (`App.tsx`, `server.js`, `api.ts`,
+  `utils.js`, `Header.tsx`). Tous les tests, sauf si `touched` dit ce que le changement touche ;
+- **du code** : les mots de son chemin (`api/src/routes/notes.js` → « note ») sont cherchés dans les
+  routes de chaque test (`POST /api/notes`), puis dans son nom (`ManagerPage.tsx` →
+  `ndf_manager_approuve`, utile quand toutes les pages ont la même URL). Un fichier qui ne mène à
+  aucun test fait tout jouer, sauf si `touched` est donné.
+
+**Choisis aussi** :
+- les tests qui vont sur une route de `touched` (`"POST /api/review/notes/:id/approve"`, `"/notes/*"` ;
+  une route sans méthode couvre ses pages et tout ce qui est en dessous) ;
+- ceux des exigences que le message du commit nomme (`fix(NDF-3): …`) ;
+- un test dont l'empreinte n'est pas connue (aucun rejeu ne l'a gardée) ;
+- un test qui a échoué la dernière fois : le changement le corrige-t-il ?
+- ceux de `include` : le socle à toujours jouer (connexion, parcours principal) ;
+- un test qui garde une valeur (`capture`) qu'un test choisi utilise. Les étapes sont alors proposées
+  toutes seules.
+
+Une route de `touched` où aucun test ne va est signalée (`uncovered`) : ce que le changement y fait
+n'est pas testé. Un changement qui ne touche aucun test ne lance rien : « Nothing to run ».
+
+Le premier passage ne choisit presque rien : sans empreinte connue, chaque test est pris. Une campagne
+complète les garde toutes.
+
+- **MCP** : `plan_regression(project_id, changed_files, touched?, include?, commit_message?)` montre le
+  choix sans rien lancer. `run_campaign(project_id, changed_files, touched?, include?, commit?)` le
+  lance. L'agent qui a écrit le code connaît ses routes : il les passe dans `touched`.
+- **Le commit** (`commit: { sha, branch, message, dirty }`) est gardé avec la campagne, et son sha
+  court en devient la version. Le rapport le dit, avec les tests choisis et laissés de côté
+  (`commit`, `selection` dans l'API).
+- **CI ou hook git**, depuis le dépôt de l'appli :
+
+  ```bash
+  node mcp-server/bin/campaign.js --project 3 --changed origin/main --include ndf_connexion_employe --headless
+  ```
+
+  `--changed <ref>` prend les fichiers changés depuis que la branche a quitté `<ref>`, commités ou
+  non, nouveaux compris. Le commit (`HEAD`, sha, branche, message, `dirty`) est gardé avec la campagne.
+  Autres options :
+  - `--files a,b` : la liste des fichiers ;
+  - `--touched "POST /api/notes"` : les routes touchées ;
+  - `--repo <dossier>` : le dépôt, s'il n'est pas le dossier courant ;
+  - `--plan` : montre le choix et s'arrête.
+
+  Rien à lancer : code de sortie 0.
+- **API** : `POST /api/campaigns/select` (le choix seul) ; `changed_files`, `touched`, `include` et
+  `commit` dans `POST /api/campaigns`. Rien à lancer : `200 { nothing_to_run, message, selection }`.
+- **Tableau de bord** : *New campaign → What a change touches*, avec le projet, les fichiers et les
+  routes. L'aperçu montre les tests choisis, avec leurs raisons, et ceux laissés de côté. « Run it
+  anyway » en ajoute un. Le rapport a une carte *Chosen for the change*.
 
 #### Rejouer sans fenêtre : le Chrome headless
 
