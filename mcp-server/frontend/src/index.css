@@ -2733,7 +2733,8 @@ textarea { resize: vertical; line-height: 1.5; }
 .triage-panel.triage-test_drift,
 .triage-panel.triage-timing { border-left-color: var(--blue); }
 .triage-panel.triage-changed_value,
-.triage-panel.triage-disabled { border-left-color: var(--orange); }
+.triage-panel.triage-disabled,
+.triage-panel.triage-session_state { border-left-color: var(--orange); }
 .triage-panel.triage-app_regression,
 .triage-panel.triage-non_conformity,
 .triage-panel.triage-environment { border-left-color: var(--red); }
@@ -2744,7 +2745,8 @@ textarea { resize: vertical; line-height: 1.5; }
 .triage-badge.triage-test_drift,
 .triage-badge.triage-timing { background: var(--blue-bg); color: var(--blue); }
 .triage-badge.triage-changed_value,
-.triage-badge.triage-disabled { background: var(--orange-bg); color: var(--orange); }
+.triage-badge.triage-disabled,
+.triage-badge.triage-session_state { background: var(--orange-bg); color: var(--orange); }
 .triage-badge.triage-app_regression,
 .triage-badge.triage-non_conformity,
 .triage-badge.triage-environment { background: var(--red-bg); color: var(--red); }
@@ -2783,7 +2785,8 @@ textarea { resize: vertical; line-height: 1.5; }
 .live-summary-triage.triage-test_drift,
 .live-summary-triage.triage-timing { border-left-color: var(--blue); }
 .live-summary-triage.triage-changed_value,
-.live-summary-triage.triage-disabled { border-left-color: var(--orange); }
+.live-summary-triage.triage-disabled,
+.live-summary-triage.triage-session_state { border-left-color: var(--orange); }
 .live-summary-triage.triage-app_regression,
 .live-summary-triage.triage-non_conformity,
 .live-summary-triage.triage-environment { border-left-color: var(--red); }

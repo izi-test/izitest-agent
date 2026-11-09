@@ -67,7 +67,7 @@ const INPUTS = {
 export function variabilizeInput(step, index, usedNames, row = null) {
   const input = INPUTS[step.command];
   const value = input && step.params?.[input.param];
-  if (!value) return false;
+  if (!value || step._skipVariable) return false;
   const column = row && columnOf(row, value);
   if (column) {
     usedNames.add(column);
@@ -75,7 +75,8 @@ export function variabilizeInput(step, index, usedNames, row = null) {
     step.params[input.param] = `{{${column}}}`;
     return true;
   }
-  const name = uniqueVarName(deriveVarNameFromLocators(step) || `${input.fallback}_${index + 1}`, usedNames);
+  // The name the agent gave it (record_step variable_name), else one from its field.
+  const name = uniqueVarName(step._variableNameOverride || deriveVarNameFromLocators(step) || `${input.fallback}_${index + 1}`, usedNames);
   step.variable = { name, type: input.type, defaultValue: value };
   step.params[input.param] = `{{${name}}}`;
   return true;

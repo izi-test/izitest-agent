@@ -53,7 +53,12 @@ test('a variable that cannot be declared says why', () => {
   assert.match(add({ name: 'option', value: 'antony-92160' }), /\{\{option\}\} already stands for "5": to use it here, give that value or none/);
   assert.match(add({ param: 'selector' }), /Step 1 \(navigate\) has no "selector" value \(it has: url, tabId\)/);
   assert.match(add({ value: 'paris' }), /"paris" is not in the "url" of step 1/);
-  assert.match(addTestVariable(withCityAndBudget(), { step: 1, param: 'url', value: '{{ville}}', name: 'v' }).error, /already a variable/);
+  assert.match(addTestVariable(withCityAndBudget(), { step: 1, param: 'url', value: 'achat/{{ville}}', name: 'v' }).error, /already a variable/);
+  // A variable alone, named again: renamed, everywhere the test uses it.
+  const renamed = addTestVariable(withCityAndBudget(), { step: 1, param: 'url', value: '{{ville}}', name: 'commune' });
+  assert.equal(renamed.renamed, 'ville');
+  assert.equal(renamed.test.steps[0].params.url, 'https://www.bienici.com/recherche/achat/{{commune}}/maisonvilla?prix-max={{budget}}');
+  assert.equal(renamed.test.variables.commune.defaultValue, 'antony-92160');
 });
 
 test('a business step maps the test\'s variables to its parameters', () => {

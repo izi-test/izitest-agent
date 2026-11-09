@@ -15,6 +15,9 @@
 //   app_regression  nothing like the element is on the page, and the page shows an error or a
 //                   request failed: most likely the app.
 //   environment     the page did not load: a network error, the server failed the page itself.
+//   session_state   a login step finds no login form, and the page offers to log out: the
+//                   browser was already logged in, by an earlier run. The test must start
+//                   logged out.
 //   unknown         none of these: a person, or the agent, looks at the page.
 //
 // Nothing is changed here: a repair is a proposal (lib/repairs.js), checked by replaying the
@@ -30,6 +33,7 @@ export const CAUSES = {
   app_regression: 'Suspected app regression: the page fails where the test used to pass',
   non_conformity: 'Non-conformity: the app does not do what the requirement asks',
   environment: 'Environment: the page did not load',
+  session_state: 'Already logged in: a session left by an earlier run',
   unknown: 'No cause found',
 };
 
@@ -42,6 +46,25 @@ const TRIAGE_BUDGET_MS = 8000;
 const TIMING_RECHECK_MS = 1500;
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+// A field a password is typed into, by its selector, name or locators; a control that logs out.
+const PASSWORD = /pass(word)?|pwd|mot.?de.?passe|passwort|contrase/i;
+const LOG_OUT = /\b(log ?out|sign ?out|logout|signout)\b|d[ée]connex|se d[ée]connecter|abmelden|cerrar sesi/i;
+
+/** Whether step `order` (from 1) is part of a login: it or one of the two after it types a password. */
+export function isLoginStep(steps, order) {
+  return steps.slice(order - 1, order + 2).some((step) => step?.command === 'fill'
+    && (String(step.params?.value ?? '').includes('{{secret.') || PASSWORD.test(String(step.params?.selector ?? ''))
+      || (step.locators ?? []).some((l) => PASSWORD.test(`${l.value ?? ''} ${l.name ?? ''}`))));
+}
+
+/** The page is logged in: no password field on it, and something to log out with. */
+export function looksLoggedIn(refs = {}) {
+  const elements = Object.values(refs);
+  const passwordField = elements.some((r) => PASSWORD.test(`${r?.name ?? ''} ${r?.selector ?? ''}`) && r?.role !== 'button' && r?.role !== 'link');
+  const logOut = elements.find((r) => LOG_OUT.test(`${r?.name ?? ''} ${r?.selector ?? ''}`));
+  return !passwordField && logOut ? logOut : null;
+}
 
 /** What a failed step tells of itself: an action whose element was not found, an assertion that failed… */
 export function failureKind(step, error = '') {
@@ -231,6 +254,16 @@ async function diagnose({ stored, failed, tabId, sendCommand, history }) {
   // A check of what the page does wrong on its own (a bug's test): the page has the bug.
   if (kind === 'oracle') return result('app_regression', 'high', `The page still has the bug this step checks for: ${failed.assertionResult?.actual ?? error}`);
   if (kind === 'assertion_error') return result('unknown', 'low', `The check of step ${stepOrder} could not be evaluated: ${failed.assertionResult?.actual ?? error}`);
+
+  // A login step that finds no login form, on a page offering to log out: already logged in.
+  if (kind === 'not_found' && isLoginStep(stored.steps, stepOrder)) {
+    const logOut = looksLoggedIn(page.refs);
+    if (logOut) {
+      return result('session_state', 'medium',
+        `Step ${stepOrder} logs in, but the page shows no login form and offers to log out (${logOut.name || logOut.selector}): the browser was already logged in, by an earlier run in it. `
+        + 'Make the test start logged out — a first step that logs out (the app\'s logout URL), or the test run in a Chrome of its own (a headless campaign gives each lane one). Do not change the login steps.');
+    }
+  }
 
   if (kind === 'not_found' || kind === 'drop_not_found') {
     const side = kind === 'drop_not_found' ? 'target' : 'element';

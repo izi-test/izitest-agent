@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { log } from '../logger.js';
 import { currentSession } from '../session.js';
 import { recordAction } from '../recording.js';
+import { settleActions } from './session-scope.js';
 import { pageOf } from '../elements.js';
 import {
   classifyWithLLM, detectListContext,
@@ -26,9 +27,12 @@ import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables
  * Remove recovery/parasitic steps that result from error recovery during recording.
  * Detected patterns:
  *  - navigate to same URL as a previous navigate → remove the duplicate + surrounding waits
- *  - Trailing wait steps at the very end (often artifacts)
+ *  - Trailing waits of a time only, at the very end: they check nothing. A wait for an element
+ *    is kept: at the end, it is the check of what the test did (the row of the note created);
+ *    dropping it lost the last step an agent recorded.
+ * What it removed is told: `{ steps, removed }`.
  */
-function cleanRecoverySteps(steps) {
+export function cleanRecoverySteps(steps) {
   const cleaned = [...steps];
 
   // Pass 1: Remove duplicate navigate sequences (wait? → navigate(same URL) → wait?)
@@ -49,18 +53,24 @@ function cleanRecoverySteps(steps) {
     }
   }
 
-  // Pass 2: Remove trailing wait steps (common recording artifact)
+  // Pass 2: Remove trailing waits of a time only (a recording artifact)
   let last = cleaned.length - 1;
-  while (last >= 0 && cleaned[last].command === 'wait' && !toRemove.has(last)) {
+  while (last >= 0 && cleaned[last].command === 'wait' && !cleaned[last].params?.selector && !toRemove.has(last)) {
     toRemove.add(last);
     last--;
   }
 
-  if (toRemove.size === 0) return cleaned;
+  if (toRemove.size === 0) return { steps: cleaned, removed: [] };
 
+  const removed = [...toRemove].sort((a, b) => a - b).map((i) => {
+    const step = cleaned[i];
+    return step.command === 'navigate' ? `a navigate repeated (${step.params.url})`
+      : step.params?.selector ? `a wait for ${step.params.selector} around a repeated navigate`
+        : `a wait of ${step.params?.ms ?? 0} ms${i > last ? ' at the end (it checks nothing)' : ''}`;
+  });
   const result = cleaned.filter((_, idx) => !toRemove.has(idx));
   log(`Cleaned ${toRemove.size} parasitic step(s) (${cleaned.length} → ${result.length})`);
-  return result;
+  return { steps: result, removed };
 }
 
 export function registerTestTools(server, { sendCommand: dispatch }) {
@@ -151,12 +161,12 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: record_step (deprecated — steps are now auto-recorded) ---
   server.tool(
     'record_step',
-    '[DEPRECATED] Steps are now automatically recorded when a recording is active. You do NOT need to call this tool. Just execute browser actions and call stop_recording when done. If called, it will add an intent/variable_name override to the last recorded step.',
+    'Steps are recorded on their own while a recording is active: no need to call this to record one. Call it to name the variable of a step (what a fill typed becomes {{variable_name}} at stop_recording, instead of a name taken from its field), to keep its value fixed (skip_variable), or to change its intent.',
     {
-      action_id: z.string().describe('The ID of the action (ignored — steps are auto-recorded)'),
+      action_id: z.string().describe('The action_id a browser tool answered (e.g. "act_12"): the step it recorded'),
       intent: z.string().optional().describe('Human-readable description of what this step does'),
-      variable_name: z.string().optional().describe('Override the auto-detected variable name for this step'),
-      skip_variable: z.boolean().optional().describe('Set to true to skip variable detection for this step')
+      variable_name: z.string().optional().describe('The name of the variable of this step (letters, digits, _), e.g. "email"'),
+      skip_variable: z.boolean().optional().describe('Set to true to keep this step\'s value fixed: no variable')
     },
     async ({ action_id, intent, variable_name, skip_variable }) => {
       const recording = getRecording();
@@ -168,13 +178,16 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         return { content: [{ type: 'text', text: 'No steps recorded yet. Steps are now auto-recorded — just execute browser actions.' }] };
       }
 
-      // Apply optional overrides to the last auto-recorded step
-      const lastStep = recording.steps[recording.steps.length - 1];
+      // The step of that action; the last one when the action is not known.
+      let at = recording.steps.findLastIndex((step) => step._actionId === action_id);
+      if (at < 0) at = recording.steps.length - 1;
+      const lastStep = recording.steps[at];
+      const name = variable_name ? variable_name.trim().replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1') : '';
       if (intent) lastStep.intent = intent;
-      if (variable_name) lastStep._variableNameOverride = variable_name;
+      if (name) lastStep._variableNameOverride = name;
       if (skip_variable) lastStep._skipVariable = true;
 
-      log(`record_step called (deprecated) — applied overrides to step ${recording.steps.length}`);
+      log(`record_step — applied overrides to step ${at + 1}`);
       
       import('../websocket.js').then(({ pushOverlayState }) => {
         pushOverlayState(null, {
@@ -185,16 +198,19 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }, sess().lastTabId ?? null);
       }).catch(() => {});
 
-      return { content: [{ type: 'text', text: `Step ${recording.steps.length} (${lastStep.command}) updated with overrides. Note: record_step is deprecated — steps are auto-recorded. Just call stop_recording when done.` }] };
+      const told = [name && `its variable will be {{${name}}}`, skip_variable && 'its value stays fixed', intent && 'its intent changed'].filter(Boolean).join(', ');
+      return { content: [{ type: 'text', text: `Step ${at + 1} (${lastStep.command})${told ? `: ${told}` : ' unchanged'}. Steps are recorded on their own: call stop_recording when done.` }] };
     }
   );
 
   // --- Tool: stop_recording ---
   server.tool(
     'stop_recording',
-    'Stop the current recording and save the test. Automatically detects variables (fill values become {{variables}}, clicks on list/box items become selectable by index or text). All variable detection runs in batch at save time for faster recording.',
+    'Stop the current recording and save the test. Actions still under way are recorded first. Automatically detects variables (fill values become {{variables}} — named as record_step said —, clicks on list/box items become selectable by index or text). A last wait for an element is kept (it checks the outcome); a last wait of a time only is not. All variable detection runs in batch at save time for faster recording.',
     {},
     async () => {
+      // An action sent with it, in the same message, is recorded first: before, it was lost.
+      await settleActions(sess());
       const recording = getRecording();
       if (!recording) {
         return { content: [{ type: 'text', text: 'No recording in progress.' }] };
@@ -210,7 +226,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }
 
       // ─── Step cleanup: remove parasitic recovery steps ────────────
-      recording.steps = cleanRecoverySteps(recording.steps);
+      const cleanup = cleanRecoverySteps(recording.steps);
+      recording.steps = cleanup.steps;
 
       log(`Batch variable detection for ${recording.steps.length} steps...`);
       // Playing a dataset, its columns are the variables of what came from it, and only those.
@@ -232,7 +249,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }
 
         // Auto-detect CLICK on list/box items (with deduplication)
-        if (step.command === 'click') {
+        if (step.command === 'click' && !step._skipVariable) {
           const cssLocator = (step.locators || []).find(l => l.type === 'css');
           const selector = step.params.selector || (cssLocator && cssLocator.value);
           const clickText = step.params.text;
@@ -243,7 +260,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
               if (listContext) {
                 const llmResult = await classifyWithLLM(listContext, step.intent);
                 if (llmResult.isList) {
-                  const varName = uniqueVarName(llmResult.variableName, usedVarNames);
+                  const varName = uniqueVarName(step._variableNameOverride || llmResult.variableName, usedVarNames);
                   step.variable = listVariable(varName, listContext, llmResult);
                   log(`Auto-variabilized click step ${i + 1}: {{${varName}}} in ${listContext.type}`);
                 }
@@ -285,6 +302,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       setRecording(null);
 
       let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
+      if (cleanup.removed.length) summary += `\nNot kept: ${cleanup.removed.join('; ')}.`;
       summary += linkRecorded(recording);
       summary += placeRecorded(recording);
       if (varCount > 0) {
@@ -444,6 +462,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
             ? `It accepts what the page shows now: ask the user whether that change is intended before resolve_repair(repair_id=${repair.id}, decision="apply").\n`
             : `If the test passes, tell the user what it changes, and on their word save it: resolve_repair(repair_id=${repair.id}, decision="apply").\n`;
           text += `If it does not fix the test, fix the step by hand:\n`;
+        } else if (triage?.cause === 'session_state') {
+          text += `The test is not broken: it started in a browser already logged in. Make it start logged out (a first step to the app's logout URL), then run it again — do NOT change its login steps.\n`;
         } else if (['app_regression', 'environment', 'changed_value', 'disabled', 'non_conformity'].includes(triage?.cause)) {
           text += `This does not look like a broken test (${triage.cause}): do NOT change the test to make it pass — report it to the user first. To fix the step by hand once they agree:\n`;
         }

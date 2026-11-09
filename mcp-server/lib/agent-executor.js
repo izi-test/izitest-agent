@@ -68,7 +68,8 @@ function cleanRecoverySteps(steps) {
     }
   }
   const result = cleaned.filter((_, i) => !toRemove.has(i));
-  while (result.length > 0 && result[result.length - 1].command === 'wait') result.pop();
+  // A trailing wait for an element checks what the test did: kept. One of a time only: not.
+  while (result.length > 0 && result[result.length - 1].command === 'wait' && !result[result.length - 1].params?.selector) result.pop();
   return result;
 }
 

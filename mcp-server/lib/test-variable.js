@@ -94,6 +94,12 @@ export function addTestVariable(test, { step, param, value, name, description, d
   if (recorded == null || typeof recorded === 'object') {
     return { error: `Step ${step} (${recordedStep.command}) has no "${param}" value (it has: ${Object.keys(holder).join(', ') || 'nothing'})` };
   }
+  // The step already holds a variable, the one recording made ({{input_9}}): renamed, given its
+  // default. Before, it was refused as "already a variable", and the agent could not name it.
+  const already = /^\{\{\s*([A-Za-z_]\w*)\s*\}\}$/.exec(String(value ?? recorded))?.[1];
+  if (already && test.variables?.[already] && String(recorded).includes(String(value ?? recorded))) {
+    return renameTestVariable(test, { from: already, to: name, description, defaultValue });
+  }
   const part = String(value ?? (existing ? existing.defaultValue : recorded));
   if (!part || !String(recorded).includes(part)) {
     return { error: `"${part}" is not in the "${param}" of step ${step} ("${recorded}")` };
@@ -118,4 +124,46 @@ export function addTestVariable(test, { step, param, value, name, description, d
     };
   }
   return { test: updated, reused: !!existing };
+}
+
+/** `name` in every {{…}} of `text` replaced by `to`: {{input_9}}, {{ input_9 | upper }}, {{round(input_9 * 2)}}. */
+function renamedIn(text, from, to) {
+  if (typeof text !== 'string') return text;
+  const word = new RegExp(`(?<![\\w.])${from}(?!\\w)`, 'g');
+  return text.replace(/\{\{[^}]*\}\}/g, (expression) => expression.replace(word, to));
+}
+
+/**
+ * The variable `from` of the test named `to`, in every step that uses it (its values, its
+ * assertions, its intents), with its default and description when given. `{ test, renamed }`
+ * or `{ error }`: `to` must be a name the test does not have yet.
+ */
+export function renameTestVariable(test, { from, to, description, defaultValue }) {
+  const variable = test.variables?.[from];
+  if (!variable) return { error: `{{${from}}} is no variable of test "${test.name}"` };
+  if (to !== from && test.variables?.[to]) {
+    return { error: `{{${to}}} is already a variable of test "${test.name}": choose another name, or keep {{${from}}}` };
+  }
+  const updated = structuredClone(test);
+  const rename = (value) => {
+    if (typeof value === 'string') return renamedIn(value, from, to);
+    if (Array.isArray(value)) return value.map(rename);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rename(v)]));
+    return value;
+  };
+  updated.steps = updated.steps.map((step) => ({
+    ...step,
+    ...(step.params && { params: rename(step.params) }),
+    ...(step.assertion && { assertion: rename(step.assertion) }),
+    ...(step.intent && { intent: renamedIn(step.intent, from, to) }),
+    ...(step.variable?.name === from && { variable: { ...step.variable, name: to, ...(defaultValue !== undefined && { defaultValue }) } }),
+  }));
+  const variables = {};
+  for (const [name, info] of Object.entries(updated.variables)) {
+    variables[name === from ? to : name] = name === from
+      ? { ...info, ...(defaultValue !== undefined && { defaultValue }), ...(description && { description }) }
+      : { ...info, ...(typeof info.defaultValue === 'string' && { defaultValue: renamedIn(info.defaultValue, from, to) }) };
+  }
+  updated.variables = variables;
+  return { test: updated, reused: false, renamed: from !== to ? from : null };
 }

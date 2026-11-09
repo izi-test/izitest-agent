@@ -9,5 +9,6 @@ export const CAUSE_LABELS: Record<Triage['cause'], string> = {
   app_regression: 'Suspected app regression',
   non_conformity: 'Non-conformity — the requirement is not met',
   environment: 'Environment — the page did not load',
+  session_state: 'Already logged in — a session left by an earlier run',
   unknown: 'Cause unknown',
 };

@@ -116,7 +116,8 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `list_projects` | Lists the projects (id, name, base URL, language of their tests, number of tests). With `url`, only those of that app: its URL starts with their base URL, or shares its origin. The first call for a new app. |
 | `create_project` | Creates a project: `name` (unique), `base_url`, `language` (`en`, `fr`), `description`, `context`, `project_type`. A name taken answers with the project that has it; another project of the same app is pointed out. Its id is the `project_id` of the tools below. |
 | `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Jeux de données). |
-| `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. |
+| `record_step` | Optional: steps record themselves. Names the variable of the step an action recorded (`action_id`, `variable_name`: what a fill typed becomes `{{email}}` instead of a name taken from its field), keeps its value fixed (`skip_variable`), or changes its intent. |
+| `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. It first waits for the actions still under way (up to 30 s), so one sent in the same message is recorded. A last `wait` for an element is kept: it checks what the test did (before, every wait at the end was dropped as an artifact). One of a time only, at the end, is not, and the answer says what was not kept. |
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
 | `save_requirement` | Saves a requirement — from a request, written by hand, or an issue of a tool (a Jira story) — with its acceptance criteria (see below). |
@@ -139,7 +140,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
 | `get_test_as_code` | Returns a saved test as Playwright code to commit in the project under test (see below). |
 | `create_business_step` | Groups a run of steps of a recorded test into one business Gherkin step (see below). |
-| `add_test_variable` | Turns a recorded value (e.g. a city inside a URL) into a `{{variable}}` of the test (see below). |
+| `add_test_variable` | Turns a recorded value (e.g. a city inside a URL) into a `{{variable}}` of the test (see below). On a step already holding a variable recording made (`{{input_9}}`), renames it everywhere the test uses it and gives it `default_value`. |
 
 ### Export Playwright : `get_test_as_code`
 
@@ -1251,6 +1252,7 @@ l'historique du tableau de bord.
 | `disabled` | L'élément est là mais désactivé | — |
 | `app_regression` | L'élément a disparu, ou la valeur a changé, et la page signale une erreur (`role="alert"`, requête en 4xx/5xx) ; ou elle n'affiche pas la valeur que le test a saisie | — : à signaler, pas à « réparer » |
 | `environment` | La page ne s'est pas chargée (erreur réseau, page servie en 5xx) | — |
+| `session_state` | Une étape de connexion ne trouve pas le formulaire, et la page propose de se déconnecter (« Se déconnecter », « Log out ») : le navigateur était déjà connecté, par un rejeu d'avant. Une étape « de connexion » tape un mot de passe ou un secret, ou précède de peu celle qui le fait | — : faire partir le test déconnecté (une première étape vers l'URL de déconnexion de l'appli, ou une voie headless à lui), sans toucher à ses étapes de connexion |
 | `unknown` | Rien de tout ça, ou plusieurs éléments ressemblent autant à celui cherché | — |
 
 Les preuves accompagnent le diagnostic : l'adresse de la page, ses alertes, les requêtes en échec,

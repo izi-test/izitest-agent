@@ -139,6 +139,8 @@ export function recordAction(session, command, params, refKey, screenshotBase64,
       ...(page && { page }),
       ...(intent && { intent }),
       ...(screenshotBase64 && { _screenshotBase64: screenshotBase64 }),
+      // The action it records: record_step names its variable by it. Not saved.
+      _actionId: id,
     };
     // Purge null/undefined from params
     Object.keys(step.params).forEach(k => {

@@ -392,6 +392,8 @@ export const AGENT_TOOLS = [
       'column of a Scenario Outline. A business step grouping that step maps it with { "variable": "<name>" }.',
       'A name the test already has reuses that variable: e.g. an assertion that checks the e-mail typed in step 2',
       '(add_assertion links new assertions by itself).',
+      'A step already holding a variable recording made ({{input_9}}) has it renamed — everywhere the test uses it —',
+      'and given default_value: e.g. name "description", default "Taxi e2e-{{unique}}".',
       'Its default can be computed at each run instead of the recorded value (default_value): a date relative to the',
       'day ({{today + 3 days | dd/MM/yyyy}}, {{now | HH:mm}}), a value unique to each run (user-{{unique}}@example.com,',
       '{{uuid}}, {{random(1000, 9999)}}), a calculation ({{round(price * 1.2, 2)}}, other variables by name).',
@@ -417,12 +419,13 @@ export const AGENT_TOOLS = [
       if (result.error) return { error: result.error };
 
       saveTest(result.test);
-      log(`[Agent Tool] ${result.reused ? 'Reused' : 'Added'} variable {{${name}}} in step ${step} of "${test_name}"`);
+      log(`[Agent Tool] ${result.renamed ? `Renamed {{${result.renamed}}} to` : result.reused ? 'Reused' : 'Added'} variable {{${name}}} in step ${step} of "${test_name}"`);
       const { params, assertion, command } = result.test.steps[step - 1];
       return {
         data: {
           variable: name,
           reused: result.reused,
+          ...(result.renamed && { renamed_from: result.renamed }),
           defaultValue: result.test.variables[name].defaultValue,
           step: { number: step, command, [param]: (command === 'assert' ? assertion : params)[param] },
           variables: Object.keys(result.test.variables),

@@ -24,6 +24,25 @@ const SESSION_PARAM = z.string().optional().describe(
 // Read-only bookkeeping tools are not what anyone means by "the agent's last action".
 const NOT_ACTIONS = new Set(['list_sessions', 'open_session', 'list_profiles', 'get_tabs']);
 
+// Not waited for by stop_recording: what records nothing, and what waits for the user.
+const NOT_WAITED_FOR = new Set([...NOT_ACTIONS, 'stop_recording', 'ask_user']);
+
+/**
+ * The tool calls of `session` still under way, settled — at most `ms`. stop_recording waits for
+ * them: an action an agent sent in the same message as it was recorded after the test was
+ * saved, and lost, though its answer said it went well.
+ */
+export async function settleActions(session, ms = 30_000) {
+  const running = [...(session.inFlight ?? [])];
+  if (!running.length) return;
+  let timer;
+  await Promise.race([
+    Promise.allSettled(running),
+    new Promise((resolve) => { timer = setTimeout(resolve, ms); }),
+  ]);
+  clearTimeout(timer);
+}
+
 /** Keep the session's last tool call for the cockpit (GET /live/sessions). */
 async function trackLastAction(session, tool, run) {
   if (NOT_ACTIONS.has(tool)) return run();
@@ -67,11 +86,17 @@ export function scopeToolsToSession(server, resolveSessionByName) {
     const toolName = args[0];
     args[args.length - 1] = (toolArgs, extra) => {
       const session = resolveSessionByName(toolArgs?.session);
-      return runInSession(
+      const call = runInSession(
         session,
         { force: toolArgs?.force === true },
         () => trackLastAction(session, toolName, () => handler(toolArgs, extra)),
       );
+      if (!NOT_WAITED_FOR.has(toolName)) {
+        session.inFlight ??= new Set();
+        session.inFlight.add(call);
+        call.finally(() => session.inFlight.delete(call)).catch(() => {});
+      }
+      return call;
     };
 
     return registerTool(...args);
