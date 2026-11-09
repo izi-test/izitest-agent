@@ -78,12 +78,15 @@ npm run setup
 npm start
 ```
 
-**4. Connect your agent.** Claude Code started in this folder finds the server by itself
-([.mcp.json](.mcp.json)). Anywhere else:
+**4. Connect your agent.** In the folder of the app you test:
 
 ```bash
-claude mcp add --transport sse izitest-agent http://127.0.0.1:3467/sse
+claude mcp add --transport sse -s local izitest-agent http://127.0.0.1:3467/sse -H "Authorization: Bearer $IZITEST_TOKEN"
 ```
+
+Without `IZITEST_TOKEN` on the server, drop the `-H …` part; with it, a client that does not send
+it gets 403. The agent then finds or creates the app's project with `list_projects` and
+`create_project`. More in [installation](docs/installation.md#4-connect-your-agent).
 
 The dashboard's own agent (*New test → AI Agent*, *Propose scenarios*) is set in *Settings*: a
 CLI (Claude Code, Gemini, GitHub Copilot, OpenCode) or a model through an API key.

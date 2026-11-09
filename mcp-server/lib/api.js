@@ -23,6 +23,7 @@ import { stepsForEditedFeature } from './gherkin/reconcile.js';
 import { withElementNames, elementTargets, listElements, renameElement, deleteElement } from './element-store.js';
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { languageOf } from './gherkin/language.js';
+import { createProject } from './projects.js';
 import { computeVariables } from './values.js';
 import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetOfTest, datasetRows, rowLabel, datasetLines } from './datasets.js';
 import { listSecrets, saveSecret, deleteSecret, secretLines, secretValue } from './secrets.js';
@@ -1068,31 +1069,16 @@ export async function apiRouter(req, res, url) {
       });
     }
 
-    // POST /api/projects — create new project
+    // POST /api/projects — create new project (lib/projects.js)
     if (method === 'POST' && path === '/api/projects') {
       const body = await readBody(req);
-      if (!body.name) return json(res, 400, { error: 'name is required' });
-
       try {
-        // The language its tests are written in: its built-in phrases are seeded in it.
-        const result = db.prepare(
-          `INSERT INTO projects (name, description, context, project_type, base_url, language)
-           VALUES (?, ?, ?, ?, ?, ?) RETURNING *`
-        ).get(
-          body.name,
-          body.description || '',
-          body.context || '',
-          body.project_type || null,
-          body.base_url || null,
-          languageOf(body.language)
-        );
-        seedProjectStepDefinitions(result.id);
-        return json(res, 201, result);
+        return json(res, 201, createProject(body));
       } catch (err) {
-        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        if (err.code === 'PROJECT_EXISTS' || err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
           return json(res, 409, { error: 'Project name already exists' });
         }
-        throw err;
+        return json(res, 400, { error: err.message });
       }
     }
 

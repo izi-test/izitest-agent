@@ -54,23 +54,39 @@ pm2 start mcp-server/server.js --name izitest-agent
 The server speaks MCP over SSE at `http://127.0.0.1:3467/sse`. Several agents can be connected at
 once, each in its own browser window ([parallel sessions](parallel-sessions.md)).
 
-**Claude Code** started in this folder finds it by itself ([.mcp.json](../.mcp.json)). Anywhere
-else:
+**Claude Code**, in the folder of the app you test (run it there once):
 
 ```bash
-claude mcp add --transport sse izitest-agent http://127.0.0.1:3467/sse
+claude mcp add --transport sse -s local izitest-agent http://127.0.0.1:3467/sse -H "Authorization: Bearer $IZITEST_TOKEN"
 ```
 
+- **With `IZITEST_TOKEN`** set on the server, every request must carry it: without the header,
+  the server answers 403 and the agent has no IziTest tool. The shell puts the token's value in
+  the command; `-s local` keeps it in your `~/.claude.json`, for that folder only, never in the
+  app's repository.
+- **Without a token** (a server on loopback only), drop the `-H …` part.
+- `claude mcp list` says `✔ Connected` when it works. A Claude Code session loads its MCP servers
+  when it starts: start a new one after adding it.
+- This repository's [.mcp.json](../.mcp.json) sends `${IZITEST_TOKEN}` from the environment of
+  the program that starts Claude Code. A terminal where it is exported has it. The Claude desktop
+  app does not get your shell's variables, so there the header goes empty and the server refuses
+  it: use the command above instead.
+
 **Claude Desktop**: in `~/Library/Application Support/Claude/claude_desktop_config.json`
-(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows), with the token's value in
+place of `<token>` (or without `headers` when the server has none):
 
 ```json
 {
   "mcpServers": {
-    "izitest-agent": { "type": "sse", "url": "http://127.0.0.1:3467/sse" }
+    "izitest-agent": { "type": "sse", "url": "http://127.0.0.1:3467/sse", "headers": { "Authorization": "Bearer <token>" } }
   }
 }
 ```
+
+**First thing an agent does for a new app**: `list_projects(url)` finds the app's project,
+`create_project(name, base_url)` makes it when there is none. Its tests, secrets and campaigns
+belong to it. No agent needs the token for that, nor the REST API.
 
 **The dashboard's agent** — the one behind *New test → AI Agent*, *Propose scenarios* and *Chat
 with AI* — is chosen in *Settings*: a CLI it starts (Claude Code, Gemini, GitHub Copilot,

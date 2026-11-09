@@ -22,6 +22,7 @@ import { listDatasets, saveDataset, bindDataset, datasetRows, datasetOfTest, sho
 import { listSecrets } from '../secrets.js';
 import { addTestVariable } from '../test-variable.js';
 import { linkRecorded, requirementsOfTest } from '../requirements.js';
+import { listProjects, createProject, PROJECT_TYPES } from '../projects.js';
 
 function projectDefinitions(projectId) {
   return db.prepare(
@@ -36,6 +37,53 @@ function projectDefinitions(projectId) {
 // ─── Tool catalogue ─────────────────────────────���──────────────────
 
 export const AGENT_TOOLS = [
+  {
+    name: 'list_projects',
+    description: 'List the projects: id, name, base URL, the language their tests are written in (en, fr), how many tests. Call it first when testing an app, to find its project — with `url`, only those whose base URL the app\'s URL starts with or shares the origin of. Its id is the project_id of start_recording, get_project_context, run_campaign… None fits: create_project.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'The app\'s URL (e.g. http://127.0.0.1:5173/notes): only the projects of that app' },
+      },
+    },
+    handler({ url }) {
+      const projects = listProjects({ url });
+      if (!projects.length) {
+        return { text: url ? `No project for ${url}. create_project makes one (name, base_url).` : 'No project yet. create_project makes one (name, base_url).' };
+      }
+      return { data: projects.map(({ id, name, base_url, language, project_type, test_count, description }) => ({ id, name, base_url, language, project_type, test_count, description })) };
+    },
+  },
+
+  {
+    name: 'create_project',
+    description: 'Create a project for an app the tests are for: its name, its base URL, the language its tests are written in (en, fr), what it is. Call list_projects first: an app has one project. Then start_recording(project_id) files its tests in it; its secrets (passwords) are asked with ask_user, never typed in a step.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Its name, unique (e.g. "Notes de frais")' },
+        base_url: { type: 'string', description: 'The app\'s base URL (e.g. http://127.0.0.1:5173)' },
+        description: { type: 'string', description: 'What the app is, in a sentence' },
+        context: { type: 'string', description: 'What a tester should know: roles, rules, data, URLs' },
+        project_type: { type: 'string', enum: PROJECT_TYPES, description: 'Type of project' },
+        language: { type: 'string', enum: ['en', 'fr'], description: 'The language its tests are written in (default en)' },
+      },
+      required: ['name', 'base_url'],
+    },
+    handler({ name, base_url, description, context, project_type, language }) {
+      try {
+        if (!/^https?:\/\/[^/]/.test(String(base_url ?? ''))) return { error: `base_url is the app's URL (http://…), not "${base_url ?? ''}"` };
+        const others = listProjects({ url: base_url });
+        const project = createProject({ name, base_url, description, context, project_type, language });
+        log(`[Agent Tool] Created project #${project.id} "${project.name}"`);
+        const also = others.length ? `\nOther project(s) of that app: ${others.map((p) => `#${p.id} "${p.name}"`).join(', ')} — use one of them if it is the same.` : '';
+        return { text: `Project #${project.id} "${project.name}" created (${project.base_url}, tests in ${project.language}). Its id is the project_id of start_recording, get_project_context, ask_user, run_campaign.${also}` };
+      } catch (err) {
+        return { error: err.code === 'PROJECT_EXISTS' ? `${err.message} — use it (project_id ${err.projectId}), or choose another name` : err.message };
+      }
+    },
+  },
+
   {
     name: 'get_project_context',
     description: 'Get the full context of the current project: name, description, base URL, type, specs/context text, the language its tests are written in (en, fr), its step definitions in that language, its datasets, its secrets (names only: type {{secret.NAME}}, IziTest types the value), and the elements its tests act on — in a Gherkin phrase, the name of one of them goes where a CSS selector goes.',

@@ -113,6 +113,8 @@ These tools allow you to record sequences of actions and replay them autonomousl
 
 | Tool | Description |
 | :--- | :--- |
+| `list_projects` | Lists the projects (id, name, base URL, language of their tests, number of tests). With `url`, only those of that app: its URL starts with their base URL, or shares its origin. The first call for a new app. |
+| `create_project` | Creates a project: `name` (unique), `base_url`, `language` (`en`, `fr`), `description`, `context`, `project_type`. A name taken answers with the project that has it; another project of the same app is pointed out. Its id is the `project_id` of the tools below. |
 | `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Jeux de données). |
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. |
 | `list_tests` | Lists all saved tests and their variables. |
