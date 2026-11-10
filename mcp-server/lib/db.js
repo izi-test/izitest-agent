@@ -269,6 +269,21 @@ export function initDatabase() {
       last_seen TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
   `);
+  // A bug a test's run met (lib/bugs.js recordRunBug): where it comes from (an exploration, or
+  // a test), the run and the campaign it was last seen in, the dataset row, the run that saw it
+  // fixed; and, on a run, the bug it met.
+  try {
+    const bugCols = db.prepare('PRAGMA table_info(bugs)').all().map(c => c.name);
+    if (!bugCols.includes('source')) db.exec("ALTER TABLE bugs ADD COLUMN source TEXT NOT NULL DEFAULT 'exploration'");
+    for (const column of ['execution_id', 'campaign_id', 'data_row', 'fixed_execution_id']) {
+      if (!bugCols.includes(column)) db.exec(`ALTER TABLE bugs ADD COLUMN ${column} INTEGER DEFAULT NULL`);
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_bugs_repro_test ON bugs(repro_test)');
+    const execCols = db.prepare('PRAGMA table_info(test_executions)').all().map(c => c.name);
+    if (!execCols.includes('bug_id')) db.exec('ALTER TABLE test_executions ADD COLUMN bug_id INTEGER DEFAULT NULL');
+  } catch (err) {
+    log(`Migration warning (bugs of runs): ${err.message}`);
+  }
 
   // What a test is for (lib/requirements.js): requirements — from a prompt, written in the
   // dashboard, imported from a tool — their acceptance criteria, and the test cases that

@@ -938,6 +938,17 @@ textarea { resize: vertical; line-height: 1.5; }
 .bug-item__title { font-weight: 600; }
 .bug-item__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12px; color: var(--text-muted); }
 .bug-item__actions { display: flex; gap: 6px; flex-shrink: 0; }
+/* A test's bug: the diagnosis, the requirement criterion it breaks. */
+.bug-item__facts { display: flex; flex-direction: column; gap: 6px; }
+.bug-item__summary { font-size: 13px; color: var(--text-secondary, var(--text-muted)); overflow-wrap: anywhere; }
+.bug-item__criteria { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.bug-item__criteria li { overflow-wrap: anywhere; }
+.bug-item__criteria li > * { margin-right: 6px; }
+.bug-item__facts .alert { display: flex; align-items: center; gap: 6px; margin: 0; }
+/* The bugs a campaign met, and those it saw fixed. */
+.campaign-bugs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.campaign-bugs li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.campaign-bugs__title { min-width: 0; overflow-wrap: anywhere; }
 .proof { font-size: 12px; font-weight: 500; }
 .proof--ok { color: var(--green); }
 .proof--no { color: var(--amber); }

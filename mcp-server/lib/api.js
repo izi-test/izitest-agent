@@ -410,6 +410,7 @@ export async function apiRouter(req, res, url) {
           assertionsPassed: err.assertionsPassed ?? null,
           assertionsFailed: err.assertionsFailed ?? null,
           triage: err.triage ?? null,
+          bug: err.bug ?? null,
         })}\n\n`);
       } finally {
         res.end();

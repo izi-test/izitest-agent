@@ -88,7 +88,7 @@ export function registerExploreTools(server, { sendCommand: dispatch }) {
   // --- Tool: list_bugs ---
   server.tool(
     'list_bugs',
-    'List the bugs explore_app found, worst first, each with the test that reproduces it: open ones by default.',
+    'List the bugs, worst first, each with the test that reproduces it: open ones by default. Two sources: a test run whose failure the diagnosis puts on the app (non_conformity: a requirement not met; regression: app_regression) opens one — the same failure seen again is the same bug, marked fixed when its test passes again unchanged — and explore_app finds the others (console errors, failed requests, broken links, accessibility).',
     {
       status: z.enum(['open', 'dismissed', 'fixed', 'all']).optional().describe('Default: open'),
       project_id: z.number().optional(),

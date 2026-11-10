@@ -1,12 +1,19 @@
-// Bugs the explorer found (lib/explore.js): kept once each across explorations, with a test
-// that reproduces it — the page, the click that caused it, the check it fails — replayed at
-// once to confirm it does fail. The test passes the day the bug is fixed.
+// Bugs, from two sources, kept once each:
+// - the explorer's (lib/explore.js), across explorations: each with a test that reproduces
+//   it — the page, the click that caused it, the check it fails — replayed at once to confirm
+//   it does fail. The test passes the day the bug is fixed.
+// - a test's run, whose failure the diagnosis puts on the app (lib/triage.js): the app does
+//   not do what the requirement asks (non_conformity), or fails where the test used to pass
+//   (app_regression). The test that failed reproduces it; no other is made. Seen again, the
+//   same bug; fixed when that test passes again, as it was when it failed.
 
+import { createHash } from 'crypto';
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
-import { saveTest } from './test-store.js';
+import { saveTest, loadTest } from './test-store.js';
 import { listSessions } from './session.js';
 import { explore, fingerprintOf, severityOf, titleOf, reproStepsOf, pathOf } from './explore.js';
+import { pathOf as routeOf } from './footprint.js';
 
 const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -81,6 +88,119 @@ function recordFinding(finding, explorationId, projectId) {
   return { bug: getBug(id), isNew: true };
 }
 
+// ─── The bugs a test's run met ────────────────────────────────────────
+
+// The kind of bug a diagnosis cause is.
+const RUN_BUG_KINDS = { non_conformity: 'non_conformity', app_regression: 'regression' };
+
+/** Whether a run's diagnosis puts the failure on the app, with a reason to: a bug to keep. */
+export function isAppBug(triage) {
+  return !!triage && triage.cause in RUN_BUG_KINDS && triage.confidence !== 'low';
+}
+
+const cut = (text, length) => {
+  const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return flat.length > length ? `${flat.slice(0, length - 1)}…` : flat;
+};
+
+/**
+ * What a run's bug is, in a line: the criterion not met, then what went wrong — the value
+ * the page shows, else the request the app refused, else the step.
+ */
+export function runBugTitle({ triage, requirements = [], stepOrder, intent }) {
+  const { expected, actual, page = {} } = triage.evidence ?? {};
+  const request = (page.failedRequests ?? [])[0];
+  const what = expected != null && actual != null
+    ? `expected "${cut(expected, 40)}", the page shows "${cut(actual, 50)}"`
+    : request
+      ? `${request.method ?? 'GET'} ${routeOf(request.url) ?? request.url} answered ${request.status || 'nothing'}`
+      : `step ${stepOrder}${intent ? ` (${cut(intent, 60)})` : ''} fails`;
+  const [requirement] = requirements;
+  const criterion = triage.cause === 'non_conformity' && requirement
+    ? `${requirement.key}${requirement.criteria?.[0] ? ` criterion ${requirement.criteria[0].number}` : ''} not met: `
+    : '';
+  return `${criterion}${what}`;
+}
+
+/** What a test does, for knowing it changed: its steps' commands, parameters and checks. */
+export function stepsHash(steps = []) {
+  const shape = steps.map((s) => [s.command, s.params ?? {}, s.assertion ?? null]);
+  return createHash('sha1').update(JSON.stringify(shape)).digest('hex').slice(0, 16);
+}
+
+/**
+ * Keep the bug a run met, when its diagnosis puts the failure on the app (isAppBug): a new
+ * one, or the one this test already met at this step (a fixed one opens again, a dismissed one
+ * stays dismissed). The run is linked to it. { bug, isNew, reopened }, or null for no bug.
+ */
+export function recordRunBug({ testName, projectId = null, executionId, campaignId = null, dataRow = null, stepOrder, triage, requirements = [] }) {
+  if (!isAppBug(triage) || !stepOrder) return null;
+  const test = loadTest(testName);
+  const step = test?.steps?.[stepOrder - 1];
+  const { evidence = {} } = triage;
+  const kind = RUN_BUG_KINDS[triage.cause];
+  const failedRequests = evidence.page?.failedRequests ?? [];
+  const severity = kind === 'non_conformity' || failedRequests.some((r) => r.status >= 500 || r.status === 0) ? 'high' : 'medium';
+  const title = runBugTitle({ triage, requirements, stepOrder, intent: step?.intent });
+  const campaign = campaignId ? db.prepare('SELECT id, name, version, commit_info FROM campaigns WHERE id = ?').get(campaignId) : null;
+  const details = {
+    test: testName, step: evidence.step ?? { order: stepOrder }, cause: triage.cause, confidence: triage.confidence,
+    // The criteria are kept below, each on its own: not said again at the end of the diagnosis.
+    summary: requirements.length ? String(triage.summary ?? '').replace(/ — the test checks [\s\S]*$/, '') : triage.summary,
+    expected: evidence.expected, actual: evidence.actual, failed_requests: failedRequests, alerts: evidence.page?.alerts ?? [],
+    requirements: requirements.map((r) => ({ key: r.key, title: r.title, criteria: (r.criteria ?? []).map((c) => ({ number: c.number, text: c.text })) })),
+    campaign: campaign ? { id: campaign.id, name: campaign.name, version: campaign.version, commit: parseJson(campaign.commit_info)?.sha?.slice(0, 7) ?? null } : null,
+    // How the test was when it met the bug: passing changed, it does not show the bug fixed.
+    steps_hash: stepsHash(test?.steps),
+  };
+  const fingerprint = `run|${testName}|${dataRow ?? ''}|${stepOrder}`;
+  const known = db.prepare('SELECT * FROM bugs WHERE fingerprint = ?').get(fingerprint);
+  let id;
+  if (known) {
+    id = known.id;
+    db.prepare(`UPDATE bugs SET occurrences = occurrences + 1, kind = ?, severity = ?, title = ?, page_url = ?, details = ?,
+                  execution_id = ?, campaign_id = ?, project_id = COALESCE(?, project_id),
+                  status = CASE WHEN status = 'fixed' THEN 'open' ELSE status END,
+                  fixed_execution_id = CASE WHEN status = 'fixed' THEN NULL ELSE fixed_execution_id END,
+                  last_seen = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
+      .run(kind, severity, title, evidence.page?.url ?? '', JSON.stringify(details), executionId, campaignId, projectId, id);
+  } else {
+    ({ id } = db.prepare(
+      `INSERT INTO bugs (fingerprint, source, project_id, kind, severity, title, page_url, details, repro_test, reproduced, execution_id, campaign_id, data_row)
+       VALUES (?, 'test', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?) RETURNING id`
+    ).get(fingerprint, projectId, kind, severity, title, evidence.page?.url ?? '', JSON.stringify(details), testName, executionId, campaignId, dataRow));
+  }
+  db.prepare('UPDATE test_executions SET bug_id = ? WHERE id = ?').run(id, executionId);
+  const bug = getBug(id);
+  log(`Bug #${id} ${known ? (known.status === 'fixed' ? 'open again' : `seen again (${bug.occurrences} times)`) : 'opened'}: ${title}`);
+  return { bug, isNew: !known, reopened: known?.status === 'fixed' };
+}
+
+/**
+ * A test passed, from its first step: the bugs it met are fixed — those met on this dataset
+ * row, the test unchanged since. One changed since stays open: it may pass for not checking
+ * any more what failed. The bugs fixed, and those left open for that.
+ */
+export function fixRunBugs({ testName, dataRow = null, executionId }) {
+  const open = db.prepare(`SELECT * FROM bugs WHERE source = 'test' AND repro_test = ? AND data_row IS ? AND status = 'open'`).all(testName, dataRow).map(toBug);
+  if (!open.length) return { fixed: [], changed: [] };
+  const now = stepsHash(loadTest(testName)?.steps);
+  const fixed = [];
+  const changed = [];
+  for (const bug of open) {
+    if (bug.details.steps_hash && bug.details.steps_hash !== now) {
+      db.prepare('UPDATE bugs SET details = ? WHERE id = ?').run(JSON.stringify({ ...bug.details, passed_after_change: executionId }), bug.id);
+      changed.push(bug.id);
+      continue;
+    }
+    db.prepare(`UPDATE bugs SET status = 'fixed', fixed_execution_id = ? WHERE id = ?`).run(executionId, bug.id);
+    fixed.push(bug.id);
+  }
+  if (fixed.length) log(`Bug(s) ${fixed.map((id) => `#${id}`).join(', ')} fixed: ${testName} passes again`);
+  if (changed.length) log(`Bug(s) ${changed.map((id) => `#${id}`).join(', ')} left open: ${testName} passes, but was changed since`);
+  return { fixed, changed };
+}
+
 /**
  * Replay a bug's test: reproduced when it fails on its own check — the last step. Its
  * window is closed after, whatever it gave.
@@ -151,6 +271,16 @@ export function formatExploration({ exploration, bugs, unvisited, outOfTime }) {
 }
 
 export function formatBug(bug) {
+  if (bug.source === 'test') {
+    const d = bug.details ?? {};
+    const seen = `seen ${bug.occurrences} time${bug.occurrences > 1 ? 's' : ''}${bug.status !== 'open' ? `, ${bug.status}${bug.fixed_execution_id ? ` by run #${bug.fixed_execution_id}` : ''}` : ''}`;
+    return [
+      `#${bug.id} [${bug.severity}] ${bug.kind === 'non_conformity' ? 'Non-conformity' : 'Regression'}: ${bug.title} (${seen})`,
+      `  test: ${bug.repro_test}, step ${d.step?.order ?? '?'}${bug.data_row ? `, row ${bug.data_row}` : ''} — last in ${d.campaign ? `campaign #${d.campaign.id}` : `run #${bug.execution_id}`}`,
+      ...(d.summary ? [`  ${cut(d.summary, 400)}`] : []),
+      ...(d.passed_after_change && bug.status === 'open' ? [`  Its test passed in run #${d.passed_after_change}, but was changed since the bug was seen: check by hand that it is fixed.`] : []),
+    ].join('\n');
+  }
   const proof = bug.reproduced == null ? '' : bug.reproduced ? ' — reproduced by its test' : ' — its test did not reproduce it (intermittent?)';
   return [
     `#${bug.id} [${bug.severity}] ${bug.title}${bug.isNew === false ? ` (known, seen ${bug.occurrences} times, ${bug.status})` : ''}`,

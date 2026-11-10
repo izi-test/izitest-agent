@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Layers, ArrowLeft, Square, RotateCcw, Download, ExternalLink, Trash2, FlaskConical, Loader2, Play, Search, ChevronRight, AlertTriangle, Wand2, GitCommit, Plus, X } from 'lucide-react';
+import { Layers, ArrowLeft, Square, RotateCcw, Download, ExternalLink, Trash2, FlaskConical, Loader2, Play, Search, ChevronRight, AlertTriangle, Wand2, GitCommit, Plus, X, Bug as BugIcon, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
   campaignsApi, useGetCampaignsQuery, useGetCampaignQuery, useStartCampaignMutation, useStopCampaignMutation, useDeleteCampaignMutation,
@@ -504,6 +504,29 @@ export function CampaignPage({ id }: { id: number }) {
         </Card>
       )}
 
+      {c.bugs && (c.bugs.met.length > 0 || c.bugs.fixed.length > 0) && (
+        <Card title="Bugs" icon={BugIcon} subtitle="Failures put on the app, kept in the Bugs page — marked fixed when their test passes again.">
+          <ul className="campaign-bugs">
+            {c.bugs.met.map((b) => (
+              <li key={b.id}>
+                <button className="test-link" onClick={() => go(`/bugs?bug=${b.id}`, { from: `#${c.id}` })}><BugIcon size={12} /> #{b.id}</button>
+                <Pill tone={b.new ? 'red' : 'slate'} dot={false}>{b.new ? 'new' : `seen ${b.occurrences} times`}</Pill>
+                <span className="mono">{b.test}</span>
+                <span className="campaign-bugs__title">{b.title}</span>
+              </li>
+            ))}
+            {c.bugs.fixed.map((b) => (
+              <li key={`fixed-${b.id}`}>
+                <button className="test-link" onClick={() => go(`/bugs?bug=${b.id}`, { from: `#${c.id}` })}><CheckCircle2 size={12} /> #{b.id}</button>
+                <Pill tone="green" dot={false}>fixed</Pill>
+                <span className="mono">{b.test}</span>
+                <span className="campaign-bugs__title">{b.title}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       {c.selection && (
         <Card title="Chosen for the change" icon={GitCommit}
           subtitle={c.selection.full ? `Every test: ${c.selection.why_full.join('; ')}` : `${c.selection.tests.length} of ${c.selection.total} tests: those the changed files touch, each with why. The others were left out.`}>
@@ -591,8 +614,9 @@ export function CampaignPage({ id }: { id: number }) {
   );
 }
 
-/** A test of a campaign: how it did, and why. */
+/** A test of a campaign: how it did, and why; the bug it met. */
 function RunRow({ run: t, onOpen }: { run: CampaignRun; onOpen: (name: string) => void }) {
+  const go = useGo();
   return (
     <tr>
       <td><button className="test-link" onClick={() => onOpen(t.name)}><FlaskConical size={12} /> {t.label ?? t.name}</button></td>
@@ -601,6 +625,11 @@ function RunRow({ run: t, onOpen }: { run: CampaignRun; onOpen: (name: string) =
       <td className="why">
         {t.error && <div className="why__error">{t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}{t.error.split('\n')[0]}</div>}
         {t.triage && <div><strong>{CAUSE_LABELS[t.triage.cause] ?? t.triage.cause}</strong> — {t.triage.summary}</div>}
+        {t.bug && (
+          <button className="test-link" onClick={() => go(`/bugs?bug=${t.bug!.id}`, { from: t.label ?? t.name })}>
+            <BugIcon size={12} /> Bug #{t.bug.id}{t.bug.status !== 'open' ? ` (${t.bug.status})` : ''}
+          </button>
+        )}
         {t.status === 'skipped' && t.skipped_because && <span className="cell-muted">{t.skipped_because}</span>}
         {!t.error && !t.triage && !(t.status === 'skipped' && t.skipped_because) && <span className="cell-muted">—</span>}
       </td>

@@ -12,6 +12,7 @@ import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
 import { requirementsOfTest } from './requirements.js';
 import { readFootprint, saveFootprint } from './footprint.js';
+import { recordRunBug, fixRunBugs } from './bugs.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -823,6 +824,16 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       log(`Could not keep what run #${executionId} of "${name}" touched: ${err.message}`);
     }
   }
+  // Passed, as it is, from its first step: the bugs it met are fixed (lib/bugs.js). Not a
+  // repair being checked (another test than the saved one), nor a bug's test confirming it.
+  let bugsFixed = null;
+  if (finalStatus === 'success' && !isDebugMode && !(Number(start_step) > 1) && trigger !== 'repair' && trigger !== 'explore' && !options.test) {
+    try {
+      bugsFixed = fixRunBugs({ testName: name, dataRow, executionId });
+    } catch (err) {
+      log(`Could not mark the bugs of "${name}" fixed: ${err.message}`);
+    }
+  }
 
   log(`Execution #${executionId} finalized: ${finalStatus} (${completedCount}/${hydratedSteps.length} steps, assertions: ${assertionsPassed}/${assertionsTotal} passed, ${extensionResult.durationMs}ms)`);
 
@@ -842,11 +853,24 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       hydratedSteps, hydrate: (step) => server.rehydrate(step), tabId: lastTabId, sendCommand, values: mergedVariables, runOptions: { variables, substitutions },
     });
   }
+  // A failure the diagnosis puts on the app: a bug, in the Bugs page (lib/bugs.js).
+  let bug = null;
+  if (triage && !options.test) {
+    try {
+      bug = recordRunBug({
+        testName: name, projectId: test.project_id ?? null, executionId, campaignId: options.campaignId ?? null,
+        dataRow, stepOrder: failedStepOrder, triage, requirements: requirementsOfTest(name),
+      });
+    } catch (err) {
+      log(`Could not keep the bug run #${executionId} of "${name}" met: ${err.message}`);
+    }
+  }
 
   if (finalStatus === 'failed') {
     const error = new Error(globalError || 'Test execution failed');
     error.executionId = executionId;
     if (triage) error.triage = triage;
+    if (bug) error.bug = { id: bug.bug.id, title: bug.bug.title, kind: bug.bug.kind, status: bug.bug.status, occurrences: bug.bug.occurrences, isNew: bug.isNew, reopened: bug.reopened };
     error.status = finalStatus;
     error.durationMs = extensionResult.durationMs || null;
     error.failedStep = failedStepOrder;
@@ -876,7 +900,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     throw error;
   }
 
-  return redact({ ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables });
+  return redact({ ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables, ...(bugsFixed?.fixed.length || bugsFixed?.changed.length ? { bugs: bugsFixed } : {}) });
 }
 
 /** Assertions on what the page does wrong on its own, not on an element's text or state. */

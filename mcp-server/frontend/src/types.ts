@@ -218,7 +218,10 @@ export interface Execution {
 /** A bug the explorer found (mcp-server/lib/bugs.js), with the test that reproduces it. */
 export interface Bug {
   id: number;
-  kind: 'console_error' | 'failed_request' | 'broken_link' | 'a11y';
+  /** The explorer's kinds, then those of a test's run: the app breaks a requirement, or fails where the test passed. */
+  kind: 'console_error' | 'failed_request' | 'broken_link' | 'a11y' | 'non_conformity' | 'regression';
+  /** Found by exploring, or met by a test's run (its diagnosis put the failure on the app). */
+  source: 'exploration' | 'test';
   severity: 'high' | 'medium' | 'low';
   title: string;
   page_url: string;
@@ -230,6 +233,39 @@ export interface Bug {
   first_seen: string;
   last_seen: string;
   exploration_id: number | null;
+  /** A test's bug: the run and the campaign it was last seen in, the dataset row, the run that saw it fixed. */
+  execution_id: number | null;
+  campaign_id: number | null;
+  data_row: number | null;
+  fixed_execution_id: number | null;
+}
+
+/** What a test's run kept of the bug it met (mcp-server/lib/bugs.js recordRunBug). */
+export interface RunBugDetails {
+  test: string;
+  step: { order: number; command?: string; intent?: string | null; error?: string };
+  cause: Triage['cause'];
+  confidence: string;
+  summary: string;
+  expected?: string;
+  actual?: string;
+  failed_requests: Array<{ method: string; url: string; status: number }>;
+  alerts: string[];
+  requirements: Array<{ key: string; title: string; criteria: Array<{ number: number; text: string }> }>;
+  campaign: { id: number; name: string; version: string | null; commit: string | null } | null;
+  /** Its test passed in this run, but was changed since the bug was seen: not taken as fixed. */
+  passed_after_change?: number;
+}
+
+/** The bug a campaign's run met. */
+export interface CampaignBug {
+  id: number;
+  title: string;
+  kind: Bug['kind'];
+  severity: Bug['severity'];
+  status: Bug['status'];
+  occurrences: number;
+  first_seen: string;
 }
 
 /** One run of the explorer. */
@@ -371,6 +407,8 @@ export interface CampaignRun {
   total_steps: number | null;
   error: string | null;
   triage: { cause: Triage['cause']; confidence: string; summary: string } | null;
+  /** The bug it met, kept in the Bugs page. */
+  bug?: CampaignBug | null;
 }
 
 /** A requirement as the campaign's runs leave it, criterion by criterion. */
@@ -436,6 +474,8 @@ export interface Campaign {
   selection: RegressionSelection | null;
   requirements: CampaignRequirement[];
   non_conformities: string[];
+  /** The bugs its runs met (new: first seen in it), and those it saw fixed. */
+  bugs?: { met: Array<CampaignBug & { test: string; new: boolean }>; fixed: Array<{ id: number; title: string; kind: Bug['kind']; severity: Bug['severity']; test: string }> };
   runs: CampaignRun[];
   /** Where its results were sent (mcp-server/lib/connectors): a Test Execution of Xray. */
   sent_to?: Array<{ connector: string; name: string; ref: string; url: string | null }>;

@@ -129,6 +129,9 @@ try {
     console.log(`  ✗ ${t.name}${t.failed_step ? ` (step ${t.failed_step})` : ''}${t.triage ? ` — ${t.triage.cause}: ${t.triage.summary}` : ''}`);
   }
   if (campaign.changes?.regressed.length) console.log(`Regressed since their last campaign: ${campaign.changes.regressed.join(', ')}`);
+  // Failures put on the app, kept in the Bugs page (lib/bugs.js); and those fixed now.
+  for (const b of campaign.bugs?.met ?? []) console.log(`Bug #${b.id} (${b.new ? 'new' : `seen ${b.occurrences} times`}) — ${b.test}: ${b.title}`);
+  if (campaign.bugs?.fixed.length) console.log(`Fixed: ${campaign.bugs.fixed.map((b) => `bug #${b.id} (${b.test})`).join(', ')} — their test passes again`);
 
   if (option('junit')) save(option('junit'), await api('GET', `/api/campaigns/${started.id}/junit.xml`));
   if (option('html')) save(option('html'), await api('GET', `/api/campaigns/${started.id}/report.html`));

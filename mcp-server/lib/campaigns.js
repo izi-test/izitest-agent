@@ -397,9 +397,11 @@ function testsOf(row) {
   const errors = parseJson(row.errors) ?? {};
   const skips = parseJson(row.skips) ?? {};
   const runs = new Map(db.prepare(
-    `SELECT id, test_name, data_row, status, failed_step, total_steps, error, duration_ms, triage, assertions_total, assertions_failed
+    `SELECT id, test_name, data_row, status, failed_step, total_steps, error, duration_ms, triage, assertions_total, assertions_failed, bug_id
      FROM test_executions WHERE campaign_id = ? ORDER BY id`
   ).all(row.id).map((run) => [labelOf({ name: run.test_name, row: run.data_row }), run]));
+  // The bug a failed run met, in the Bugs page (lib/bugs.js recordRunBug).
+  const bugOf = db.prepare('SELECT id, title, kind, severity, status, occurrences, first_seen FROM bugs WHERE id = ?');
   const live = running.has(row.id);
   return parseJson(row.tests).map((entry) => {
     const { name, row: dataRow, stage } = entryOf(entry);
@@ -415,8 +417,30 @@ function testsOf(row) {
       failed_step: run?.failed_step ?? null, total_steps: run?.total_steps ?? null,
       error: status === 'failed' || status === 'error' ? (run?.error ?? errors[label]) : null,
       triage: triage ? { cause: triage.cause, confidence: triage.confidence, summary: triage.summary } : null,
+      bug: run?.bug_id ? bugOf.get(run.bug_id) ?? null : null,
     };
   });
+}
+
+/**
+ * The bugs a campaign's runs met — new: first seen in it — and those it saw fixed, its test
+ * passing again (lib/bugs.js).
+ */
+function bugsOf(row, tests) {
+  const from = Date.parse(row.created_at);
+  const to = row.finished_at ? Date.parse(row.finished_at) : Infinity;
+  const met = new Map();
+  for (const t of tests) {
+    if (t.bug && !met.has(t.bug.id)) {
+      const first = Date.parse(t.bug.first_seen);
+      met.set(t.bug.id, { ...t.bug, test: t.label, new: first >= from && first <= to });
+    }
+  }
+  const runIds = tests.map((t) => t.execution_id).filter(Boolean);
+  const fixed = runIds.length
+    ? db.prepare(`SELECT id, title, kind, severity, repro_test AS test FROM bugs WHERE fixed_execution_id IN (${runIds.map(() => '?').join(',')}) ORDER BY id`).all(...runIds)
+    : [];
+  return { met: [...met.values()], fixed };
 }
 
 const STATUSES = ['passed', 'failed', 'error', 'running', 'pending', 'skipped'];
@@ -526,6 +550,7 @@ export function getCampaign(id) {
     one_at_a_time: row.concurrency > 1 && !row.headless ? sharedSessions(tests.map((t) => t.name)) : [],
     stages: stagesOf(parseJson(row.scope)?.stages, tests),
     non_conformities: tests.filter((t) => t.triage?.cause === 'non_conformity').map((t) => t.label),
+    bugs: bugsOf(row, tests),
     runs: tests,
   };
 }
@@ -596,7 +621,12 @@ export function formatCampaign(c) {
       lines.push(`  ${r.key} — ${r.title}: ${r.status.replace('_', ' ')}${r.criteria.length ? ` (${r.criteria.map((x) => `${x.number}: ${x.status.replace('_', ' ')}`).join(', ')})` : ''}`);
     }
   }
-  if (c.non_conformities.length) lines.push(`Non-conformities — the app does not do what its requirement says: ${c.non_conformities.join(', ')}. Report them; do not change the tests.`);
+  if (c.bugs?.met.length) {
+    lines.push('Bugs met — kept in the Bugs page, marked fixed when their test passes again:');
+    for (const b of c.bugs.met) lines.push(`  #${b.id} (${b.new ? 'new' : `seen ${b.occurrences} times${b.status !== 'open' ? `, ${b.status}` : ''}`}) ${b.test}: ${b.title}`);
+  }
+  if (c.bugs?.fixed.length) lines.push(`Bugs fixed — their test passes again: ${c.bugs.fixed.map((b) => `#${b.id} (${b.test})`).join(', ')}`);
+  if (c.non_conformities.length) lines.push(`Non-conformities — the app does not do what its requirement says: ${c.non_conformities.join(', ')}. ${c.bugs?.met.length ? 'They are in the Bugs page: report them' : 'Report them'}; do not change the tests.`);
   if (c.running) lines.push(`Still running: get_campaign(id: ${c.id}) to follow it.`);
   return lines.join('\n');
 }
@@ -664,7 +694,7 @@ export function htmlReport(c) {
   const rows = c.runs.map((t) => `
     <tr><td>${html(t.label ?? t.name)}</td><td>${chip(t.status, STATUS_COLORS[t.status])}</td><td>${seconds(t.duration_ms)}</td>
     <td>${t.status === 'failed' || t.status === 'error'
-      ? `${t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}${html(String(t.error ?? '').split('\n')[0].slice(0, 300))}${t.triage ? `<div class="why"><strong>${html(t.triage.cause.replace('_', ' '))}</strong> — ${html(t.triage.summary)}</div>` : ''}`
+      ? `${t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}${html(String(t.error ?? '').split('\n')[0].slice(0, 300))}${t.triage ? `<div class="why"><strong>${html(t.triage.cause.replace('_', ' '))}</strong> — ${html(t.triage.summary)}</div>` : ''}${t.bug ? `<div class="why">Bug #${t.bug.id}</div>` : ''}`
       : ''}</td></tr>`).join('');
   const { totals } = c;
   return `<!doctype html>
@@ -687,6 +717,7 @@ export function htmlReport(c) {
 <h1>Campaign #${c.id} — ${html(c.name)}</h1>
 <div class="meta">${c.version ? `Version ${html(c.version)} · ` : ''}${html(when)} · ${c.total} test(s), ${c.concurrency} at a time${c.headless ? ', headless' : ''}${c.duration_ms != null ? ` · ${seconds(c.duration_ms)}` : ''} · ${html(c.running ? 'running' : c.status)}</div>
 <div class="totals">${STATUSES.filter((s) => totals[s]).map((s) => `<div style="color:${STATUS_COLORS[s]}">${totals[s]}<span>${s}</span></div>`).join('')}</div>
+${c.bugs?.met.length || c.bugs?.fixed.length ? `<section><h2>Bugs</h2>${c.bugs.met.length ? `<ul>${c.bugs.met.map((b) => `<li><strong>#${b.id}</strong> ${chip(b.new ? 'new' : `seen ${b.occurrences} times`, b.new ? '#b91c1c' : '#6b7280')} ${html(b.test)}: ${html(b.title)}</li>`).join('')}</ul>` : ''}${c.bugs.fixed.length ? `<p><strong class="good">Fixed</strong> — their test passes again: ${c.bugs.fixed.map((b) => `#${b.id} (${html(b.test)})`).join(', ')}</p>` : ''}</section>` : ''}
 ${c.non_conformities.length ? `<section><h2 class="bad">Non-conformities</h2><p>The app does not do what the requirement says: ${c.non_conformities.map(html).join(', ')}.</p></section>` : ''}
 ${changes}
 ${requirements}

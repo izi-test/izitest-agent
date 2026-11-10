@@ -18,7 +18,7 @@ These tools are used for direct, real-time control of the browser.
 | `drag` | Drags an element and drops it on another, with the mouse: a sortable list, a card to another column. Works with `draggable="true"` (HTML5) and with pages that follow the mouse (see below). | `ref` / `selector`, `targetRef` / `target`, `position` (center, top, bottom, left, right) |
 | `explore_app` | Explores a site on its own and reports its bugs (console errors, failed requests, broken links, accessibility), each with a test that reproduces it (see below). | `url`, `max_pages`, `interact`, `checks` |
 | `check_page` | Runs the same checks on the page you are on; nothing is saved. | `checks`, `since_seconds` |
-| `list_bugs` | Lists the bugs found, worst first, with their tests. | `status` |
+| `list_bugs` | Lists the bugs, worst first, each with the test that reproduces it: those a test run met (a failure diagnosed `non_conformity` or `app_regression`) and those `explore_app` found. | `status`, `project_id` |
 | `extract` | Retrieves content (text, attributes) from the page. `attribute: "value"` on a field reads what it holds now. | `selector`, `attribute`, `multiple` |
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
 | `get_page_info` | Detailed info (title, URL, element counts). | `tabId`, `profile` |
@@ -1308,9 +1308,45 @@ protège. Un test de bug qui échoue est diagnostiqué `app_regression` : la pag
 
 Le tableau de bord a une page **Bugs** : lancer une exploration (URL, nombre de pages, clics ; l'URL de
 base du projet pour commencer, et l'exploration est rattachée à ce projet), suivre la dernière, et la
-liste des bugs du projet du tableau de bord, du plus grave au moins grave, filtrée par statut, type et
-gravité, avec leur test et les actions *Fixed*, *Dismiss*, *Reopen*. API : `GET /api/bugs?status=&project_id=`,
-`PUT /api/bugs/:id`, `GET|POST /api/explorations`.
+liste des bugs du projet du tableau de bord, du plus grave au moins grave, filtrée par statut, type,
+origine et gravité, avec leur test et les actions *Fixed*, *Dismiss*, *Reopen*. `/bugs?bug=12` n'en montre
+qu'un. API : `GET /api/bugs?status=&project_id=`, `PUT /api/bugs/:id`, `GET|POST /api/explorations`.
+
+#### Les bugs que rencontre un test
+
+Un test dont l'échec est mis sur le compte de l'appli ouvre aussi un bug dans cette page. Cela vaut pour
+un échec en campagne, par `run_test` ou depuis le tableau de bord, quand le diagnostic dit :
+- `non_conformity` : l'appli ne fait pas ce que dit l'exigence. Type *Non-conformity*, gravité haute.
+- `app_regression` : l'appli échoue là où le test passait. Type *Regression*, gravité haute si une
+  requête a répondu 5xx ou rien, moyenne sinon.
+
+Un `app_regression` de confiance faible, quand rien sur la page ne dit que l'appli a failli, n'ouvre pas
+de bug. Un échec dû au test (`test_drift`, `timing`, `test_outdated`, `session_state`) ou à
+l'environnement n'en ouvre pas non plus.
+
+Le bug garde :
+- son titre, qui dit le critère non respecté puis ce qui a mal tourné : « NDF-2 criterion 3 not met:
+  POST /api/notes/*/submit answered 400 », ou « expected "42,50", the page shows "…42,00 €…" » ;
+- le diagnostic, l'étape, les requêtes refusées, le message de la page ;
+- les critères d'exigence que le test vérifie ;
+- la campagne, avec son commit.
+
+Son test de reproduction est le test qui a échoué : aucun autre n'est créé. L'exécution est liée au
+bug.
+
+Le même échec, sur le même test, la même étape et la même ligne de jeu de données, est **le même
+bug** : il compte une occurrence de plus. Un bug *Fixed* revu repasse *Open* ; un bug *Dismissed* le
+reste.
+
+Quand le test **repasse, depuis sa première étape**, ses bugs passent *Fixed*, avec l'exécution qui les
+a vus corrigés, sauf si le test a changé depuis le bug : ses commandes, paramètres ou contrôles. Un
+test changé peut passer parce qu'il ne vérifie plus ce qui échouait ; le bug reste alors ouvert, et la
+page Bugs comme `run_test` disent de vérifier à la main. Le rejeu d'une réparation en cours de
+vérification n'ouvre ni ne ferme de bug.
+
+La campagne liste les bugs que ses tests ont rencontrés, nouveaux ou déjà vus, et ceux qu'elle a vus
+corrigés : dans son rapport (texte, HTML, carte *Bugs* du tableau de bord), et à côté de chaque test en
+échec. `run_test` dit le bug ouvert ou revu, puis ceux que le test passé a corrigés.
 
 ### Triage et réparation d'un test qui échoue
 

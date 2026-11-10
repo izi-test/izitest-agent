@@ -410,6 +410,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
             resultText += ` (${res.assertionsFailed} failed)`;
           }
         }
+        // The bugs this test met, fixed now that it passes (lib/bugs.js).
+        if (res.bugs?.fixed?.length) resultText += `\n\nBug(s) ${res.bugs.fixed.map((id) => `#${id}`).join(', ')} marked fixed in the Bugs page: this test met them, and passes again.`;
+        if (res.bugs?.changed?.length) resultText += `\n\nBug(s) ${res.bugs.changed.map((id) => `#${id}`).join(', ')} left open: this test passes, but was changed since it met them — it may no longer check what failed. Tell the user.`;
         resultText += `\n\n${JSON.stringify(res.results, null, 2)}`;
         return { content: [{ type: 'text', text: resultText }] };
       } catch (err) {
@@ -454,6 +457,11 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         const triage = err.triage;
         const repair = triage?.proposals?.[0];
         if (triage) text += `=== TRIAGE ===\n${formatTriage(triage)}\n\n`;
+        // Put on the app: kept as a bug (lib/bugs.js), closed when the test passes again.
+        if (err.bug) {
+          const b = err.bug;
+          text += `=== BUG ===\nBug #${b.id} ${b.isNew ? 'opened' : b.reopened ? 'open again (it was fixed)' : `seen again (${b.occurrences} times${b.status !== 'open' ? `, ${b.status}` : ''})`} in the Bugs page: ${b.title}. It is marked fixed when this test passes again, unchanged.\n\n`;
+        }
 
         text += `=== ACTION REQUIRED ===\n`;
         if (repair) {
