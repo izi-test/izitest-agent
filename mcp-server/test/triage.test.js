@@ -273,3 +273,87 @@ test('the expense-notes case, end to end: a 401 before the login is no error, th
   assert.doesNotMatch(triage.summary, /reports an error/);
   assert.equal(triage.proposals[0].change.step.assertion.expected, 'À soumettre');
 });
+
+// The expense-notes cap bug: a note of exactly the cap (200 €) refused at submit (POST …/submit
+// in 400). The test waits for its row as submitted, then checks it on the manager's page.
+const ROW = 'tr[data-testid=review-row][data-description="{{description}}"]';
+const SUBMIT_REFUSED = { method: 'POST', url: 'http://127.0.0.1:5173/api/notes/111/submit', status: 400, resourceType: 'fetch', timestamp: 2 };
+const NDF_2 = [{ key: 'NDF-2', title: 'Plafonds par catégorie', criteria: [{ number: 3, text: "Une note d'un montant égal au plafond se soumet sans justification." }] }];
+
+test('the values a selector took in the run: the record the step looks at', async () => {
+  const { pinnedValues, reported } = await import('../lib/triage.js');
+  assert.deepEqual(pinnedValues(`${ROW} [data-testid=review-status]`, 'tr[data-testid=review-row][data-description="Train e2e-l8a"] [data-testid=review-status]'),
+    [{ name: 'description', value: 'Train e2e-l8a' }]);
+  assert.deepEqual(pinnedValues('#total', '#total'), [], 'no variable');
+  assert.deepEqual(pinnedValues(ROW, '#other'), [], 'not the same selector');
+  assert.deepEqual(pinnedValues('[data-id="{{id}}"]', '[data-id="7"]'), [], 'too short to tell a record by');
+  assert.equal(reported({ failedRequests: [SUBMIT_REFUSED] }), ' — and POST /api/notes/111/submit answered 400');
+  assert.equal(reported({ alerts: ['alert: Note hors plafond'] }), ' — and the page says "Note hors plafond"');
+  assert.equal(reported({}), '');
+});
+
+test('a wait for what never came, while a request was refused: the app, and the requirement it breaks', async () => {
+  const WAIT = { command: 'wait', params: { selector: 'tr[data-testid=note-row][data-description="{{description}}"][data-status=submitted]' } };
+  const triage = await diagnoseFailure({
+    stored: { steps: [{ command: 'click', params: { selector: '[data-testid=note-submit]' } }, WAIT] }, tabId: 1,
+    sendCommand: fakePage({ refs: [ref('button', 'Soumettre', 'tr:nth-of-type(1) [data-testid=note-submit]')], requests: [SUBMIT_REFUSED] }),
+    failed: {
+      step: 2, error: 'Waited 10 s for tr[data-testid=note-row][data-description="Train e2e-l8a"][data-status=submitted]: not found',
+      hydratedSelector: 'tr[data-testid=note-row][data-description="Train e2e-l8a"][data-status=submitted]',
+      onPage: async () => true, // the note's row is there, not submitted
+    },
+    requirements: NDF_2,
+  });
+  assert.equal(triage.cause, 'non_conformity');
+  assert.match(triage.summary, /^Step 2 waited for tr\[data-testid=note-row\]\[data-description="\{\{description\}\}"\]\[data-status=submitted\], which never came, and nothing on the page looks like it — and POST \/api\/notes\/111\/submit answered 400 — the test checks NDF-2 \(Plafonds par catégorie, criterion 3: /);
+  assert.deepEqual(triage.proposals, []);
+  // Without a requirement: a suspected regression, still nothing to repair.
+  const alone = await diagnoseFailure({
+    stored: { steps: [{ command: 'click', params: {} }, WAIT] }, tabId: 1, sendCommand: fakePage({ requests: [SUBMIT_REFUSED] }),
+    failed: { step: 2, error: 'Waited 10 s for x: not found', onPage: async () => true },
+  });
+  assert.deepEqual([alone.cause, alone.confidence, alone.proposals], ['app_regression', 'medium', []]);
+});
+
+test('an assertion on the row of a note the page does not show: not another row\'s status, the app', async () => {
+  const STATUS = { command: 'assert', assertion: { type: 'text_equals', selector: `${ROW} [data-testid=review-status]`, expected: 'Soumise' } };
+  // Before waits failed: the replay went on to the manager's page, where other notes are "Soumise".
+  const badges = [1, 2, 3].map((n) => ref('generic', 'Soumise', `[data-testid="review-table"] tbody > tr:nth-of-type(${n}) > td:nth-of-type(6) > span.badge`));
+  const asked = [];
+  const triage = await diagnoseFailure({
+    stored: { steps: [STATUS] }, tabId: 1, sendCommand: fakePage({ refs: badges, requests: [SUBMIT_REFUSED] }),
+    failed: {
+      step: 1, error: 'x', assertionResult: { passed: false, actual: '(element not found)' },
+      hydratedSelector: 'tr[data-testid=review-row][data-description="Train e2e-l8a"] [data-testid=review-status]',
+      onPage: async (value) => { asked.push(value); return false; },
+    },
+  });
+  assert.deepEqual(asked, ['Train e2e-l8a']);
+  assert.equal(triage.cause, 'app_regression');
+  assert.equal(triage.confidence, 'medium');
+  assert.match(triage.summary, /looks for "Train e2e-l8a" \(\{\{description\}\}\), a value of this run, and the page does not show it — and POST \/api\/notes\/111\/submit answered 400$/);
+  assert.deepEqual(triage.proposals, [], 'no repair pointing it at the first row of the table');
+});
+
+test('the text an assertion reads, in several elements alike: none is picked', async () => {
+  const badges = [1, 2, 3].map((n) => ref('generic', 'Soumise', `tbody > tr:nth-of-type(${n}) .badge`));
+  const STATUS = { command: 'assert', assertion: { type: 'text_equals', selector: '#note-status', expected: 'Soumise' } };
+  const triage = await diagnoseFailure({
+    stored: { steps: [STATUS] }, tabId: 1, sendCommand: fakePage({ refs: badges }),
+    failed: { step: 1, error: 'x', assertionResult: { passed: false, actual: '(element not found)' } },
+  });
+  assert.equal(triage.cause, 'unknown');
+  assert.equal(triage.summary, '#note-status is not on the page; "Soumise" is, in 3 elements alike, none clearly the one it read');
+  assert.deepEqual(triage.proposals, []);
+  // The record the step looks at is on the page, and one element alone shows the text: moved.
+  const pinned = { command: 'assert', assertion: { type: 'text_equals', selector: `${ROW} .status`, expected: 'Soumise' } };
+  const moved = await diagnoseFailure({
+    stored: { steps: [pinned] }, tabId: 1, sendCommand: fakePage({ refs: [ref('generic', 'Soumise', `${ROW.replace('{{description}}', 'Train e2e-l8a')} .state`)] }),
+    failed: {
+      step: 1, error: 'x', assertionResult: { passed: false, actual: '(element not found)' },
+      hydratedSelector: 'tr[data-testid=review-row][data-description="Train e2e-l8a"] .status', onPage: async () => true,
+    },
+  });
+  assert.equal(moved.cause, 'test_drift');
+  assert.equal(moved.proposals[0].kind, 'relocate');
+});

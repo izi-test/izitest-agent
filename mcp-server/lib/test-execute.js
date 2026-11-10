@@ -345,6 +345,8 @@ async function executeInSegments(
       break;
     }
     let played;
+    // What the segment told as it went, numbered as in the test.
+    const streamedHere = [];
     try {
       played = await sendCommand(undefined, 'replay_sequence', {
         steps, startIndex: 0, newWindow: first ? newWindow : false,
@@ -355,6 +357,7 @@ async function executeInSegments(
         if (raw?.type === 'step_complete' && raw.stepResult) {
           const stepResult = { ...raw.stepResult, step: numberOf(raw.stepResult.step) };
           streamedStepResults.push(stepResult);
+          streamedHere.push(stepResult);
           try { persistStepResult(executionId, stepResult); } catch (err) { log(`Failed to live-persist step ${stepResult.step}: ${err.message}`); }
           if (onProgress) onProgress({ ...raw, stepResult });
           return;
@@ -367,8 +370,12 @@ async function executeInSegments(
       failed = true;
     }
     first = false;
-    for (const result of played?.results ?? []) {
-      const stepResult = { ...result, step: numberOf(result.step) };
+    // A segment that failed often loses its results on the way back: those it told stand in.
+    // Without them, a step that failed after a capture had no number, and no diagnosis.
+    const segmentResults = played?.results?.length
+      ? played.results.map((result) => ({ ...result, step: numberOf(result.step) }))
+      : streamedHere;
+    for (const stepResult of segmentResults) {
       results.push(stepResult);
       if (stepResult.tabId) lastTabId = stepResult.tabId;
       if (stepResult.status === 'failed') failed = true;
@@ -832,7 +839,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   if (finalStatus === 'failed' && failedStepOrder && !isDebugMode && trigger !== 'repair' && trigger !== 'explore') {
     triage = await triageRun({
       name, test, executionId, failedStepOrder, globalError, stepResults, assertionStepResults,
-      hydratedSteps, tabId: lastTabId, sendCommand, values: mergedVariables, runOptions: { variables, substitutions },
+      hydratedSteps, hydrate: (step) => server.rehydrate(step), tabId: lastTabId, sendCommand, values: mergedVariables, runOptions: { variables, substitutions },
     });
   }
 
@@ -914,23 +921,37 @@ async function evaluateOracle(sendCommand, assertion, tabId) {
  * Diagnose a failed run (lib/triage.js), keep the diagnosis with the execution and its
  * repairs as proposals (lib/repairs.js). The diagnosis, with each proposal's id.
  */
-async function triageRun({ name, test, executionId, failedStepOrder, globalError, stepResults, assertionStepResults, hydratedSteps, tabId, sendCommand, values, runOptions }) {
+async function triageRun({ name, test, executionId, failedStepOrder, globalError, stepResults, assertionStepResults, hydratedSteps, hydrate, tabId, sendCommand, values, runOptions }) {
   const assertion = assertionStepResults.find((result) => result.step === failedStepOrder && result.status === 'failed');
   const action = stepResults.find((result) => result.step === failedStepOrder);
   const hydrated = hydratedSteps[failedStepOrder - 1];
+  const failedTab = action?.tabId ?? tabId;
+  // The failed step with the values of the run, those its steps kept (capture) included: the
+  // selector it looked for, as it looked for it.
+  let played = hydrated;
+  try { if (hydrate) played = hydrate(test.steps[failedStepOrder - 1]); } catch { /* as hydrated before the run */ }
+  const pinned = {
+    hydratedSelector: played?.assertion?.selector ?? played?.params?.selector,
+    // Whether the page holds a value — in its text or an attribute (lib/triage.js pinnedValues).
+    onPage: async (value) => {
+      const code = `(() => { const v = ${JSON.stringify(value)}; if (document.body && document.body.textContent.includes(v)) return true; for (const el of document.querySelectorAll('*')) for (const a of el.attributes) if (a.value.includes(v)) return true; return false; })()`;
+      const answer = await sendCommand(undefined, 'execute_js', { code, ...(failedTab ? { tabId: failedTab } : {}) });
+      return (answer?.result !== undefined ? answer.result : answer) === true;
+    },
+  };
   const failed = assertion
     ? {
       step: failedStepOrder, error: assertion.error, assertionResult: assertion.assertionResult,
       hydratedExpected: hydrated?.assertion?.expected,
       // Once: triage asks whether it holds a moment later (lib/triage.js).
       recheck: () => evaluateAssertion(sendCommand, hydrated.assertion, tabId, { timeoutMs: 0 }),
+      ...pinned,
     }
-    : { step: failedStepOrder, error: action?.error ?? globalError ?? '' };
+    : { step: failedStepOrder, error: action?.error ?? globalError ?? '', ...pinned };
   const testRow = db.prepare('SELECT id FROM tests WHERE name = ?').get(name);
   const passes = testRow ? db.prepare(
     `SELECT COUNT(*) AS passes, MAX(started_at) AS lastPass FROM test_executions WHERE test_id = ? AND status = 'success' AND trigger != 'repair' AND id < ?`
   ).get(testRow.id, executionId) : { passes: 0, lastPass: null };
-  const failedTab = action?.tabId ?? tabId;
 
   const startedAt = Date.now();
   const diagnosis = await diagnoseFailure({ stored: test, failed, tabId: failedTab, sendCommand, values, history: passes, requirements: requirementsOfTest(name) });

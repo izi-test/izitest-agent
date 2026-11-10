@@ -23,7 +23,7 @@ These tools are used for direct, real-time control of the browser.
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
 | `get_page_info` | Detailed info (title, URL, element counts). | `tabId`, `profile` |
 | `scroll` | Scrolls the page or moves to an element. | `direction`, `amount`, `selector` |
-| `wait` | Pauses for a duration or until an element appears. One of the two is needed: a `wait` with neither is refused, not recorded. | `ms`, `selector` |
+| `wait` | Pauses for a duration or until an element appears (up to 10 s; it then answers `found: false`). One of the two is needed: a `wait` with neither is refused, not recorded. In a replayed test, a wait whose element never appears fails its step: before, the replay went on, and the test failed further on, on another page, for the wrong reason. | `ms`, `selector` |
 | `execute_js` | Runs arbitrary JavaScript in the page context. Recorded as a step while a test records — to only read the page, use `extract` or `snapshot`, which are not. | `code` |
 | `keyboard` | Sends a key press event. | `key`, `modifiers` |
 | `get_cookies` | Retrieves cookies for a URL/domain. | `url`, `domain` |
@@ -827,7 +827,9 @@ quand l'élément est bien là et que l'agent passe `non_conformity: true` aprè
 non-conformité tant que l'appli ne la corrige pas. Au triage, l'échec d'une assertion d'un test lié
 à une exigence est une **non-conformité** (`non_conformity`) : aucune réparation ne propose
 d'attendre la valeur affichée ; un sélecteur cassé (`test_drift`) ou une page lente (`timing`) restent
-l'affaire du test.
+l'affaire du test. Il en va de même pour toute étape où l'appli est en cause (`app_regression`), par
+exemple une attente de la note soumise alors que l'appli a refusé la soumission : la non-conformité
+cite le critère que le test vérifie.
 
 À l'export, les exigences d'un test deviennent des étiquettes : `test('…', { tag: ['@REQ-1'] }, …)`
 en Playwright (`npx playwright test --grep @REQ-1`), `@REQ-1` sur la feature Cucumber
@@ -1321,20 +1323,30 @@ l'historique du tableau de bord.
 
 | Cause | Ce que ça veut dire | Réparation proposée |
 | :--- | :--- | :--- |
-| `test_drift` | Le test a cassé, pas forcément l'appli : aucun localisateur ne trouve plus l'élément, mais la page a un élément qui lui ressemble clairement (même nom ou nom proche, même rôle, même placeholder, même test ID), ou le texte qu'une assertion lit est ailleurs | `relocate` : l'étape pointe vers cet élément (sélecteur, localisateurs, rôle et nom) |
+| `test_drift` | Le test a cassé, pas forcément l'appli : aucun localisateur ne trouve plus l'élément, mais la page a un élément qui lui ressemble clairement (même nom ou nom proche, même rôle, même placeholder, même test ID), ou le texte qu'une assertion lit est ailleurs, dans un seul élément | `relocate` : l'étape pointe vers cet élément (sélecteur, localisateurs, rôle et nom) |
 | `timing` | L'élément est là maintenant, sous un sélecteur de l'étape ; ou l'assertion passe 1,5 s plus tard | `wait` : une attente insérée avant l'étape |
 | `changed_value` | Une assertion lit une autre valeur : régression, ou changement voulu (nouveau libellé) | `expect`, **à juger par une personne** : attendre la nouvelle valeur. Jamais pour la valeur d'une variable, ni pour un long texte lu par « contient » |
 | `disabled` | L'élément est là mais désactivé | — |
-| `app_regression` | L'élément a disparu, ou la valeur a changé, et la page signale une erreur (`role="alert"`, requête en 4xx/5xx) ; ou elle n'affiche pas la valeur que le test a saisie | — : à signaler, pas à « réparer » |
+| `app_regression` | L'élément a disparu, ou la valeur a changé, et la page signale une erreur (`role="alert"`, requête en 4xx/5xx, citée dans le résumé : « POST /api/notes/111/submit answered 400 ») ; ou elle n'affiche pas la valeur que le test a saisie ; ou l'étape cherche ce que le test a créé (une ligne trouvée par `{{description}}`) et la page ne montre plus cette valeur nulle part | — : à signaler, pas à « réparer » |
 | `environment` | La page ne s'est pas chargée (erreur réseau, page servie en 5xx) | — |
 | `test_outdated` | Une assertion lit une autre valeur, et l'exigence que le test vérifie dit cette valeur-là maintenant (« le statut « À soumettre » ») et plus l'attendue : l'exigence a changé, le test n'a pas suivi. Avant, c'était une `non_conformity`, et l'agent qui venait de mettre l'exigence à jour s'entendait dire de ne pas toucher au test | `expect` sans revue : attendre ce que dit l'exigence |
 | `session_state` | Une étape de connexion ne trouve pas le formulaire, et la page propose de se déconnecter (« Se déconnecter », « Log out ») : le navigateur était déjà connecté, par un rejeu d'avant. Une étape « de connexion » tape un mot de passe ou un secret, ou précède de peu celle qui le fait | — : faire partir le test déconnecté (une première étape vers l'URL de déconnexion de l'appli, ou une voie headless à lui), sans toucher à ses étapes de connexion |
-| `unknown` | Rien de tout ça, ou plusieurs éléments ressemblent autant à celui cherché | — |
+| `unknown` | Rien de tout ça, ou plusieurs éléments ressemblent autant à celui cherché, ou montrent tous le texte qu'une assertion lit (le statut de chaque ligne d'une liste) | — |
 
 Une requête en échec n'est pas une erreur de la page quand elle a été redemandée ensuite avec succès,
 ou quand c'est un 401 ou 403 suivi d'une requête réussie vers le même site : c'est la vérification de
 session avant la connexion (`GET /api/auth/me` en 401, puis la connexion et les notes en 200). Elle
 faisait dire « la page signale une erreur » sur toute appli avec une connexion.
+
+Une étape qui cherche ce que le test a créé n'est jamais « réparée » vers un autre élément. Exemple
+avec « Notes de frais » : une note de 200 € (le plafond transport) est refusée à tort à la soumission.
+Le test attendait sa ligne au statut « Soumise », puis la vérifiait sur la page du manager :
+- **Avant** : l'attente échouait sans rien dire et le test échouait 7 étapes plus loin. Le triage
+  trouvait « Soumise » sur la première ligne du tableau, celle d'une autre note, concluait à un
+  `test_drift`, et proposait de vérifier cette ligne-là. Acceptée, cette réparation aurait fait
+  repasser le test sur la note de quelqu'un d'autre et caché le bug.
+- **Maintenant** : le test échoue sur l'attente, en `non_conformity` au critère 3 de NDF-2, avec le
+  400 de la soumission. Aucune réparation n'est proposée.
 
 Les preuves accompagnent le diagnostic : l'adresse de la page, ses alertes, les requêtes en échec,
 les meilleurs candidats avec leur score, et combien de fois le test est passé avant.
@@ -1348,7 +1360,10 @@ l'aveugle (`stale`). Le même échec revu propose la même réparation : elle es
 dupliquée. Les rejeux de vérification apparaissent dans l'historique avec le déclencheur `repair`.
 
 Les étapes du rejeu sont numérotées comme dans le test : une assertion placée au milieu décalait
-d'un cran toutes les étapes suivantes, et l'échec était signalé (et réparé) sur la mauvaise.
+d'un cran toutes les étapes suivantes, et l'échec était signalé (et réparé) sur la mauvaise. Une étape
+du navigateur qui échoue après une étape serveur (une capture, un appel d'API) garde aussi son
+numéro et son diagnostic. Avant, les résultats de son segment se perdaient au retour, et l'échec
+arrivait sans étape ni diagnostic.
 
 ### Visual Regression Testing (VRT)
 

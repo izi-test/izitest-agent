@@ -298,7 +298,7 @@ export async function cmdWait({ ms, selector, tabId, sessionId }: WaitParams) {
       if (await isThere()) return { found: true, selector };
       await delay(WAIT_POLL_MS);
     } while (Date.now() < deadline);
-    return { found: false, selector, timeout: true };
+    return { found: false, selector, timeout: true, waitedMs: WAIT_MAX_TIMEOUT_MS };
   }
 
   return { error: 'Specify either ms or selector' };

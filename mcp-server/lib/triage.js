@@ -13,7 +13,9 @@
 //   disabled        the element is there but disabled: a field the form needs may be missing
 //                   or refused.
 //   app_regression  nothing like the element is on the page, and the page shows an error or a
-//                   request failed: most likely the app.
+//                   request failed: most likely the app. Or the step looks at what the run
+//                   made (a row found by {{description}}), and that value is not on the page:
+//                   the app did not keep or show it — no other element stands in for it.
 //   environment     the page did not load: a network error, the server failed the page itself.
 //   test_outdated   an assertion reads another value, and the requirement it checks says that
 //                   value now: the requirement changed, the test did not follow. Repair: expect
@@ -196,6 +198,31 @@ export function newExpectation(assertion, actual) {
   return null;
 }
 
+/**
+ * The values a step's selector took in the run, where its stored form has {{variables}}: the
+ * thing the test made that the step looks at ("Train e2e-x" in
+ * tr[data-description="{{description}}"]). [{ name, value }]; none when nothing was filled in.
+ */
+export function pinnedValues(template, hydrated) {
+  const stored = String(template ?? '');
+  const names = [...stored.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]);
+  if (!names.length || typeof hydrated !== 'string') return [];
+  const pattern = stored.split(/\{\{[^}]+\}\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('(.+?)');
+  const match = hydrated.match(new RegExp(`^${pattern}$`, 's'));
+  if (!match) return [];
+  // A value too short to tell a record by ("1", "a") says nothing of the page.
+  return names.map((name, i) => ({ name, value: match[i + 1] })).filter(({ value }) => value.trim().length >= 3 && !/\{\{/.test(value));
+}
+
+/** What the page reported, said after a summary: " — and POST /api/notes/7/submit answered 400". */
+export function reported(page = {}) {
+  const path = (url) => { try { const u = new URL(url); return `${u.pathname}${u.search}`; } catch { return url; } };
+  const requests = (page.failedRequests ?? []).slice(0, 2).map((r) => `${r.method ?? 'GET'} ${path(r.url)} ${r.status ? `answered ${r.status}` : 'got no answer'}`);
+  const alert = (page.alerts ?? [])[0]?.replace(/^(alert|alertdialog):\s*/, '');
+  const said = [...requests, ...(alert ? [`the page says "${alert}"`] : [])];
+  return said.length ? ` — and ${said.join(', ')}` : '';
+}
+
 /** The cause of a failure the page gave no candidate for: the page's own signals decide. */
 export function causeWithoutCandidate(kind, signals = {}) {
   const pageFailed = (signals.failedRequests ?? []).some(r => r.resourceType === 'document' && r.status >= 500);
@@ -214,7 +241,7 @@ export function causeWithoutCandidate(kind, signals = {}) {
  */
 export async function diagnoseFailure({ stored, failed, tabId, sendCommand, values = {}, history = {}, requirements = [] }) {
   const work = diagnose({ stored, failed, tabId, sendCommand, values, history })
-    .then((diagnosis) => stored.steps[failed.step - 1]?.command === 'assert' ? againstRequirements(diagnosis, requirements) : diagnosis);
+    .then((diagnosis) => againstRequirements(diagnosis, requirements));
   const late = new Promise(resolve => setTimeout(() => resolve({
     cause: 'unknown', confidence: 'low', summary: 'The diagnosis took too long and was stopped', evidence: {}, proposals: [],
   }), TRIAGE_BUDGET_MS));
@@ -225,10 +252,11 @@ export async function diagnoseFailure({ stored, failed, tabId, sendCommand, valu
 }
 
 /**
- * A test that checks a requirement, failing on what the page shows: the app does not do what
- * the requirement asks. Its expected value comes from the requirement, not from the app: no
- * repair offers to expect what the page shows instead. A selector that broke (test_drift) or
- * a page that was slow (timing) are still the test's.
+ * A test that checks a requirement, failing on what the page shows — or where the app went
+ * wrong, at any step (a note the app refused to submit, waited for in vain): the app does not
+ * do what the requirement asks. Its expected value comes from the requirement, not from the
+ * app: no repair offers to expect what the page shows instead. A selector that broke
+ * (test_drift) or a page that was slow (timing) are still the test's.
  */
 export function againstRequirements(diagnosis, requirements) {
   if (!requirements?.length || !['changed_value', 'app_regression'].includes(diagnosis.cause)) return diagnosis;
@@ -292,15 +320,29 @@ async function diagnose({ stored, failed, tabId, sendCommand, history }) {
     }
   }
 
+  // The thing the run made that the step looks at (a note's row, by its description), not on
+  // the page: the app did not keep or show it, and no other element stands in for it — the
+  // status of another note's row is not this one's.
+  const recordGone = (subject, gone) => {
+    const { cause, confidence } = causeWithoutCandidate(kind, page);
+    return result(cause === 'environment' ? cause : 'app_regression', cause === 'unknown' ? 'low' : confidence,
+      `${subject}: it looks for "${gone.value}" ({{${gone.name}}}), a value of this run, and the page does not show it${reported(page)}`);
+  };
+
   if (kind === 'not_found' || kind === 'drop_not_found') {
     const side = kind === 'drop_not_found' ? 'target' : 'element';
+    const what = side === 'target' ? 'where to drop it' : 'the element';
+    const subject = step.command === 'wait'
+      ? `Step ${stepOrder} waited for ${step.params?.selector ?? 'an element'}, which never came`
+      : `${what[0].toUpperCase()}${what.slice(1)} of step ${stepOrder} is not found`;
+    const gone = side === 'element' ? await goneFromPage(step.params?.selector, failed) : null;
+    if (gone) return recordGone(subject, gone);
     const identity = identityOf(step, side);
     // Every element of the page that can be acted on: a name searched for would miss a
     // button reworded ("Create account" → "Create my account").
     const candidates = Object.values(page.refs ?? {}).filter(info => info?.selector);
     const { best, confidence, ambiguous, scored } = pickCandidate(identity, candidates, step.command);
     evidence.candidates = scored.slice(0, 3).map(({ candidate, score, why }) => ({ selector: candidate.selector, role: candidate.role, name: candidate.name, score, why }));
-    const what = side === 'target' ? 'where to drop it' : 'the element';
     if (best?.sameSelector) {
       return result('timing', 'medium', `The step gave up on ${what}, which is on the page now (${best.candidate.selector})`, [{
         kind: 'wait', step_order: stepOrder,
@@ -318,7 +360,7 @@ async function diagnose({ stored, failed, tabId, sendCommand, history }) {
     }
     const { cause, confidence: c } = causeWithoutCandidate(kind, page);
     const why = ambiguous ? 'several elements of the page look like it, none clearly' : 'nothing on the page looks like it';
-    return result(cause, c, `${what[0].toUpperCase()}${what.slice(1)} of step ${stepOrder} is not found, and ${why}`);
+    return result(cause, c, `${subject}, and ${why}${cause === 'app_regression' ? reported(page) : ''}`);
   }
 
   if (kind === 'assertion_missing' || kind === 'assertion_value') {
@@ -328,13 +370,19 @@ async function diagnose({ stored, failed, tabId, sendCommand, history }) {
     // Weighed against the requirement the test checks (againstRequirements).
     if (kind === 'assertion_value') Object.assign(evidence, { expected, actual });
     if (kind === 'assertion_missing') {
+      const gone = await goneFromPage(assertion.selector, failed);
+      if (gone) return recordGone(`${assertion.selector} is not on the page`, gone);
       // The text the assertion looks for, elsewhere on the page: the selector broke.
       const candidates = tabId && expected ? await candidatesFor([String(expected)], tabId, sendCommand, { interactiveOnly: false }) : [];
-      const holder = candidates
+      const holders = candidates
         .filter(c => c.selector && norm(c.name).includes(norm(expected)))
-        .sort((a, b) => String(a.name).length - String(b.name).length)[0];
+        .sort((a, b) => String(a.name).length - String(b.name).length);
+      const [holder] = holders;
       evidence.candidates = candidates.slice(0, 3).map(c => ({ selector: c.selector, role: c.role, name: c.name }));
-      if (holder) {
+      // Several elements show it alike — a status on each row of a list: none is clearly the
+      // one the step read. Pointed at the first, the test would check another row, and pass.
+      const alike = holder ? holders.filter(c => norm(c.name) === norm(holder.name)).length : 0;
+      if (holder && alike === 1) {
         return result('test_drift', 'medium', `${assertion.selector} is not on the page, but "${expected}" is, in ${holder.selector}`, [{
           kind: 'relocate', step_order: stepOrder,
           summary: `Check ${holder.selector} in step ${stepOrder}`,
@@ -342,8 +390,12 @@ async function diagnose({ stored, failed, tabId, sendCommand, history }) {
         }]);
       }
       const { cause, confidence } = causeWithoutCandidate(kind, page);
+      if (holder) {
+        return result(cause, confidence,
+          `${assertion.selector} is not on the page; "${expected}" is, in ${alike} elements alike, none clearly the one it read${cause === 'app_regression' ? reported(page) : ''}`);
+      }
       return result(cause === 'unknown' ? 'app_regression' : cause, cause === 'unknown' ? 'low' : confidence,
-        `${assertion.selector ?? 'The element'} is not on the page${expected ? `, nor is "${expected}"` : ''}`);
+        `${assertion.selector ?? 'The element'} is not on the page${expected ? `, nor is "${expected}"` : ''}${reported(page)}`);
     }
     // Asked again a moment later: the page may only have been slow to show it.
     if (tabId && failed.recheck) {
@@ -410,6 +462,20 @@ export function failuresOf(requests) {
     return true;
   });
   return stayed.slice(0, 5).map(({ method, url, status, resourceType }) => ({ method, url, status, resourceType }));
+}
+
+/**
+ * The first value `selector` took from the run that the page does not hold anywhere, if any:
+ * the record the step looks at is gone. `failed.onPage(value)` reads the page; a page that
+ * cannot be read counts as holding it.
+ */
+async function goneFromPage(selector, failed) {
+  if (!failed.onPage) return null;
+  for (const pinned of pinnedValues(selector, failed.hydratedSelector)) {
+    const there = await failed.onPage(pinned.value).catch(() => true);
+    if (!there) return pinned;
+  }
+  return null;
 }
 
 /** Elements of the page that match one of `terms`: snapshot refs, with their role, name and locators. */

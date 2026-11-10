@@ -129,6 +129,42 @@ test('a server step that fails stops the run there: the steps after are not play
   assert.deepEqual(segments.map((s) => s.steps.map((step) => step.command)), [['navigate']]);
 });
 
+test('a browser step that fails after a capture keeps its number in the test, and is diagnosed', async () => {
+  saveTest({
+    name: 'waits-in-vain', variables: {},
+    steps: [
+      { command: 'navigate', params: { url: 'https://shop.test' } },
+      { command: 'capture', params: { selector: '#order', name: 'order', pattern: '#(\\d+)' } },
+      { command: 'click', params: { selector: '#submit' } },
+      { command: 'wait', params: { selector: '#submitted' } },
+      { command: 'click', params: { selector: '#next' } },
+    ],
+  });
+  const sendCommand = async (_profile, command, params, _timeout, onMessage) => {
+    if (command === 'replay_sequence') {
+      const waitAt = params.steps.findIndex((s) => s.command === 'wait');
+      if (waitAt < 0) return { results: params.steps.map((s, i) => ({ step: i + 1, command: s.command, status: 'success', tabId: 31 })) };
+      // As the extension does: each step told as it goes, then the error thrown — its results
+      // lost on the way back.
+      params.steps.forEach((s, i) => onMessage?.({ type: 'step_complete', stepResult: {
+        step: i + 1, command: s.command, tabId: 31, status: i < waitAt ? 'success' : i === waitAt ? 'failed' : 'skipped',
+        ...(i === waitAt ? { error: 'Waited 10 s for #submitted: not found' } : {}),
+      } }));
+      throw new Error(`Step ${waitAt + 1}/${params.steps.length} failed: Waited 10 s for #submitted: not found`);
+    }
+    if (command === 'execute_js') return { result: 'Order #4521 confirmed' };
+    if (command === 'network_requests') return { requests: [{ method: 'POST', url: 'https://shop.test/api/submit', status: 400, resourceType: 'fetch' }] };
+    return {};
+  };
+  const failure = await executeTest('waits-in-vain', {}, null, null, false, sendCommand, 'test').then(() => null, (err) => err);
+  assert.equal(failure.failedStep, 4, 'the wait, numbered as in the test, not "step 2" of its segment');
+  assert.equal(failure.failedStepCommand, 'wait');
+  assert.equal(failure.message, 'Waited 10 s for #submitted: not found');
+  assert.equal(failure.triage?.cause, 'app_regression');
+  assert.match(failure.triage.summary, /^Step 4 waited for #submitted, which never came, .* — and POST \/api\/submit answered 400$/);
+  assert.deepEqual(failure.stepResults.map((r) => [r.step, r.status]), [[1, 'success'], [2, 'success'], [3, 'success'], [4, 'failed'], [5, 'skipped']]);
+});
+
 test('the exported code keeps the values as it runs: Playwright through VARS, Cucumber through the World', () => {
   const t = {
     name: 'reorder', project_id: 1, variables: { email: { defaultValue: 'bob@x.dev' } },

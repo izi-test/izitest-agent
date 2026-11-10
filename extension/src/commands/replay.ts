@@ -9,6 +9,7 @@ import { dragElements } from './drag';
 import { cmdExecuteJs, cmdWait } from './queries';
 import { setPickedValue } from '../dom/picked-input';
 import { actsOnPage } from '../page-url';
+import { missedWait } from '../wait-outcome';
 import { fileInputOf, putFiles } from '../dom/file-input';
 import type { ReplaySequenceParams, Locator } from '../types';
 import type { ElementHandle, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
@@ -334,6 +335,9 @@ export async function cmdReplaySequence(
 
         const res = await handler(baseParams);
         if (res && res.tabId) currentTabId = res.tabId;
+        // What a wait waited for never came: the steps after it would act on another page.
+        const missed = missedWait(step.command, res);
+        if (missed) throw new Error(missed);
 
         console.log(`  ✅ Step ${i + 1} completed successfully`);
         const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt, { tabId: currentTabId });
