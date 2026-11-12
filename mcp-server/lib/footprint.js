@@ -4,12 +4,17 @@
 // with its server steps' HTTP calls. What a change touches is weighed against it to choose the
 // tests a commit needs (lib/regression.js).
 //
+// It also keeps the requests that failed all the same, with their status (`failed`), and the
+// steps it ran (`steps_hash`): when the same steps fail later, a request that failed the same way
+// on this run is not why (lib/triage.js).
+//
 // A path is kept as a page is (lib/elements.js pageOf): a part holding a digit or a long token
 // is starred, so /api/notes/42 and /api/notes/43 are one route: GET /api/notes/*.
 
 import { db, parseJson } from './db.js';
 import { pageOf } from './elements.js';
 import { loadTest } from './test-store.js';
+import { failuresOf, requestRoute } from './triage.js';
 
 /** The path of a URL as a footprint keeps it: /notes/*, without host, query or fragment; null for no web page. */
 export function pathOf(url) {
@@ -102,12 +107,41 @@ export async function readFootprint(sendCommand, { tabIds, since, pageUrls, step
   return {
     pages: [...new Set([...ofRun.pages, ...ofSteps.pages])].sort(),
     api: [...new Set([...ofRun.api, ...ofSteps.api])].sort(),
+    failed: failedRoutes(requests, since),
   };
+}
+
+/**
+ * The requests of a run (since `since`) that failed and stayed failed (lib/triage.js
+ * failuresOf), on any host, as routes with their status: ['GET /manifest.json 404',
+ * 'GET /api/idw/personalizations/* 404'].
+ */
+export function failedRoutes(requests = [], since = 0) {
+  const ofRun = requests.filter((r) => (r.timestamp ?? 0) >= since && !DEV_SERVER.test(r.url));
+  return [...new Set(failuresOf(ofRun).map((r) => `${requestRoute(r)} ${r.status}`))].sort();
 }
 
 /** Keep a run's footprint. */
 export function saveFootprint(executionId, footprint) {
   db.prepare('UPDATE test_executions SET footprint = ? WHERE id = ?').run(JSON.stringify(footprint), executionId);
+}
+
+/**
+ * The requests that failed on the test's last passing run of the same steps (`stepsHash`, lib/bugs.js
+ * stepsHash), before run `before`: { run, failed }. Null when no such run kept them — a run kept
+ * before footprints held them, or the test changed since it last passed.
+ */
+export function failuresOnLastPass(testId, { before, stepsHash }) {
+  const runs = db.prepare(
+    `SELECT id, footprint FROM test_executions
+     WHERE test_id = ? AND id < ? AND status = 'success' AND trigger != 'repair' AND footprint IS NOT NULL
+     ORDER BY id DESC LIMIT 50`
+  ).all(testId, before);
+  for (const { id, footprint } of runs) {
+    const kept = parseJson(footprint);
+    if (kept?.steps_hash === stepsHash && Array.isArray(kept.failed)) return { run: id, failed: kept.failed };
+  }
+  return null;
 }
 
 /**

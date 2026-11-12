@@ -276,7 +276,9 @@ const cut = (text, length) => {
 
 /**
  * What a run's bug is, in a line: the criterion not met, then what went wrong — the value
- * the page shows, else the request the app refused, else the step.
+ * the page shows, else the request the app refused, else the step and its intent. A request the
+ * diagnosis set aside (a manifest, another site's script: lib/triage.js weighFailures) never
+ * names a bug: it is in `ignoredRequests`, not in `failedRequests`.
  */
 export function runBugTitle({ triage, requirements = [], stepOrder, intent }) {
   const { expected, actual, page = {} } = triage.evidence ?? {};
@@ -314,6 +316,8 @@ export function recordRunBug({ testName, projectId = null, executionId, campaign
   const step = test?.steps?.[stepOrder - 1];
   const { evidence = {} } = triage;
   const kind = RUN_BUG_KINDS[triage.cause];
+  // The requests the diagnosis counted against the app: one of another site with no answer — an
+  // analytics script a proxy blocks — is not among them, and makes no bug worse.
   const failedRequests = evidence.page?.failedRequests ?? [];
   const severity = kind === 'non_conformity' || failedRequests.some((r) => r.status >= 500 || r.status === 0) ? 'high' : 'medium';
   const title = runBugTitle({ triage, requirements, stepOrder, intent: step?.intent });

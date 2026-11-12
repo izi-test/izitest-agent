@@ -13,9 +13,12 @@
 //   disabled        the element is there but disabled: a field the form needs may be missing
 //                   or refused.
 //   app_regression  nothing like the element is on the page, and the page shows an error or a
-//                   request failed: most likely the app. Or the step looks at what the run
-//                   made (a row found by {{description}}), and that value is not on the page:
-//                   the app did not keep or show it — no other element stands in for it.
+//                   request of the app failed: most likely the app. Or the step looks at what
+//                   the run made (a row found by {{description}}), and that value is not on the
+//                   page: the app did not keep or show it — no other element stands in for it.
+//                   A request that fails on every page says nothing of this failure: a manifest,
+//                   a beacon, another site's script, analytics a proxy blocks, one that failed on
+//                   the test's last passing run too (weighFailures).
 //   environment     the page did not load: a network error, the server failed the page itself.
 //   test_outdated   an assertion reads another value, and the requirement it checks says that
 //                   value now: the requirement changed, the test did not follow. Repair: expect
@@ -29,6 +32,7 @@
 // test with it and saved only when someone accepts it.
 
 import { log } from './logger.js';
+import { pageOf } from './elements.js';
 
 export const CAUSES = {
   test_drift: 'The test broke: the page changed, the element is still there',
@@ -239,8 +243,8 @@ export function causeWithoutCandidate(kind, signals = {}) {
  * left in), `failed` the failed step's result ({ step, error, assertionResult }), `values`
  * what the run filled in. Bounded: past the budget the cause is unknown, never a hang.
  */
-export async function diagnoseFailure({ stored, failed, tabId, sendCommand, values = {}, history = {}, requirements = [] }) {
-  const work = diagnose({ stored, failed, tabId, sendCommand, values, history })
+export async function diagnoseFailure({ stored, failed, tabId, sendCommand, values = {}, history = {}, requirements = [], appUrls = [] }) {
+  const work = diagnose({ stored, failed, tabId, sendCommand, values, history, appUrls })
     .then((diagnosis) => againstRequirements(diagnosis, requirements));
   const late = new Promise(resolve => setTimeout(() => resolve({
     cause: 'unknown', confidence: 'low', summary: 'The diagnosis took too long and was stopped', evidence: {}, proposals: [],
@@ -294,12 +298,12 @@ function says(text, value) {
   return wanted.length >= 2 && ` ${clean(text)} `.includes(` ${wanted} `);
 }
 
-async function diagnose({ stored, failed, tabId, sendCommand, history }) {
+async function diagnose({ stored, failed, tabId, sendCommand, history, appUrls }) {
   const stepOrder = failed.step;
   const step = stored.steps[stepOrder - 1];
   const error = failed.error ?? failed.assertionResult?.actual ?? '';
   const kind = failureKind(step, failed.assertionResult ? String(failed.assertionResult.actual ?? '') : error);
-  const { refs, ...page } = tabId ? await pageSignals(tabId, sendCommand) : {};
+  const { refs, ...page } = tabId ? await pageSignals(tabId, sendCommand, { steps: stored.steps, appUrls, lastPass: history?.failedOnLastPass }) : {};
   page.refs = refs;
   const evidence = { step: { order: stepOrder, command: step?.command, intent: step?.intent ?? null, error }, page: { ...page, refs: undefined }, history };
   const result = (cause, confidence, summary, proposals = []) => ({ cause, confidence, summary, evidence, proposals });
@@ -429,24 +433,29 @@ async function diagnose({ stored, failed, tabId, sendCommand, history }) {
   return result(kind === 'covered' ? 'unknown' : cause, confidence, `${what}: ${error}`);
 }
 
-/** The page where the run stopped: address, alerts and dialogs it shows, requests that failed. */
-async function pageSignals(tabId, sendCommand) {
+/**
+ * The page where the run stopped: address, alerts and dialogs it shows, the requests that failed
+ * there — those that say something of the app (`failedRequests`), and those set aside, each
+ * with why (`ignoredRequests`).
+ */
+async function pageSignals(tabId, sendCommand, { steps = [], appUrls = [], lastPass = null } = {}) {
   const [snap, network] = await Promise.all([
     sendCommand(undefined, 'snapshot', { tabId, interactiveOnly: true, compact: true, format: 'text', textDigest: true }).catch(() => null),
     sendCommand(undefined, 'network_requests', { tabId, limit: 300 }).catch(() => null),
   ]);
   const alerts = (snap?.digest ?? []).filter(line => /^(alert|alertdialog):/.test(line)).slice(0, 5);
-  const failedRequests = failuresOf(network?.requests ?? []);
-  return { url: snap?.url ?? null, title: snap?.title ?? null, alerts, failedRequests, refs: snap?.refs ?? {} };
+  const { counted, ignored } = weighFailures(failuresOf(network?.requests ?? []), { pageUrl: snap?.url ?? null, steps, appUrls, lastPass });
+  return { url: snap?.url ?? null, title: snap?.title ?? null, alerts, failedRequests: counted.slice(0, 5), ignoredRequests: ignored.slice(0, 5), refs: snap?.refs ?? {} };
 }
 
 /**
- * The requests of the page that failed and stayed failed. Not an error of the page:
+ * The requests of the page that failed and stayed failed, each once. Not an error of the page:
  * - one asked again later with success;
  * - a 401 or 403 followed by a request of the same site that succeeded: the session checked
  *   before the login (GET /api/auth/me in 401, then the login and the notes in 200). Counted, it
  *   made the triage say "the page reports an error" on every app with a login.
- * The extension lists the most recent first: put back in the order they were made.
+ * The extension lists the most recent first: put back in the order they were made. A request
+ * that got no answer (status 0) keeps the browser's reason (`error`: net::ERR_ABORTED…).
  */
 export function failuresOf(requests) {
   const key = (r) => `${r.method ?? 'GET'} ${r.url}`;
@@ -454,14 +463,98 @@ export function failuresOf(requests) {
   const origin = (url) => { try { return new URL(url).origin; } catch { return null; } };
   const timed = requests.every((r) => typeof r.timestamp === 'number');
   const inOrder = timed ? [...requests].sort((x, y) => x.timestamp - y.timestamp) : [...requests].reverse();
+  const seen = new Set();
   const stayed = inOrder.filter((r, i) => {
-    if (!failed(r) || /favicon/.test(r.url)) return false;
+    if (!failed(r) || /favicon/.test(r.url) || seen.has(key(r))) return false;
     const after = inOrder.slice(i + 1);
     if (after.some((later) => key(later) === key(r) && !failed(later))) return false;
     if ((r.status === 401 || r.status === 403) && after.some((later) => origin(later.url) === origin(r.url) && later.status >= 200 && later.status < 400)) return false;
+    seen.add(key(r));
     return true;
   });
-  return stayed.slice(0, 5).map(({ method, url, status, resourceType }) => ({ method, url, status, resourceType }));
+  return stayed.map(({ method, url, status, resourceType, statusText }) => ({
+    method, url, status, resourceType, ...(status === 0 && statusText && statusText !== 'failed' ? { error: statusText } : {}),
+  }));
+}
+
+// ─── Which failed requests say something of the app ────────────────────
+//
+// On a real app, some requests fail on every page, the test passing or not: on an identity portal,
+// GET /manifest.json in 404, Pendo's and Cloudflare's analytics scripts with no answer (a proxy
+// blocks them), GET /ECMv6/api/idw/personalizations/1 in 404. Counted, they put every failure
+// of the test — an element its replay did not find — on the app: 8 false bugs in a day, each
+// titled after one of them.
+
+// What the browser asks for on its own (a web app manifest), and what reports the visit.
+const SIDE_REQUEST_TYPES = new Set(['manifest', 'ping', 'beacon', 'cspviolationreport']);
+const SIDE_REQUEST_PATHS = /(^|\/)manifest\.json$|\.webmanifest$|\bbeacon\b/i;
+// Analytics and monitoring, by their vendor's host or a path that says so.
+const ANALYTICS = /pendo\.io|cloudflareinsights\.com|google-analytics\.com|googletagmanager\.com|doubleclick\.net|segment\.(io|com)|hotjar\.(com|io)|mixpanel\.com|amplitude\.com|newrelic\.com|nr-data\.net|sentry\.io|datadoghq\.(com|eu)|clarity\.ms|fullstory\.com|heapanalytics\.com|matomo|piwik|\b(analytics|telemetry|tracking|collect)\b/i;
+// No answer because the browser gave up on it: the page was left before it answered, or an
+// extension of the browser blocked it.
+const CANCELLED = /ERR_ABORTED|ERR_BLOCKED_BY_CLIENT/i;
+// A country's second level: example.co.uk is a site, co.uk is not.
+const SECOND_LEVEL = /^(co|com|org|net|gov|edu|ac|ne|or|go)$/;
+
+/**
+ * The site a URL is on: its domain without subdomains (app.example.com and api.example.com are
+ * one site, example.com); a machine's name or IP address, itself. Null for no web page.
+ */
+export function siteOf(url) {
+  let host;
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/.test(parsed.protocol)) return null;
+    host = parsed.hostname.toLowerCase();
+  } catch { return null; }
+  if (/^[\d.]+$/.test(host) || host.includes(':') || !host.includes('.')) return host;
+  const labels = host.split('.');
+  const take = labels.length > 2 && labels.at(-1).length === 2 && SECOND_LEVEL.test(labels.at(-2)) ? 3 : 2;
+  return labels.slice(-take).join('.');
+}
+
+/** A request as a run keeps it (test_executions.footprint): "GET /api/notes/*", without its host. */
+export function requestRoute(request) {
+  const page = pageOf(request.url);
+  return `${String(request.method ?? 'GET').toUpperCase()} ${page ? page.slice(page.indexOf('/')) : request.url}`;
+}
+
+/**
+ * Why a failed request says nothing of the failure, or null when it may: it counts. `sites` are
+ * the app's (siteOf); `lastPass` the requests that failed on the test's last passing run of the
+ * same steps, { run, failed: ['GET /api/x/* 404'] } (lib/footprint.js failuresOnLastPass): one
+ * that failed the same way then is set aside, one in 500 now that was in 404 then is not.
+ */
+export function ignoredBecause(request, { sites = [], lastPass = null } = {}) {
+  let url;
+  try { url = new URL(request.url); } catch { return null; }
+  if (SIDE_REQUEST_TYPES.has(String(request.resourceType ?? '').toLowerCase()) || SIDE_REQUEST_PATHS.test(url.pathname)) {
+    return 'a manifest, beacon or ping: the browser\'s, not the app\'s';
+  }
+  if (sites.length && !sites.includes(siteOf(request.url))) return `another site's (${url.hostname})`;
+  if (request.status === 0 && ANALYTICS.test(`${url.hostname}${url.pathname}`)) return 'analytics, out of this browser\'s reach';
+  if (request.status === 0 && CANCELLED.test(request.error ?? '')) return `given up by the browser (${request.error})`;
+  if (lastPass?.failed?.includes(`${requestRoute(request)} ${request.status}`)) return `it failed the same way on run #${lastPass.run}, which passed`;
+  return null;
+}
+
+/**
+ * The failed requests of a page, weighed: those that may be why the step failed (`counted`), and
+ * those set aside, each with why (`ignored`). The app's sites are the page's, those the test
+ * navigates to and `appUrls` (its project's base URL); with none known, no request is another
+ * site's.
+ */
+export function weighFailures(failures, { pageUrl = null, steps = [], appUrls = [], lastPass = null } = {}) {
+  const urls = [pageUrl, ...appUrls, ...steps.filter((s) => s?.command === 'navigate').map((s) => s.params?.url)];
+  const sites = [...new Set(urls.map(siteOf).filter(Boolean))];
+  const counted = [];
+  const ignored = [];
+  for (const request of failures) {
+    const why = ignoredBecause(request, { sites, lastPass });
+    if (why) ignored.push({ ...request, ignored: why });
+    else counted.push(request);
+  }
+  return { counted, ignored };
 }
 
 /**
@@ -496,6 +589,9 @@ export function formatTriage(triage) {
   if (page.alerts?.length) lines.push(`The page says: ${page.alerts.join(' | ')}`);
   if (page.failedRequests?.length) {
     lines.push(`Failed requests: ${page.failedRequests.map(r => `${r.method} ${r.url} → ${r.status || 'no response'}`).join(', ')}`);
+  }
+  if (page.ignoredRequests?.length) {
+    lines.push(`Not counted against the app: ${page.ignoredRequests.map(r => `${r.method} ${r.url} → ${r.status || 'no response'} (${r.ignored})`).join(', ')}`);
   }
   if (history?.passes) lines.push(`Passed ${history.passes} time(s) before, last on ${history.lastPass}`);
   for (const proposal of triage.proposals ?? []) {
