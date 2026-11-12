@@ -62,10 +62,16 @@ async function findPlaced(page: Page, locator: Locator, selector: string, option
   return chosen;
 }
 
+// How long an element is waited for when the caller says nothing: the agent's own actions, whose
+// answer it reads and acts on at once. A replay waits as long as its project says (the server
+// sends elementTimeoutMs, lib/projects.js): a page still loading after the step before.
+export const DEFAULT_LOCATOR_TIMEOUT_MS = 2000;
+
 export async function findElementWithLocators(
   page: Page,
   locators: Locator[],
-  condition: ElementCondition = 'any'
+  condition: ElementCondition = 'any',
+  timeoutMs: number = DEFAULT_LOCATOR_TIMEOUT_MS
 ): Promise<{ result: LocatingResult | null, errors: string[] }> {
   // A role and name the page has more than once was recorded with where it is (scope, nth):
   // the same name read alone (aria, text, label) finds the first of them — racing, it could
@@ -78,15 +84,15 @@ export async function findElementWithLocators(
     (LOCATOR_PRIORITY[a.type] ?? 5) - (LOCATOR_PRIORITY[b.type] ?? 5)
   );
 
-  console.log(`  🕵️ Testing ${sortedLocators.length} locators in parallel [condition: ${condition}]...`);
+  console.log(`  🕵️ Testing ${sortedLocators.length} locators in parallel [condition: ${condition}, up to ${timeoutMs} ms]...`);
 
   let hasWinner = false;
 
   const promises = sortedLocators.map(async (locator) => {
     const selector = locatorToPuppeteerSelector(locator);
     const waitOptions = condition === 'visible'
-      ? { timeout: 2000, visible: true }
-      : { timeout: 2000 };
+      ? { timeout: timeoutMs, visible: true }
+      : { timeout: timeoutMs };
 
     try {
       const find = (options: typeof waitOptions | { timeout: number }) => locator.type === 'role' && (locator.scope || locator.nth != null)
@@ -101,7 +107,7 @@ export async function findElementWithLocators(
       }
 
       if (!handle) {
-        throw new Error(`${locator.type}="${locator.value}" (not found)`);
+        throw new Error(`${locator.type}="${locator.value}" (not found within ${timeoutMs / 1000} s)`);
       }
 
       if (condition === 'enabled') {

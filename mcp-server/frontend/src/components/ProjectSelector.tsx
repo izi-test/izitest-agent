@@ -121,7 +121,11 @@ export function ProjectSwitcher() {
   );
 }
 
-type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string; language: 'en' | 'fr' };
+type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string; language: 'en' | 'fr'; wait_seconds: string };
+
+// How long a replayed step waits for its element (lib/projects.js): empty, the default.
+const DEFAULT_WAIT_SECONDS = 10;
+const secondsOf = (ms: number | null | undefined) => (ms ? String(ms / 1000) : '');
 
 // A new project's tests are written in the language of the browser, French or else English.
 const browserLanguage = (): 'en' | 'fr' => (navigator.language?.toLowerCase().startsWith('fr') ? 'fr' : 'en');
@@ -137,6 +141,7 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
     name: project?.name ?? '', description: project?.description ?? '', context: project?.context ?? '',
     project_type: project?.project_type ?? '', base_url: project?.base_url ?? '',
     language: project ? project.language ?? 'en' : browserLanguage(),
+    wait_seconds: secondsOf(project?.element_timeout_ms),
   });
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof ProjectFields>(field: K, value: ProjectFields[K]) => { setFields({ ...fields, [field]: value }); setError(null); };
@@ -144,7 +149,14 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
   const save = async (event?: React.FormEvent) => {
     event?.preventDefault();
     if (!fields.name.trim()) return setError('A project needs a name');
-    const body = { ...fields, name: fields.name.trim(), description: fields.description.trim(), context: fields.context.trim(), base_url: fields.base_url.trim() };
+    const wait = fields.wait_seconds.trim().replace(',', '.');
+    const seconds = wait === '' ? null : Number(wait);
+    if (seconds !== null && !(seconds >= 1 && seconds <= 120)) return setError('The wait for an element is from 1 to 120 seconds, or empty for the default');
+    const { wait_seconds: _wait, ...rest } = fields;
+    const body = {
+      ...rest, name: fields.name.trim(), description: fields.description.trim(), context: fields.context.trim(), base_url: fields.base_url.trim(),
+      element_timeout_ms: seconds === null ? null : Math.round(seconds * 1000),
+    };
     try {
       if (project) {
         await updateProject({ id: project.id, ...body }).unwrap();
@@ -204,6 +216,14 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
           </select>
           <span className="field__hint">
             The Gherkin of its tests, its business steps and what the AI writes for it. Changed, its tests read in the new language; the phrases they were written with still work.
+          </span>
+        </label>
+        <label className="field">
+          <span className="field__label">Wait for an element <span className="field__optional">seconds</span></span>
+          <input type="number" min={1} max={120} step={1} style={{ width: 150 }} value={fields.wait_seconds}
+            onChange={(e) => set('wait_seconds', e.target.value)} placeholder={`${DEFAULT_WAIT_SECONDS} (default)`} />
+          <span className="field__hint">
+            How long a replayed step waits for the button or field it acts on, and a check for what it expects, before it fails. Raise it when tests fail on pages still loading: a slow test server, a company laptop, the browser without windows. A test that passes is not slowed down: the wait ends as soon as the element is there.
           </span>
         </label>
         <label className="field">

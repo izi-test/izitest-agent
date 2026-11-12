@@ -67,6 +67,11 @@ On a test, *Run*. Its options (*Run options*): in a new window of your Chrome or
 **let the agent fix failures**, or **debug step by step** with breakpoints. The run is shown live,
 step by step.
 
+Each step waits for the button or field it acts on, and each check for what it expects, up to
+the project's **wait for an element**: 10 s by default, set in *Projects → Edit*. Raise it when
+tests fail on pages still loading (a slow test server, a company laptop, the browser without
+windows); a test that passes is not slowed down.
+
 A failing run is **triaged**: the test drifted from the page, the page was late, a value changed,
 the application regressed, the requirement is not met, the environment failed. When it can, IziTest
 proposes a **repair** — another locator, a wait — that you verify on a replay before applying it,

@@ -151,9 +151,12 @@ cd mcp-server && node -e "require('./lib/db.js').initDatabase()"
 - Le site charge plus lentement
 
 **Solutions** :
-1. Utilisez `fix_test_step` pour mettre à jour l'étape problématique
-2. Ajoutez une étape `wait` avant l'étape qui échoue
-3. Utilisez `add_assertion` pour vérifier l'état avant de continuer
+1. Si l'erreur dit « not found within 10 s » et que la page met du temps à charger, augmentez le
+   délai d'attente du projet : *Projects → Edit → Wait for an element* (10 s par défaut, jusqu'à
+   120 s)
+2. Utilisez `fix_test_step` pour mettre à jour l'étape problématique
+3. Ajoutez une étape `wait` avant l'étape qui échoue
+4. Utilisez `add_assertion` pour vérifier l'état avant de continuer
 
 ---
 

@@ -290,6 +290,8 @@ export interface ReplaySequenceParams {
   sessionId?: string;
   viewportWidth?: number;
   viewportHeight?: number;
+  /** How long each step waits for its element, in ms: the test's project setting. */
+  elementTimeoutMs?: number;
 }
 
 export interface RefNodeInfo {

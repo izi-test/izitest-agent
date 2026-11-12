@@ -58,7 +58,7 @@ export function abortSequence() {
 }
 
 export async function cmdReplaySequence(
-  { steps, startIndex, newWindow, tabId, sessionId, viewportWidth, viewportHeight }: ReplaySequenceParams,
+  { steps, startIndex, newWindow, tabId, sessionId, viewportWidth, viewportHeight, elementTimeoutMs }: ReplaySequenceParams,
   onProgress?: (data: any) => void
 ) {
   isAbortRequested = false;
@@ -204,7 +204,7 @@ export async function cmdReplaySequence(
 
         let skippedClick = false;
         const executeWithLocators = async (page: Page) => {
-          const { result, errors } = await findElementWithLocators(page, step.locators!, elementCondition);
+          const { result, errors } = await findElementWithLocators(page, step.locators!, elementCondition, elementTimeoutMs);
           if (!result) throw new Error(`All ${step.locators!.length} locators failed:\n${errors.join('\n')}`);
 
           const { locatorUsed, locatorValue, handle } = result;
@@ -287,7 +287,7 @@ export async function cmdReplaySequence(
               const targetLocators: Locator[] = baseParams.targetLocators?.length
                 ? baseParams.targetLocators
                 : [{ type: 'css', value: String(baseParams.target ?? '') }];
-              const dropped = await findElementWithLocators(page, targetLocators, 'visible');
+              const dropped = await findElementWithLocators(page, targetLocators, 'visible', elementTimeoutMs);
               if (!dropped.result) throw new Error(`Where to drop it was not found: all ${targetLocators.length} locators failed:\n${dropped.errors.join('\n')}`);
               try {
                 const how = await dragElements(page, handle, dropped.result.handle, baseParams.position);

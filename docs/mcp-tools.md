@@ -494,16 +494,33 @@ avant un changement de page lisait la mauvaise page, et échouait.
 
 #### Une assertion attend ce qu'elle vérifie
 
-À l'exécution, une assertion est relue jusqu'à ce qu'elle passe, pendant 5 s au plus, comme
-l'`expect` de Playwright. C'est utile quand la page est encore en route vers ce qu'elle vérifie : un
+À l'exécution, une assertion est relue jusqu'à ce qu'elle passe, pendant le délai d'attente du
+projet (10 s par défaut, voir ci-dessous), comme l'`expect` de Playwright. C'est utile quand la page est encore en route vers ce qu'elle vérifie : un
 formulaire envoyé avec Entrée dont la page suivante se charge, un message affiché à la réponse d'une
 requête.
 
 - Une page qu'on ne peut pas lire pendant ce temps, parce qu'elle est en train d'être remplacée,
   est relue aussi.
-- Une fois les 5 s écoulées, l'assertion échoue avec ce qu'elle a lu en dernier.
+- Une fois le délai écoulé, l'assertion échoue avec ce qu'elle a lu en dernier.
 - Une comparaison de captures (VRT) et un oracle sont lus une seule fois.
-- `IZITEST_ASSERT_TIMEOUT_MS` change ce délai ; `0` lit une seule fois.
+- `IZITEST_ASSERT_TIMEOUT_MS`, s'il est défini, remplace ce délai pour tous les projets ; `0` lit
+  une seule fois.
+
+#### Le délai d'attente d'un élément
+
+Au rejeu, chaque étape attend que son élément (le bouton, le champ…) apparaisse avant d'agir,
+jusqu'au délai d'attente du projet : **10 s par défaut**. L'attente s'arrête dès que l'élément est
+là, donc un test qui passe ne prend pas plus de temps. Une étape qui ne trouve pas son élément
+échoue avec « not found within 10 s ».
+
+On le règle par projet, de 1 à 120 s :
+- dans le tableau de bord : *Projects → Edit → Wait for an element* (vide : le défaut) ;
+- par l'agent : `update_project_context` avec `element_timeout_ms` (`null` revient au défaut) ;
+- par l'API : `PUT /api/projects/:id` avec `element_timeout_ms`.
+
+Il vaut aussi pour les assertions. Augmentez-le quand des tests échouent sur une page encore en
+chargement : serveur de test lent, poste d'entreprise, Chrome sans fenêtre. Les actions de l'agent
+pendant qu'il enregistre attendent toujours 2 s : il lit la réponse et regarde la page aussitôt.
 
 #### Types d'assertion à l'export
 

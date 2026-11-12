@@ -22,7 +22,7 @@ import { listDatasets, saveDataset, bindDataset, datasetRows, datasetOfTest, sho
 import { listSecrets } from '../secrets.js';
 import { addTestVariable } from '../test-variable.js';
 import { linkRecorded, requirementsOfTest } from '../requirements.js';
-import { listProjects, createProject, PROJECT_TYPES } from '../projects.js';
+import { listProjects, createProject, PROJECT_TYPES, elementTimeoutOf, DEFAULT_ELEMENT_TIMEOUT_MS, MIN_ELEMENT_TIMEOUT_MS, MAX_ELEMENT_TIMEOUT_MS } from '../projects.js';
 
 function projectDefinitions(projectId) {
   return db.prepare(
@@ -496,12 +496,20 @@ export const AGENT_TOOLS = [
         context: { type: 'string', description: 'Free-text project context (specs, notes, URLs...)' },
         project_type: { type: 'string', enum: ['frontend', 'backend', 'fullstack'], description: 'Type of project' },
         base_url: { type: 'string', description: 'Base URL of the application' },
+        element_timeout_ms: { type: ['number', 'null'], description: `How long a replayed step waits for its element, and a check for what it expects, in ms (${MIN_ELEMENT_TIMEOUT_MS}–${MAX_ELEMENT_TIMEOUT_MS}; default ${DEFAULT_ELEMENT_TIMEOUT_MS}, null to go back to it). Raise it when tests fail on a page still loading` },
       },
       required: ['project_id'],
     },
-    handler({ project_id, context, project_type, base_url }) {
+    handler({ project_id, context, project_type, base_url, element_timeout_ms }) {
       const sets = [];
       const vals = [];
+      if (element_timeout_ms !== undefined) {
+        try {
+          sets.push('element_timeout_ms = ?'); vals.push(elementTimeoutOf(element_timeout_ms));
+        } catch (err) {
+          return { error: err.message };
+        }
+      }
       if (context !== undefined) { sets.push('context = ?'); vals.push(context); }
       if (project_type !== undefined) { sets.push('project_type = ?'); vals.push(project_type); }
       if (base_url !== undefined) { sets.push('base_url = ?'); vals.push(base_url); }
@@ -517,7 +525,7 @@ export const AGENT_TOOLS = [
 
       if (!result) return { error: 'Project not found' };
       log(`[Agent Tool] Updated context for project ${project_id}`);
-      return { data: { id: result.id, name: result.name, context: result.context, project_type: result.project_type, base_url: result.base_url } };
+      return { data: { id: result.id, name: result.name, context: result.context, project_type: result.project_type, base_url: result.base_url, element_timeout_ms: result.element_timeout_ms ?? DEFAULT_ELEMENT_TIMEOUT_MS } };
     },
   },
 ];

@@ -23,7 +23,7 @@ import { stepsForEditedFeature } from './gherkin/reconcile.js';
 import { withElementNames, elementTargets, listElements, renameElement, deleteElement } from './element-store.js';
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { languageOf } from './gherkin/language.js';
-import { createProject } from './projects.js';
+import { createProject, elementTimeoutOf } from './projects.js';
 import { computeVariables } from './values.js';
 import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetOfTest, datasetRows, rowLabel, datasetLines } from './datasets.js';
 import { listSecrets, saveSecret, deleteSecret, secretLines, secretValue } from './secrets.js';
@@ -1114,7 +1114,7 @@ export async function apiRouter(req, res, url) {
     // project) and its last campaign
     if (method === 'GET' && path === '/api/projects') {
       const rows = db.prepare(`
-        SELECT p.id, p.name, p.description, p.context, p.project_type, p.base_url, p.language, p.created_at, p.updated_at,
+        SELECT p.id, p.name, p.description, p.context, p.project_type, p.base_url, p.language, p.element_timeout_ms, p.created_at, p.updated_at,
                (SELECT COUNT(*) FROM tests t WHERE t.project_id = p.id) AS test_count,
                (SELECT COUNT(*) FROM requirements r WHERE r.project_id = p.id) AS requirement_count,
                (SELECT COUNT(*) FROM campaigns c WHERE c.project_id = p.id) AS campaign_count,
@@ -1182,6 +1182,13 @@ export async function apiRouter(req, res, url) {
       if (body.project_type !== undefined) { sets.push('project_type = ?'); vals.push(body.project_type); }
       if (body.base_url !== undefined) { sets.push('base_url = ?'); vals.push(body.base_url); }
       if (body.language !== undefined) { sets.push('language = ?'); vals.push(languageOf(body.language)); }
+      if (body.element_timeout_ms !== undefined) {
+        try {
+          sets.push('element_timeout_ms = ?'); vals.push(elementTimeoutOf(body.element_timeout_ms));
+        } catch (err) {
+          return json(res, 400, { error: err.message });
+        }
+      }
       if (sets.length === 0) return json(res, 400, { error: 'Nothing to update' });
 
       sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')");

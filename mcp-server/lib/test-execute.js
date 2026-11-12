@@ -13,6 +13,7 @@ import { saveRepairs } from './repairs.js';
 import { requirementsOfTest } from './requirements.js';
 import { readFootprint, saveFootprint } from './footprint.js';
 import { recordRunBug, fixRunBugs } from './bugs.js';
+import { elementTimeoutFor } from './projects.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -133,7 +134,7 @@ async function executeStepsInDebugMode(
   actionSteps, startIndex, newWindow, sendCommand,
   debugController, executionId, hydratedSteps,
   onProgress, streamedStepResults,
-  viewportWidth, viewportHeight, server = null, checkInPlace = null
+  viewportWidth, viewportHeight, server = null, checkInPlace = null, elementTimeoutMs = undefined
 ) {
   const overallStartedAt = Date.now();
   const results = [];
@@ -198,6 +199,7 @@ async function executeStepsInDebugMode(
       steps: [server ? server.rehydrate(step) : step],
       startIndex: 0,
       newWindow: actionIndex === startIndex ? newWindow : false,
+      ...(elementTimeoutMs ? { elementTimeoutMs } : {}),
       ...(actionIndex === startIndex && viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {}),
     };
     if (lastTabId) {
@@ -295,7 +297,7 @@ async function playServerStep(step, stepNumber, { sendCommand, tabId, server }) 
  */
 async function executeInSegments(
   actionSteps, startIndex, newWindow, sendCommand, executionId,
-  onProgress, streamedStepResults, viewportWidth, viewportHeight, server, checkInPlace
+  onProgress, streamedStepResults, viewportWidth, viewportHeight, server, checkInPlace, elementTimeoutMs = undefined
 ) {
   const startedAt = Date.now();
   const results = [];
@@ -351,6 +353,7 @@ async function executeInSegments(
     try {
       played = await sendCommand(undefined, 'replay_sequence', {
         steps, startIndex: 0, newWindow: first ? newWindow : false,
+        ...(elementTimeoutMs ? { elementTimeoutMs } : {}),
         ...(lastTabId ? { tabId: lastTabId } : {}),
         ...(first && viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {}),
       }, 120000, async (raw) => {
@@ -428,6 +431,10 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     onProgress = (event) => tell(redact(event));
   }
   const test = options.test ?? loadTest(name);
+  // How long a step waits for its element, and a check for what it expects: the project's
+  // setting (lib/projects.js). IZITEST_ASSERT_TIMEOUT_MS, when set, still decides the checks.
+  const elementTimeoutMs = elementTimeoutFor(test?.project_id ?? null);
+  const assertionTimeoutMs = ASSERTION_TIMEOUT_ENV ?? elementTimeoutMs;
   if (!test) {
     throw new Error(`Test "${name}" not found.`);
   }
@@ -601,7 +608,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     let assertionResult;
 
     try {
-      assertionResult = await evaluateAssertion(sendCommand, step.assertion, assertionTabId);
+      assertionResult = await evaluateAssertion(sendCommand, step.assertion, assertionTabId, { timeoutMs: assertionTimeoutMs });
     } catch (err) {
       assertionResult = { passed: false, expected: step.assertion.expected || '', actual: `Error: ${err.message}`, type: step.assertion.type };
     }
@@ -701,7 +708,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       actionSteps, startIndex, new_window, sendCommand,
       debugController, executionId, hydratedSteps,
       onProgress, streamedStepResults,
-      viewportWidth, viewportHeight, server, checkInPlace
+      viewportWidth, viewportHeight, server, checkInPlace, elementTimeoutMs
     );
     executionFailed = extensionResult._failed || false;
     delete extensionResult._failed;
@@ -709,7 +716,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     // ─── Server steps: the browser's steps in segments, the server's in between ──
     extensionResult = await executeInSegments(
       actionSteps, startIndex, new_window, sendCommand, executionId,
-      onProgress, streamedStepResults, viewportWidth, viewportHeight, server, checkInPlace
+      onProgress, streamedStepResults, viewportWidth, viewportHeight, server, checkInPlace, elementTimeoutMs
     );
     executionFailed = extensionResult._failed || false;
     replayError = extensionResult._error ?? null;
@@ -719,7 +726,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     // ─── Normal mode: bulk replay_sequence ───────────────────────
     try {
       extensionResult = await sendCommand(undefined, 'replay_sequence', {
-        steps: actionSteps, startIndex, newWindow: new_window,
+        steps: actionSteps, startIndex, newWindow: new_window, elementTimeoutMs,
         ...(viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {})
       }, 120000, async (raw) => {
         const msg = numbered(raw);
@@ -1005,7 +1012,11 @@ function pageExcerpt(text, expected) {
 // on its way to what it checks — a form sent with Enter, the next page loading; a message shown
 // once a request answers. One the page cannot be read for meanwhile (it is being replaced) is
 // read again too. It fails once this time is up, with what it read last.
-const ASSERTION_TIMEOUT_MS = Number(process.env.IZITEST_ASSERT_TIMEOUT_MS ?? 5000);
+// The time is the project's (element_timeout_ms, 10 s by default); IZITEST_ASSERT_TIMEOUT_MS
+// overrides it for every project (0: read once).
+const ASSERTION_TIMEOUT_ENV = process.env.IZITEST_ASSERT_TIMEOUT_MS != null && process.env.IZITEST_ASSERT_TIMEOUT_MS !== ''
+  ? Number(process.env.IZITEST_ASSERT_TIMEOUT_MS) : null;
+const ASSERTION_TIMEOUT_MS = ASSERTION_TIMEOUT_ENV ?? 10_000;
 const ASSERTION_POLL_MS = 250;
 
 /**

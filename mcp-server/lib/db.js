@@ -445,6 +445,8 @@ export function initDatabase() {
   try {
     const projectCols = db.prepare('PRAGMA table_info(projects)').all().map(c => c.name);
     if (!projectCols.includes('language')) db.exec("ALTER TABLE projects ADD COLUMN language TEXT NOT NULL DEFAULT 'en'");
+    // How long a replayed step waits for its element, in ms; null: the default (lib/projects.js).
+    if (!projectCols.includes('element_timeout_ms')) db.exec('ALTER TABLE projects ADD COLUMN element_timeout_ms INTEGER DEFAULT NULL');
     const definitionCols = db.prepare('PRAGMA table_info(step_definitions)').all().map(c => c.name);
     if (!definitionCols.includes('language')) {
       db.exec('ALTER TABLE step_definitions ADD COLUMN language TEXT DEFAULT NULL');

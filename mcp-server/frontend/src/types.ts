@@ -7,6 +7,8 @@ export interface Project {
   base_url: string | null;
   /** The language its tests are written in: Gherkin, business steps, what the AI writes. */
   language?: 'en' | 'fr';
+  /** How long a replayed step waits for its element, in ms; null: the default (10 s). */
+  element_timeout_ms?: number | null;
   created_at: string;
   updated_at: string;
   test_count?: number;
