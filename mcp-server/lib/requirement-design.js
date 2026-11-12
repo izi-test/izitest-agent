@@ -191,15 +191,15 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
 const SYSTEM = 'You are a test analyst. You design the tests of a requirement with standard test design techniques, '
   + 'and you never invent what the requirement does not say: you ask. You answer with JSON only.';
 
-/** The JSON of an answer: a fenced block, or the outermost object of the text. */
-function jsonOf(text) {
+/** The JSON of an answer: a fenced block, or the outermost object of the text. `what` it was asked for, to say it did not come. */
+export function jsonOf(text, what = 'the test design') {
   const fenced = text.match(/```(?:json)?\s*\n([\s\S]*?)```/);
   const body = fenced ? fenced[1] : text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
   try {
     const value = JSON.parse(body);
     if (value && typeof value === 'object') return value;
   } catch { /* told below */ }
-  throw new Error(`The agent did not answer with the test design (JSON): ${text.trim().slice(0, 200) || '(empty answer)'}`);
+  throw new Error(`The agent did not answer with ${what} (JSON): ${text.trim().slice(0, 200) || '(empty answer)'}`);
 }
 
 const clean = (value, max = 2000) => (typeof value === 'string' ? value.trim().slice(0, max) : '');

@@ -72,9 +72,11 @@ export const requirementsApi = createApi({
       invalidatesTags: (_result, _error, { ref }) => ['Requirements', { type: 'Requirement', id: ref }, 'TestRequirements'],
     }),
     // A file of requirements: previewed (dry_run), or imported.
+    // agent: read by the agent set in Settings (a preview); requirements: the ones a preview showed, imported as they are.
     importRequirements: builder.mutation<{ import: RequirementImport }, {
       filename?: string; content?: string; content_base64?: string; format?: string; sheet?: string;
       columns?: Record<string, string | null>; project_id?: number | null; dry_run: boolean;
+      agent?: boolean; requirements?: RequirementImport['items'];
     }>({
       query: (body) => ({ url: 'api/requirements/import', method: 'POST', body }),
       invalidatesTags: (_result, _error, { dry_run }) => (dry_run ? [] : ['Requirements', 'Requirement', 'TestRequirements']),

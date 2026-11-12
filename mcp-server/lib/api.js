@@ -35,6 +35,7 @@ import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
 import { designTests, planDesigned, placeMissing, withResolution, recordingBrief, projectBrief } from './requirement-design.js';
 import { importRequirements } from './requirement-import.js';
+import { readWithAgent, importConfirmed } from './requirement-reading.js';
 import {
   describeConnectors, connectorOf, saveConnectorConfig, testConnector, connectorConfig, importFromConnector, sendCoverage, sendResults, sendBug, sentTo,
 } from './connectors/index.js';
@@ -547,15 +548,35 @@ export async function apiRouter(req, res, url) {
     }
 
     // POST /api/requirements/import — { filename, content | content_base64, format, sheet, columns, project_id, dry_run }:
-    // what the file holds, new, changed or unchanged — saved unless dry_run (lib/requirement-import.js)
+    // what the file holds, new, changed or unchanged — saved unless dry_run (lib/requirement-import.js).
+    // With agent: true, the agent set in Settings reads it — any document: a Word spec, an email, free text —
+    // (lib/requirement-reading.js): a preview only, of up to a few minutes. With requirements: [...] (the ones the
+    // preview showed), those are imported as they are: the agent is not asked again.
     if (method === 'POST' && path === '/api/requirements/import') {
       const body = await readBody(req);
+      const content = body.content_base64 != null ? Buffer.from(body.content_base64, 'base64') : body.content;
+      const projectId = body.project_id ?? null;
+      if (body.agent && body.requirements == null) {
+        const abort = new AbortController();
+        res.on('close', () => { if (!res.writableEnded) abort.abort(); });
+        try {
+          const result = await readWithAgent({
+            content, filename: body.filename ?? '', sheet: body.sheet || null, projectId, complete, agent: agentName(), signal: abort.signal,
+          });
+          return json(res, 200, { import: result });
+        } catch (err) {
+          log(`Requirement reading failed for ${body.filename || 'a text'}: ${err.message}`);
+          if (abort.signal.aborted) return;
+          return json(res, err.fromAgent ? 502 : 400, { error: err.message });
+        }
+      }
       try {
-        const content = body.content_base64 != null ? Buffer.from(body.content_base64, 'base64') : body.content;
-        const result = importRequirements({
-          content, filename: body.filename ?? '', format: body.format || null, sheet: body.sheet || null, columns: body.columns ?? {},
-          projectId: body.project_id ?? null, dryRun: body.dry_run !== false,
-        });
+        const result = body.requirements != null
+          ? importConfirmed(body.requirements, { format: body.format || 'text', projectId, dryRun: body.dry_run !== false })
+          : importRequirements({
+            content, filename: body.filename ?? '', format: body.format || null, sheet: body.sheet || null, columns: body.columns ?? {},
+            projectId, dryRun: body.dry_run !== false,
+          });
         return json(res, 200, { import: result });
       } catch (err) {
         return json(res, 400, { error: err.message });

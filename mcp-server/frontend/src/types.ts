@@ -635,8 +635,10 @@ export type TestCampaign = Omit<Campaign, 'requirements' | 'runs' | 'changes'> &
 
 /** What a file of requirements holds, previewed or imported (mcp-server/lib/requirement-import.js). */
 export interface RequirementImport {
-  /** A file's format, or the connector it was read from. */
+  /** A file's format ("text" for free text), or the connector it was read from. */
   format: string;
+  /** Read by the agent set in Settings (mcp-server/lib/requirement-reading.js): who. */
+  agent?: string | null;
   headers: string[] | null;
   columns: Partial<Record<'key' | 'title' | 'description' | 'criteria' | 'priority' | 'url', string>> | null;
   warnings: string[];
@@ -651,6 +653,14 @@ export interface RequirementImport {
     source: Requirement['source'];
     status: 'new' | 'changed' | 'unchanged';
     linked_tests: number;
+    /** Read by the agent: the passage of the document it comes from, and whether it is there word for word. */
+    source_quote?: string | null;
+    quote_found?: boolean;
+    /** Read by the agent: its criteria whose figures or words are not in the document. */
+    unsupported_criteria?: string[];
+    /** Changed: what saving it takes from the one saved — its title, its criteria no longer listed (and their cases). */
+    title_before?: string | null;
+    dropped_criteria?: string[];
   }>;
   new: number;
   changed: number;

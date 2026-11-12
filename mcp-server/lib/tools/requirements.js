@@ -9,7 +9,7 @@ import {
   SOURCES, PRIORITIES, RISK_LEVELS, CASE_KINDS, TECHNIQUES, saveRequirement, getRequirement, listRequirements, planCases, linkTest, formatRequirement,
 } from '../requirements.js';
 import { designBrief, withResolution } from '../requirement-design.js';
-import { FORMATS, importRequirements, formatImport } from '../requirement-import.js';
+import { FORMATS, MAX_BYTES, MAX_JSON_BYTES, importRequirements, formatImport } from '../requirement-import.js';
 import { connectorsFor, importFromConnector, sendCoverage, formatCoverage } from '../connectors/index.js';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, extname } from 'node:path';
@@ -57,22 +57,34 @@ export function registerRequirementTools(server) {
   );
 
   // --- Tool: import_requirements ---
-  const IMPORTABLE = ['.csv', '.tsv', '.txt', '.xlsx', '.xlsm', '.json', '.md', '.markdown'];
+  const IMPORTABLE = ['.csv', '.tsv', '.txt', '.xlsx', '.xlsm', '.json', '.md', '.markdown', '.docx'];
   const column = z.string().nullable().optional();
   server.tool(
     'import_requirements',
     [
       'Import requirements from a file: a spreadsheet (CSV, TSV, Excel .xlsx — a test plan, a Jira CSV export), JSON (a list, or a',
-      'Jira search result), or a Markdown spec (a heading per requirement, its list items as criteria). Columns are found by their',
-      'names, in English or French (Key/Réf., Title/Summary/Intitulé, Description, Acceptance criteria/Critères d\'acceptation,',
-      'Priority/Priorité, Link/Lien); criteria written in a description under "Acceptance criteria" are taken out of it.',
+      'Jira search result), a Markdown spec (a heading per requirement, its list items as criteria), a Word document (.docx)',
+      'written the same way, read as Markdown, or an API: a Postman collection (v2) or an OpenAPI/Swagger document in JSON —',
+      'a request (an operation) per requirement, its id (operationId) as key, its folders and name (tag and summary) as title,',
+      'as criteria the behaviours its description lists, its saved example responses and documented responses ("Answers 401',
+      '(Wrong password)") and its pm.test names; response bodies are not read. These describe an API: call_api checks a',
+      'status, not yet what a response holds. Columns are found by their names, in English or French (Key/Réf.,',
+      'Title/Summary/Intitulé, Description, Acceptance criteria/Critères d\'acceptation, Priority/Priorité, Link/Lien);',
+      'criteria written in a description under "Acceptance criteria" are taken out of it.',
       'By default a dry run: it says what is new, what changed, what is unchanged, and saves nothing — show it to the user, then',
       'call again with dry_run: false. Imported again, a requirement is updated under its key (or its title), and its criteria',
       'whose text did not change keep their tests; a changed one with tests linked is flagged.',
+      'Any other document (a Word or PDF spec written freely, an email, a wiki page, notes): read it yourself, then pass its',
+      'requirements as Markdown `content`, a dry run first — "## SHOP-12 — Title" each (a key written otherwise, "US 3.2", on a',
+      'line "Key: US 3.2"; none: the title alone), its description, its acceptance criteria as a list, "Priority: high" when the',
+      'document says it. A requirement says what the document says: keep its keys, titles and words; write only the criteria it',
+      'states, never one it does not, nor a value it does not give; when it states one already saved (list_requirements), use',
+      'that key. Show the user the dry run with the passage each requirement comes from, and the passages that are unclear or',
+      'contradict each other — do not settle them yourself —, then import with dry_run: false once they agree.',
     ].join('\n'),
     {
       path: z.string().optional().describe(`The file, by its absolute path on this machine (${IMPORTABLE.join(', ')})`),
-      content: z.string().optional().describe('Or the file\'s text (CSV, JSON, Markdown), when there is no file'),
+      content: z.string().optional().describe('Or the file\'s text (CSV, JSON — a Postman collection, an OpenAPI document —, Markdown), when there is no file — or the requirements you read from any other document, as Markdown'),
       format: z.enum(FORMATS).optional().describe('Default: told from the file\'s name, else its content'),
       sheet: z.string().optional().describe('Excel: the sheet to read (default: the first)'),
       columns: z.object({ key: column, title: column, description: column, criteria: column, priority: column, url: column }).optional()
@@ -85,8 +97,11 @@ export function registerRequirementTools(server) {
         let data = content;
         if (path) {
           if (!isAbsolute(path)) return text('Give the file\'s absolute path.', true);
-          if (!IMPORTABLE.includes(extname(path).toLowerCase())) return text(`Not a file to import requirements from: ${path} (${IMPORTABLE.join(', ')})`, true);
-          if ((await stat(path)).size > 5 * 1024 * 1024) return text('The file is too big (5 MB at most).', true);
+          if (!IMPORTABLE.includes(extname(path).toLowerCase())) {
+            return text(`Not a file to import requirements from: ${path} (${IMPORTABLE.join(', ')}). Read it yourself, then pass its requirements as Markdown content, a dry run first.`, true);
+          }
+          const json = extname(path).toLowerCase() === '.json';
+          if ((await stat(path)).size > (json ? MAX_JSON_BYTES : MAX_BYTES)) return text(`The file is too big (${json ? '30' : '5'} MB at most).`, true);
           data = await readFile(path);
         }
         if (data == null) return text('Give the file: its path, or its content.', true);

@@ -176,7 +176,9 @@ test('a dry run saves nothing; saved, imported again: unchanged, or changed with
   const edited = PLAN.replace('Le champ email garde sa valeur', 'Le champ email garde sa valeur saisie');
   const changed = importRequirements({ content: edited, filename: 'plan.csv', projectId: project });
   assert.deepEqual(changed.items.map((i) => i.status), ['changed', 'unchanged']);
-  assert.match(formatImport(changed), /CHANGED {3}REQ-1 — Connexion \[high, 3 criteria\] — 1 test\(s\) linked: check they still match it/);
+  assert.match(formatImport(changed), /CHANGED {3}REQ-1 — Connexion \[high, 3 criteria\] — 1 test\(s\) linked: check they still match it\n {12}no longer in it: "Le champ email garde sa valeur"\n/);
+  assert.deepEqual([changed.items[0].title_before, changed.items[0].dropped_criteria], [null, ['Le champ email garde sa valeur']], 'what saving it takes away');
+  assert.equal(changed.items[1].dropped_criteria, undefined, 'nothing taken from an unchanged one');
   const after = getRequirement('REQ-1');
   assert.equal(after.cases.find((c) => c.test === 'login_wrong_password').criterion_id, after.criteria[0].id, 'the criterion left as it was keeps its test');
 
