@@ -144,11 +144,11 @@ test('a click whose button moved: test drift, and a repair that points the step 
 test('a click whose button is gone while the API fails: a suspected regression, nothing to repair', async () => {
   const triage = await diagnoseFailure({
     stored: { steps: [SIGN_IN] }, tabId: 1, failed: { step: 1, error: 'All 3 locators failed' },
-    sendCommand: fakePage({ alerts: ['alert: Something went wrong'], requests: [{ method: 'POST', url: 'http://x/api/login', status: 500, resourceType: 'fetch' }] }),
+    sendCommand: fakePage({ alerts: ['alert: Something went wrong'], requests: [{ method: 'POST', url: 'http://127.0.0.1:8777/api/login', status: 500, resourceType: 'fetch' }] }),
   });
   assert.equal(triage.cause, 'app_regression');
   assert.deepEqual(triage.proposals, []);
-  assert.deepEqual(triage.evidence.page.failedRequests, [{ method: 'POST', url: 'http://x/api/login', status: 500, resourceType: 'fetch' }]);
+  assert.deepEqual(triage.evidence.page.failedRequests, [{ method: 'POST', url: 'http://127.0.0.1:8777/api/login', status: 500, resourceType: 'fetch' }]);
 });
 
 const CHECK = { command: 'assert', intent: 'Le titre est enregistré', assertion: { type: 'text_equals', selector: '#inline-title', expected: 'Mon avis' } };
@@ -356,4 +356,129 @@ test('the text an assertion reads, in several elements alike: none is picked', a
   });
   assert.equal(moved.cause, 'test_drift');
   assert.equal(moved.proposals[0].kind, 'relocate');
+});
+
+// An identity portal, 2026-11-12: the requests that fail on every page of the app, as the extension
+// listed them when the replay of a test stopped (most recent first). 8 bugs were opened in a day,
+// each titled after one of them, for failures of the test or of its replay.
+const PORTAL = 'https://portal-int.idcloud.example';
+const PORTAL_NOISE = [
+  { method: 'GET', url: `${PORTAL}/ECMv6/api/idw/personalizations/1`, status: 0, statusText: 'failed', resourceType: 'fetch', timestamp: 6 },
+  { method: 'GET', url: `${PORTAL}/ECMv6/api/idw/personalizations/1`, status: 404, resourceType: 'fetch', timestamp: 5 },
+  { method: 'GET', url: 'https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092', status: 0, statusText: 'net::ERR_CONNECTION_RESET', resourceType: 'script', timestamp: 4 },
+  { method: 'GET', url: 'https://cdn.pendo.io/agent/static/null/pendo.js', status: 0, statusText: 'net::ERR_CONNECTION_RESET', resourceType: 'script', timestamp: 3 },
+  { method: 'GET', url: `${PORTAL}/manifest.json?host_version_cache=ea788f4ff9`, status: 404, resourceType: 'manifest', timestamp: 2 },
+  { method: 'GET', url: `${PORTAL}/manifest.json?host_version_cache=ea788f4ff9`, status: 404, resourceType: 'manifest', timestamp: 1 },
+];
+const PORTAL_PAGE = `${PORTAL}/ECM/workflowmanagement/createupdateuserrequestfirststep`;
+// "User Creation and Update access", step 7: its replay did not find the link.
+const CREATE_REQUEST = { command: 'click', intent: 'Open Create User Request', params: { selector: 'a.create-user' }, locators: [{ type: 'role', value: 'link', name: 'Create User Request' }] };
+const PORTAL_STEPS = [{ command: 'navigate', params: { url: `${PORTAL}/ECM/` } }, CREATE_REQUEST];
+// Its last passing run, of the same steps, kept the requests that failed then too.
+const LAST_PASS = { run: 637, failed: ['GET /*/api/idw/personalizations/* 404', 'GET /manifest.json 404'] };
+
+test('the site of a URL: its domain without subdomains, a machine by its name', async () => {
+  const { siteOf, requestRoute } = await import('../lib/triage.js');
+  assert.equal(siteOf(`${PORTAL}/ECM/`), 'idcloud.example');
+  assert.equal(siteOf('https://api.idcloud.example/x'), 'idcloud.example', 'the app\'s API on another subdomain is the app');
+  assert.equal(siteOf('https://cdn.pendo.io/agent/static/null/pendo.js'), 'pendo.io');
+  assert.equal(siteOf('https://www.notes.example.co.uk/'), 'example.co.uk');
+  assert.equal(siteOf('http://127.0.0.1:5173/api'), '127.0.0.1');
+  assert.equal(siteOf('http://localhost:3000/'), 'localhost');
+  assert.equal(siteOf('about:blank'), null);
+  assert.equal(siteOf('{{base_url}}/notes'), null);
+  assert.equal(requestRoute(PORTAL_NOISE[1]), 'GET /*/api/idw/personalizations/*');
+});
+
+test('the PORTAL requests that fail on every page: none counts against the app once a passing run had them too', async () => {
+  const { failuresOf, weighFailures } = await import('../lib/triage.js');
+  const failures = failuresOf(PORTAL_NOISE);
+  assert.deepEqual(failures.map((r) => `${r.url.replace(PORTAL, '')} ${r.status}`), [
+    '/manifest.json?host_version_cache=ea788f4ff9 404',
+    'https://cdn.pendo.io/agent/static/null/pendo.js 0',
+    'https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092 0',
+    '/ECMv6/api/idw/personalizations/1 404',
+  ], 'each once, in the order they were made');
+
+  const { counted, ignored } = weighFailures(failures, { pageUrl: PORTAL_PAGE, steps: PORTAL_STEPS, lastPass: LAST_PASS });
+  assert.deepEqual(counted, []);
+  assert.deepEqual(ignored.map((r) => r.ignored), [
+    'a manifest, beacon or ping: the browser\'s, not the app\'s',
+    'another site\'s (cdn.pendo.io)',
+    'a manifest, beacon or ping: the browser\'s, not the app\'s',
+    'it failed the same way on run #637, which passed',
+  ]);
+  // The same request failing another way now: a 500 where the passing run had a 404 counts.
+  const worse = weighFailures([{ ...failures[3], status: 500 }], { pageUrl: PORTAL_PAGE, lastPass: LAST_PASS });
+  assert.equal(worse.counted.length, 1);
+
+  // No passing run of these steps kept its failed requests: the app's own API in 404 still counts.
+  const unknown = weighFailures(failures, { pageUrl: PORTAL_PAGE, steps: PORTAL_STEPS });
+  assert.deepEqual(unknown.counted.map((r) => r.url), [`${PORTAL}/ECMv6/api/idw/personalizations/1`]);
+});
+
+test('requests with no answer: analytics, or given up by the browser, are not the app\'s; its own API with no answer is', async () => {
+  const { weighFailures } = await import('../lib/triage.js');
+  const at = (url, more = {}) => ({ method: 'GET', url, status: 0, resourceType: 'xhr', ...more });
+  const { counted, ignored } = weighFailures([
+    at(`${PORTAL}/analytics/collect`),
+    at(`${PORTAL}/ECM/api/users`, { error: 'net::ERR_ABORTED' }),
+    at(`${PORTAL}/ECM/api/users`, { method: 'POST', error: 'net::ERR_BLOCKED_BY_CLIENT' }),
+    at(`${PORTAL}/ECM/api/roles`, { error: 'net::ERR_CONNECTION_REFUSED' }),
+    at('https://api.idcloud.example/v1/roles', { status: 500 }),
+  ], { pageUrl: PORTAL_PAGE });
+  assert.deepEqual(ignored.map((r) => r.ignored), [
+    'analytics, out of this browser\'s reach',
+    'given up by the browser (net::ERR_ABORTED)',
+    'given up by the browser (net::ERR_BLOCKED_BY_CLIENT)',
+  ]);
+  assert.deepEqual(counted.map((r) => r.url), [`${PORTAL}/ECM/api/roles`, 'https://api.idcloud.example/v1/roles']);
+  // With no site known — no page, no navigation —, no request is set aside for being another site's.
+  assert.equal(weighFailures([at('https://other.example/api', { status: 500 })]).counted.length, 1);
+});
+
+test('PORTAL: an element not found, nothing alike on the page, and only requests that fail everywhere — not the app, no bug', async () => {
+  const { isAppBug } = await import('../lib/bugs.js');
+  const REQ_38 = [{ key: 'REQ-38', title: 'User can access the creation and update of a user', criteria: [] }];
+  const failed = { step: 2, error: 'Element not found: Create User Request' };
+  const triage = await diagnoseFailure({
+    stored: { steps: PORTAL_STEPS }, tabId: 1, failed, requirements: REQ_38,
+    sendCommand: fakePage({ url: PORTAL_PAGE, refs: [ref('link', 'Home', '#home')], requests: PORTAL_NOISE }),
+    history: { passes: 3, lastPass: '2026-11-12T21:40:17Z', failedOnLastPass: LAST_PASS },
+  });
+  assert.deepEqual([triage.cause, triage.confidence], ['unknown', 'low']);
+  assert.equal(isAppBug(triage), false);
+  assert.equal(triage.summary, 'The element of step 2 is not found, and nothing on the page looks like it');
+  assert.deepEqual(triage.evidence.page.failedRequests, []);
+  assert.equal(triage.evidence.page.ignoredRequests.length, 4);
+  assert.match(formatTriage(triage), /Not counted against the app: GET https:\/\/portal-int\.idcloud\.example\/manifest\.json\?host_version_cache=ea788f4ff9 → 404 \(a manifest, beacon or ping/);
+  assert.doesNotMatch(formatTriage(triage), /^Failed requests:/m);
+
+  // The Cloudflare beacon alone (bug #82): a wait that never ends, and no request of the app.
+  const beacon = await diagnoseFailure({
+    stored: { steps: [PORTAL_STEPS[0], { command: 'wait', params: { selector: 'button.Nav_ShortcutTile' } }] }, tabId: 1, requirements: REQ_38,
+    failed: { step: 2, error: 'Waited 10 s for button.Nav_ShortcutTile: not found' },
+    sendCommand: fakePage({ url: PORTAL_PAGE, requests: [PORTAL_NOISE[2]] }),
+  });
+  assert.deepEqual([beacon.cause, beacon.confidence, isAppBug(beacon)], ['unknown', 'low', false]);
+
+  // A click the replay lost (bug #80), on a page whose API answers: no more the app's than the rest.
+  const lost = await diagnoseFailure({
+    stored: { steps: PORTAL_STEPS }, tabId: 1, requirements: REQ_38, history: { failedOnLastPass: LAST_PASS },
+    failed: { step: 2, error: 'Not clicked: the element left the page before it could be clicked' },
+    sendCommand: fakePage({ url: PORTAL_PAGE, requests: PORTAL_NOISE }),
+  });
+  assert.deepEqual([lost.cause, lost.confidence, isAppBug(lost)], ['unknown', 'low', false]);
+});
+
+test('PORTAL, with a request of the app that fails now and did not on the last passing run: still the app', async () => {
+  const refused = { method: 'POST', url: `${PORTAL}/ECM/workflowmanagement/createupdateuserrequestfirststep/save`, status: 500, resourceType: 'xhr', timestamp: 7 };
+  const triage = await diagnoseFailure({
+    stored: { steps: PORTAL_STEPS }, tabId: 1, failed: { step: 2, error: 'Element not found: Create User Request' },
+    sendCommand: fakePage({ url: PORTAL_PAGE, requests: [refused, ...PORTAL_NOISE] }),
+    history: { failedOnLastPass: LAST_PASS },
+  });
+  assert.deepEqual([triage.cause, triage.confidence], ['app_regression', 'medium']);
+  assert.match(triage.summary, /— and POST \/ECM\/workflowmanagement\/createupdateuserrequestfirststep\/save answered 500$/, 'the summary names the request of the app, not the manifest');
+  assert.deepEqual(triage.evidence.page.failedRequests.map((r) => r.status), [500]);
 });

@@ -1174,7 +1174,11 @@ qui aurait échoué : dans le doute, plus de tests tournent, et la sélection le
 - les pages où il est allé ;
 - les requêtes de données (fetch, XHR) que ses pages ont faites à l'appli, front et API, quel que soit
   le port. Les scripts, les styles, le serveur de dev et les autres sites ne comptent pas ;
-- les appels HTTP de ses étapes serveur.
+- les appels HTTP de ses étapes serveur ;
+- les requêtes qui ont échoué quand même, sur tous les sites, avec leur statut (`failed` :
+  `GET /manifest.json 404`), et ses étapes telles qu'elles étaient (`steps_hash`). Quand les mêmes
+  étapes échouent plus tard, une requête qui échouait déjà de la même façon sur ce rejeu réussi
+  n'est pas comptée contre l'appli (voir le triage plus bas).
 
 Les identifiants sont remplacés par `*` : `GET /api/notes/*`. Sans rejeu qui l'ait gardée, un test n'a
 que ce que ses étapes disent (ses navigations, ses pages), et ce que ses pages appellent n'est pas
@@ -1341,7 +1345,8 @@ Un test dont l'échec est mis sur le compte de l'appli ouvre aussi un bug dans c
 un échec en campagne, par `run_test` ou depuis le tableau de bord, quand le diagnostic dit :
 - `non_conformity` : l'appli ne fait pas ce que dit l'exigence. Type *Non-conformity*, gravité haute.
 - `app_regression` : l'appli échoue là où le test passait. Type *Regression*, gravité haute si une
-  requête a répondu 5xx ou rien, moyenne sinon.
+  requête de l'appli a répondu 5xx ou rien, moyenne sinon. Les requêtes que le triage met de côté
+  (un manifeste, le script d'analytics d'un autre site bloqué par un proxy…) ne comptent pas.
 
 Un `app_regression` de confiance faible, quand rien sur la page ne dit que l'appli a failli, n'ouvre pas
 de bug. Un échec dû au test (`test_drift`, `timing`, `test_outdated`, `session_state`) ou à
@@ -1349,7 +1354,9 @@ l'environnement n'en ouvre pas non plus.
 
 Le bug garde :
 - son titre, qui dit le critère non respecté puis ce qui a mal tourné : « NDF-2 criterion 3 not met:
-  POST /api/notes/*/submit answered 400 », ou « expected "42,50", the page shows "…42,00 €…" » ;
+  POST /api/notes/*/submit answered 400 », ou « expected "42,50", the page shows "…42,00 €…" ». Sans
+  valeur attendue ni requête de l'appli en échec, l'étape et son intention : « step 7 (Open Create
+  User Request) fails ». Une requête mise de côté par le triage ne donne jamais son nom à un bug ;
 - le diagnostic, l'étape, les requêtes refusées, le message de la page ;
 - les critères d'exigence que le test vérifie ;
 - la campagne, avec son commit.
@@ -1446,7 +1453,7 @@ l'historique du tableau de bord.
 | `timing` | L'élément est là maintenant, sous un sélecteur de l'étape ; ou l'assertion passe 1,5 s plus tard | `wait` : une attente insérée avant l'étape |
 | `changed_value` | Une assertion lit une autre valeur : régression, ou changement voulu (nouveau libellé) | `expect`, **à juger par une personne** : attendre la nouvelle valeur. Jamais pour la valeur d'une variable, ni pour un long texte lu par « contient » |
 | `disabled` | L'élément est là mais désactivé | — |
-| `app_regression` | L'élément a disparu, ou la valeur a changé, et la page signale une erreur (`role="alert"`, requête en 4xx/5xx, citée dans le résumé : « POST /api/notes/111/submit answered 400 ») ; ou elle n'affiche pas la valeur que le test a saisie ; ou l'étape cherche ce que le test a créé (une ligne trouvée par `{{description}}`) et la page ne montre plus cette valeur nulle part | — : à signaler, pas à « réparer » |
+| `app_regression` | L'élément a disparu, ou la valeur a changé, et la page signale une erreur (`role="alert"`, requête de l'appli en 4xx/5xx ou sans réponse, citée dans le résumé : « POST /api/notes/111/submit answered 400 ») ; ou elle n'affiche pas la valeur que le test a saisie ; ou l'étape cherche ce que le test a créé (une ligne trouvée par `{{description}}`) et la page ne montre plus cette valeur nulle part | — : à signaler, pas à « réparer » |
 | `environment` | La page ne s'est pas chargée (erreur réseau, page servie en 5xx) | — |
 | `test_outdated` | Une assertion lit une autre valeur, et l'exigence que le test vérifie dit cette valeur-là maintenant (« le statut « À soumettre » ») et plus l'attendue : l'exigence a changé, le test n'a pas suivi. Avant, c'était une `non_conformity`, et l'agent qui venait de mettre l'exigence à jour s'entendait dire de ne pas toucher au test | `expect` sans revue : attendre ce que dit l'exigence |
 | `session_state` | Une étape de connexion ne trouve pas le formulaire, et la page propose de se déconnecter (« Se déconnecter », « Log out ») : le navigateur était déjà connecté, par un rejeu d'avant. Une étape « de connexion » tape un mot de passe ou un secret, ou précède de peu celle qui le fait | — : faire partir le test déconnecté (une première étape vers l'URL de déconnexion de l'appli, ou une voie headless à lui), sans toucher à ses étapes de connexion |
@@ -1456,6 +1463,33 @@ Une requête en échec n'est pas une erreur de la page quand elle a été redema
 ou quand c'est un 401 ou 403 suivi d'une requête réussie vers le même site : c'est la vérification de
 session avant la connexion (`GET /api/auth/me` en 401, puis la connexion et les notes en 200). Elle
 faisait dire « la page signale une erreur » sur toute appli avec une connexion.
+
+Une requête qui échoue sur toutes les pages ne dit rien de l'échec d'un test. Le triage la met de
+côté, avec sa raison, et ne la compte pas contre l'appli :
+- un manifeste, une balise ou un ping (`manifest.json`, `*.webmanifest`, `beacon`, type `manifest`
+  ou `ping`) : le navigateur les demande, pas l'appli ;
+- une requête vers un autre site que celui de l'appli. Le site de l'appli est le domaine de la page,
+  des URL où le test navigue et de l'URL de base du projet, sous-domaines compris : `api.exemple.com`
+  est l'appli d'`app.exemple.com`, `cdn.pendo.io` ne l'est pas ;
+- une requête d'analytics sans réponse (Pendo, Google Analytics, Cloudflare Insights, Segment,
+  Hotjar, Sentry…, ou un chemin `analytics`, `collect`, `telemetry`, `tracking`) : un proxy ou un
+  bloqueur l'arrête ;
+- une requête abandonnée par le navigateur (`net::ERR_ABORTED` : la page a été quittée avant la
+  réponse ; `net::ERR_BLOCKED_BY_CLIENT` : une extension l'a bloquée) ;
+- une requête qui échouait déjà, avec le même statut, sur le dernier rejeu réussi des mêmes étapes
+  du test. Ce rejeu garde ses requêtes en échec dans son empreinte. Un 500 là où ce rejeu avait un
+  404 compte. Si le test a changé depuis, ou si aucun rejeu réussi ne les a encore gardées, cette
+  règle ne joue pas.
+
+Exemple sur un portail de gestion des identités, le 12 novembre 2026. Sur chaque page, `GET /manifest.json` répondait
+404, les scripts de Pendo et de Cloudflare Insights restaient sans réponse et
+`GET /ECMv6/api/idw/personalizations/1` répondait 404 :
+- **Avant** : chaque élément que le rejeu ne trouvait pas devenait un `app_regression`, puis une
+  `non_conformity` de REQ-37 ou REQ-38. Huit bugs ont été ouverts en un jour, en gravité haute, avec
+  des titres comme « REQ-38 not met: GET /manifest.json answered 404 ».
+- **Maintenant** : le manifeste, Pendo et Cloudflare sont mis de côté. `personalizations` l'est aussi
+  dès qu'un rejeu réussi l'a vue échouer. L'échec est alors `unknown`, en confiance faible, et
+  n'ouvre pas de bug. Avant ce rejeu réussi, ce 404 de l'API de l'appli compte encore.
 
 Une étape qui cherche ce que le test a créé n'est jamais « réparée » vers un autre élément. Exemple
 avec « Notes de frais » : une note de 200 € (le plafond transport) est refusée à tort à la soumission.
@@ -1467,8 +1501,9 @@ Le test attendait sa ligne au statut « Soumise », puis la vérifiait sur la pa
 - **Maintenant** : le test échoue sur l'attente, en `non_conformity` au critère 3 de NDF-2, avec le
   400 de la soumission. Aucune réparation n'est proposée.
 
-Les preuves accompagnent le diagnostic : l'adresse de la page, ses alertes, les requêtes en échec,
-les meilleurs candidats avec leur score, et combien de fois le test est passé avant.
+Les preuves accompagnent le diagnostic : l'adresse de la page, ses alertes, les requêtes en échec
+(celles mises de côté à part, chacune avec sa raison : « Not counted against the app: … »), les
+meilleurs candidats avec leur score, et combien de fois le test est passé avant.
 
 Une réparation n'est jamais appliquée toute seule. `verify_repair` (ou **Verify** dans l'historique)
 rejoue le test avec elle, sans l'enregistrer, avec les variables et substitutions de l'exécution qui

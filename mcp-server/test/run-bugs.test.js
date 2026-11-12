@@ -136,3 +136,89 @@ test('only a failure put on the app, with a reason to, is a bug; its title says 
     'NDF-1 criterion 3 not met: expected "42,50", the page shows "05/11/2026 Transport 42,00 € Taxi"');
   assert.equal(runBugTitle({ triage: { cause: 'app_regression', evidence: {} }, stepOrder: 4, intent: 'La note est soumise' }), 'step 4 (La note est soumise) fails');
 });
+
+// An identity portal, 2026-11-12: on every page, requests fail that say nothing of a test's failure —
+// the manifest in 404, Pendo's and Cloudflare's analytics a proxy blocks, the app's own
+// personalizations in 404. 8 bugs were opened in a day for failures of the test or of its replay,
+// each titled after one of them ("REQ-38 not met: GET /manifest.json answered 404") and rated high.
+const { stepsHash } = await import('../lib/bugs.js');
+const PORTAL = 'https://portal-int.idcloud.example';
+const PORTAL_STEPS = [
+  { command: 'navigate', params: { url: `${PORTAL}/ECM/` }, intent: 'Open the portal' },
+  { command: 'click', params: { selector: 'a.create-user' }, intent: 'Open Create User Request' },
+];
+
+/** The portal, stood in for: the replay loses the link while `lost`; the same requests fail either way. */
+function portal({ alerts = [] } = {}) {
+  const state = { lost: false };
+  const noise = () => {
+    const t = Date.now();
+    return [
+      { method: 'GET', url: `${PORTAL}/manifest.json?host_version_cache=ea788f4ff9`, status: 404, resourceType: 'manifest', timestamp: t + 1 },
+      { method: 'GET', url: 'https://cdn.pendo.io/agent/static/null/pendo.js', status: 0, statusText: 'net::ERR_CONNECTION_RESET', resourceType: 'script', timestamp: t + 2 },
+      { method: 'GET', url: 'https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092', status: 0, resourceType: 'script', timestamp: t + 3 },
+      { method: 'GET', url: `${PORTAL}/ECMv6/api/idw/personalizations/1`, status: 404, resourceType: 'fetch', timestamp: t + 4 },
+    ].reverse();
+  };
+  const sendCommand = async (_profile, command, params) => {
+    if (command === 'replay_sequence') {
+      const results = params.steps.map((s, i) => ({ step: i + 1, command: s.command, status: 'success', tabId: 9 }));
+      const click = params.steps.findIndex((s) => s.command === 'click');
+      if (state.lost && click >= 0) {
+        results[click] = { ...results[click], status: 'failed', error: 'Element not found: Create User Request' };
+        throw Object.assign(new Error(`Step ${click + 1} failed`), { results });
+      }
+      return { results };
+    }
+    if (command === 'network_requests') return { requests: noise() };
+    if (command === 'snapshot') return { url: `${PORTAL}/ECM/workflowmanagement/createupdateuserrequestfirststep`, title: 'PORTAL', digest: alerts, refs: {} };
+    return {};
+  };
+  return { sendCommand, state };
+}
+
+test('PORTAL: requests that failed on the last passing run of the same steps too open no bug', async () => {
+  saveTest({ name: 'portal_create_user', variables: {}, steps: PORTAL_STEPS });
+  const { sendCommand, state } = portal();
+  const passed = await run('portal_create_user', sendCommand);
+  assert.equal(passed.ok, true);
+  const kept = JSON.parse(db.prepare('SELECT footprint FROM test_executions WHERE id = ?').get(passed.executionId).footprint);
+  assert.deepEqual(kept.failed, ['GET /*/api/idw/personalizations/* 404', 'GET /agent/static/null/pendo.js 0', 'GET /beacon.min.js/* 0', 'GET /manifest.json 404'], 'the requests that failed while it passed');
+  assert.equal(kept.steps_hash, stepsHash(PORTAL_STEPS));
+
+  state.lost = true;
+  const failed = await run('portal_create_user', sendCommand);
+  assert.equal(failed.ok, false);
+  assert.deepEqual([failed.triage.cause, failed.triage.confidence], ['unknown', 'low']);
+  assert.deepEqual(failed.triage.evidence.page.failedRequests, []);
+  assert.match(failed.triage.evidence.page.ignoredRequests.at(-1).ignored, new RegExp(`failed the same way on run #${passed.executionId}, which passed`));
+  assert.equal(failed.bug, undefined);
+  assert.equal(listBugs({ status: 'all' }).filter((b) => b.repro_test === 'portal_create_user').length, 0);
+});
+
+test('PORTAL, steps changed since the last pass: the app\'s API in 404 counts again — the bug is titled by it, not by the manifest, and not rated high for the analytics', async () => {
+  saveTest({ name: 'portal_changed', variables: {}, steps: PORTAL_STEPS });
+  const { sendCommand, state } = portal();
+  assert.equal((await run('portal_changed', sendCommand)).ok, true);
+  // The link's selector changed: what failed on the run before is not known of these steps.
+  saveTest({ name: 'portal_changed', variables: {}, steps: [PORTAL_STEPS[0], { ...PORTAL_STEPS[1], params: { selector: 'a#create-user' } }] });
+  state.lost = true;
+  const failed = await run('portal_changed', sendCommand);
+  assert.deepEqual([failed.triage.cause, failed.triage.confidence], ['app_regression', 'medium']);
+  const bug = getBug(failed.bug.id);
+  assert.equal(bug.title, 'GET /*/api/idw/personalizations/* answered 404');
+  assert.equal(bug.severity, 'medium', 'Pendo and Cloudflare with no answer are other sites\': they made it high');
+  assert.deepEqual(bug.details.failed_requests.map((r) => r.status), [404]);
+});
+
+test('PORTAL, the page says something went wrong: a bug titled by its step, never by a request set aside', async () => {
+  saveTest({ name: 'portal_alert', variables: {}, steps: PORTAL_STEPS });
+  const { sendCommand, state } = portal({ alerts: ['alert: An error occurred'] });
+  assert.equal((await run('portal_alert', sendCommand)).ok, true);
+  state.lost = true;
+  const failed = await run('portal_alert', sendCommand);
+  assert.deepEqual([failed.triage.cause, failed.triage.confidence], ['app_regression', 'medium']);
+  const bug = getBug(failed.bug.id);
+  assert.equal(bug.title, 'step 2 (Open Create User Request) fails');
+  assert.deepEqual([bug.severity, bug.details.failed_requests], ['medium', []]);
+});

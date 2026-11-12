@@ -11,8 +11,8 @@ import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
 import { requirementsOfTest } from './requirements.js';
-import { readFootprint, saveFootprint } from './footprint.js';
-import { recordRunBug, fixRunBugs } from './bugs.js';
+import { readFootprint, saveFootprint, failuresOnLastPass } from './footprint.js';
+import { recordRunBug, fixRunBugs, stepsHash } from './bugs.js';
 import { elementTimeoutFor, cleanStartFor } from './projects.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
@@ -838,9 +838,11 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     try {
       const baseUrl = test.project_id ? db.prepare('SELECT base_url FROM projects WHERE id = ?').get(test.project_id)?.base_url ?? null : null;
       const pageUrls = [...stepResults, ...assertionStepResults.map((r) => ({ pageUrl: r.assertionResult?.pageUrl }))].map((r) => r?.pageUrl).filter(Boolean);
-      saveFootprint(executionId, await readFootprint(sendCommand, {
+      const footprint = await readFootprint(sendCommand, {
         tabIds: stepResults.map((r) => r?.tabId), since: replayStartedAt, pageUrls, steps: test.steps, baseUrl,
-      }));
+      });
+      // The steps it ran: a later failure of the same steps weighs its failed requests against it.
+      saveFootprint(executionId, { ...footprint, steps_hash: stepsHash(test.steps) });
     } catch (err) {
       log(`Could not keep what run #${executionId} of "${name}" touched: ${err.message}`);
     }
@@ -997,9 +999,12 @@ async function triageRun({ name, test, executionId, failedStepOrder, globalError
   const passes = testRow ? db.prepare(
     `SELECT COUNT(*) AS passes, MAX(started_at) AS lastPass FROM test_executions WHERE test_id = ? AND status = 'success' AND trigger != 'repair' AND id < ?`
   ).get(testRow.id, executionId) : { passes: 0, lastPass: null };
+  // The requests that failed on its last passing run of these steps: failing then too, they are not why.
+  const failedOnLastPass = testRow ? failuresOnLastPass(testRow.id, { before: executionId, stepsHash: stepsHash(test.steps) }) : null;
+  const history = failedOnLastPass ? { ...passes, failedOnLastPass } : passes;
 
   const startedAt = Date.now();
-  const diagnosis = await diagnoseFailure({ stored: test, failed, tabId: failedTab, sendCommand, values, history: passes, requirements: requirementsOfTest(name) });
+  const diagnosis = await diagnoseFailure({ stored: test, failed, tabId: failedTab, sendCommand, values, history, requirements: requirementsOfTest(name), appUrls: startOrigins(test.steps, test.project_id) });
   const ids = saveRepairs(name, executionId, diagnosis, runOptions, test);
   const triage = { ...diagnosis, proposals: diagnosis.proposals.map((proposal, i) => ({ id: ids[i], ...proposal, change: undefined })) };
   db.prepare('UPDATE test_executions SET triage = ? WHERE id = ?').run(JSON.stringify(triage), executionId);
