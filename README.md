@@ -89,7 +89,8 @@ claude mcp add --transport sse -s local izitest-agent http://127.0.0.1:3467/sse 
 ```
 
 Without `IZITEST_TOKEN` on the server, drop the `-H …` part; with it, a client that does not send
-it gets 403. The agent then finds or creates the app's project with `list_projects` and
+it gets 403. The token is a value you make up (`openssl rand -hex 32`): see
+[the token](docs/installation.md#the-token-izitest_token). The agent then finds or creates the app's project with `list_projects` and
 `create_project`. More in [installation](docs/installation.md#4-connect-your-agent).
 
 The dashboard's own agent (*New test → AI Agent*, *Propose scenarios*) is set in *Settings*: a

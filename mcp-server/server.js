@@ -32,6 +32,7 @@ import { initDatabase } from './lib/db.js';
 import { seedAllProjectsStepDefinitions } from './lib/gherkin/step-definition-store.js';
 import { apiRouter } from './lib/api.js';
 import { parseAllowedOrigins, refuseBrowserRequest } from './lib/origin-guard.js';
+import { cookieAuthorized, wantsSignIn, signInPage, signInCookie, signOutCookie, safeNext, fromOwnOrigin, overHttps } from './lib/dashboard-auth.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
@@ -78,12 +79,26 @@ function tokenOk(given) {
 }
 
 /** Le jeton porté par l'en-tête Authorization, ou par ?token= — les clients MCP ne
- *  savent pas tous envoyer d'en-tête. Rien n'est exigé quand aucun jeton n'est défini. */
+ *  savent pas tous envoyer d'en-tête —, ou le cookie du tableau de bord ouvert dans un
+ *  navigateur (lib/dashboard-auth.js). Rien n'est exigé quand aucun jeton n'est défini. */
 function authorized(req, url) {
   if (!MCP_TOKEN) return true;
   const header = req.headers.authorization || '';
   const bearer = header.startsWith('Bearer ') ? header.slice(7) : '';
-  return tokenOk(bearer) || tokenOk(url.searchParams.get('token'));
+  return tokenOk(bearer) || tokenOk(url.searchParams.get('token')) || cookieAuthorized(req.headers, MCP_TOKEN);
+}
+
+/** Le corps d'un formulaire, borné : la page de connexion n'envoie qu'un jeton. */
+function readForm(req, limit = 4096) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > limit) { reject(new Error('too large')); req.destroy(); }
+    });
+    req.on('end', () => resolve(new URLSearchParams(body)));
+    req.on('error', reject);
+  });
 }
 const USE_STDIO = process.argv.includes('--stdio');
 
@@ -213,7 +228,51 @@ if (USE_STDIO) {
     // chemin sans jeton, et cet identifiant n'a été remis qu'à un client authentifié.
     const openPath = url.pathname === '/health'
       || (url.pathname === '/messages' && activeSessions.has(url.searchParams.get('sessionId')));
+
+    // Le tableau de bord dans un navigateur, qui ne sait pas envoyer l'en-tête : la personne
+    // colle le jeton une fois, le serveur répond par un cookie (lib/dashboard-auth.js).
+    if (MCP_TOKEN && url.pathname === '/signin' && req.method === 'POST') {
+      const secure = overHttps(req);
+      const html = (status, page, headers = {}) => {
+        res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
+        res.end(page);
+      };
+      if (!fromOwnOrigin(req.headers)) {
+        log(`Connexion refusée (origine ${req.headers.origin ?? '?'}) depuis ${req.socket.remoteAddress}`);
+        html(403, signInPage({ error: 'Sign in from this server\'s own page.' }));
+        return;
+      }
+      let form;
+      try {
+        form = await readForm(req);
+      } catch {
+        html(413, signInPage({ error: 'The form is too large.' }));
+        return;
+      }
+      const next = safeNext(form.get('next'));
+      if (!tokenOk(form.get('token'))) {
+        log(`Connexion au tableau de bord refusée (jeton invalide) depuis ${req.socket.remoteAddress}`);
+        await new Promise((r) => setTimeout(r, 500));
+        html(403, signInPage({ next, error: 'This is not the server\'s token.' }));
+        return;
+      }
+      log(`Tableau de bord ouvert depuis ${req.socket.remoteAddress}`);
+      res.writeHead(303, { Location: next, 'Set-Cookie': signInCookie(MCP_TOKEN, secure), 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+    if (MCP_TOKEN && url.pathname === '/signout' && req.method === 'POST') {
+      res.writeHead(303, { Location: '/', 'Set-Cookie': signOutCookie(overHttps(req)), 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+
     if (!openPath && !authorized(req, url)) {
+      if (wantsSignIn(req.method, url.pathname, req.headers)) {
+        res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(signInPage({ next: url.pathname + url.search }));
+        return;
+      }
       log(`Requête refusée (jeton absent ou invalide) depuis ${req.socket.remoteAddress} sur ${url.pathname}`);
       // 403 et non 401 : un 401 fait croire aux clients MCP que le serveur veut un
       // OAuth, et ils partent en enregistrement dynamique au lieu de dire « refusé ».

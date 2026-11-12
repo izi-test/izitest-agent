@@ -49,6 +49,48 @@ A process manager such as PM2 works too:
 pm2 start mcp-server/server.js --name izitest-agent
 ```
 
+### The token (`IZITEST_TOKEN`)
+
+IziTest does not give you a token: you make one up, and the server then refuses every request
+that does not carry it (403).
+
+- **The server stays on this machine** (`MCP_HOST` left at `127.0.0.1`): no token is needed.
+  Skip this part, and drop `-H "Authorization: …"` from the commands below.
+- **The server can be reached from another machine** (`MCP_HOST` set to a LAN, Tailscale or
+  public address): a token is required; without one the server does not start.
+
+1. Make a random value:
+
+   ```bash
+   openssl rand -hex 32
+   ```
+
+2. Keep it in your shell profile (`~/.zshrc` on macOS, `~/.bashrc` on Linux), the value in place
+   of `<value>`, then open a new terminal:
+
+   ```bash
+   echo 'export IZITEST_TOKEN=<value>' >> ~/.zshrc
+   ```
+
+3. Start the server from that terminal, or restart it so that it reads the token:
+
+   ```bash
+   pm2 restart izitest-agent --update-env
+   ```
+
+Every client then sends the same value: `claude mcp add … -H "Authorization: Bearer
+$IZITEST_TOKEN"` (next section) and `bin/campaign.js` read it from the shell; Claude Desktop needs
+the value itself in its configuration. A CI job gets it as a secret of the pipeline.
+
+To see the token the server runs with: `pm2 env <id> | grep IZITEST_TOKEN` (`pm2 list` gives the
+id). To change it, do steps 1 to 3 again, then run `claude mcp add` again in each folder where
+you ran it.
+
+**The dashboard in a browser** asks for the token once: paste it in the sign-in page, and that
+browser stays signed in for 30 days. It then holds a cookie derived from the token, not the token
+itself; a new token signs every browser out. Each person who opens the dashboard needs the token,
+so give it as you would a password.
+
 ## 4. Connect your agent
 
 The server speaks MCP over SSE at `http://127.0.0.1:3467/sse`. Several agents can be connected at
