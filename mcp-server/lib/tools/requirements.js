@@ -6,7 +6,7 @@
 
 import { z } from 'zod';
 import {
-  SOURCES, PRIORITIES, CASE_KINDS, TECHNIQUES, saveRequirement, getRequirement, listRequirements, planCases, linkTest, formatRequirement,
+  SOURCES, PRIORITIES, RISK_LEVELS, CASE_KINDS, TECHNIQUES, saveRequirement, getRequirement, listRequirements, planCases, linkTest, formatRequirement,
 } from '../requirements.js';
 import { designBrief, withResolution } from '../requirement-design.js';
 import { FORMATS, importRequirements, formatImport } from '../requirement-import.js';
@@ -40,11 +40,13 @@ export function registerRequirementTools(server) {
       url: z.string().optional().describe('Where it lives (the Jira issue, the GitHub issue)'),
       project_id: z.number().optional(),
       priority: z.enum(PRIORITIES).optional(),
+      likelihood: z.enum(RISK_LEVELS).optional().describe('Its product risk, first half: how likely it is to go wrong — it is new, complex, often changed, or has failed before'),
+      impact: z.enum(RISK_LEVELS).optional().describe('Its product risk, second half: what it costs when it goes wrong — money, data, access, the law, the image. With the likelihood it gives the risk level: a high one gets more cases, runs first in a campaign, and is named in the report while it does not pass'),
     },
-    async ({ title, criteria, description, key, source, url, project_id, priority }) => {
+    async ({ title, criteria, description, key, source, url, project_id, priority, likelihood, impact }) => {
       try {
         const { requirement, isNew, changed } = saveRequirement({
-          key, title, description, criteria: criteria ?? [], source, url, projectId: project_id ?? null, priority,
+          key, title, description, criteria: criteria ?? [], source, url, projectId: project_id ?? null, priority, likelihood, impact,
         });
         const head = isNew ? `Saved ${requirement.key}.` : changed ? `Updated ${requirement.key}: its content changed — check that its tests still match it.` : `${requirement.key} is unchanged.`;
         return text(`${head}\n\n${formatRequirement(requirement)}\n\nNext: design_tests(requirement: "${requirement.key}") to review its criteria and design its scenarios, then plan_tests.`);

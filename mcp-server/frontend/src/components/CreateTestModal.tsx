@@ -30,8 +30,11 @@ export interface CreateTestPreset {
   description: string;
   projectId: number | null;
   gherkin: string | null;
-  requirement: string;
-  caseId: number;
+  /** A requirement's planned case: the test is linked to it. */
+  requirement?: string;
+  caseId?: number;
+  /** A reported bug to reproduce (mcp-server/lib/bugs.js reproBrief): the test the agent records is the bug's. */
+  bugId?: number;
 }
 
 interface CreateTestModalProps {
@@ -200,7 +203,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
     // linked to it: what the test is for is not lost with the conversation. A requirement's
     // case is linked to its own.
     let requirement: string | undefined = preset?.requirement;
-    if (!requirement) {
+    if (!requirement && !preset?.bugId) {
       try {
         const firstLine = description.trim().split('\n')[0];
         const saved = await createRequirement({
@@ -220,7 +223,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       const response = await fetch('/api/agent/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, requirement, case_id: preset?.caseId, project_id: projectId ?? null }),
+        body: JSON.stringify({ prompt, requirement, case_id: preset?.caseId, bug_id: preset?.bugId, project_id: projectId ?? null }),
         signal: controller.signal,
       });
 
@@ -337,7 +340,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
 
       await assignToProject({ testName: name.trim(), projectId }).unwrap();
       await putTestFeature({ testName: name.trim(), feature: gherkinDraft }).unwrap();
-      if (preset) await addCase({ ref: preset.requirement, test_name: name.trim(), case_id: preset.caseId }).unwrap();
+      if (preset?.requirement) await addCase({ ref: preset.requirement, test_name: name.trim(), case_id: preset.caseId }).unwrap();
 
       dispatch(testsApi.util.invalidateTags([{ type: 'TestList', id: 'LIST' }]));
       onTestCreated(name.trim(), projectId, 'gherkin');
@@ -380,7 +383,12 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
         </div>
 
         <div className="modal-body">
-          {preset && (
+          {preset?.bugId && (
+            <p className="create-wf-hint create-wf-hint--linked">
+              For bug #{preset.bugId}: the agent follows the report, records the test that shows the bug and runs it once. It must fail while the bug is there; it is kept as the bug's test, and confirms the fix when it passes.
+            </p>
+          )}
+          {preset?.requirement && (
             <p className="create-wf-hint create-wf-hint--linked">
               For {preset.requirement}, case #{preset.caseId}: the test is linked to it.
               {preset.mode === 'ai' && ' The agent is told the requirement\'s criteria: expected results come from them.'}

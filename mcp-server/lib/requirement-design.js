@@ -59,6 +59,21 @@ function phraseLine(definition, withElements = false, words = keywordsOf('en')) 
   return `- ${words[definition.keyword] ?? definition.keyword} ${definition.pattern}${note}`;
 }
 
+/** How deep to design, from the requirement's product risk (ISTQB CTFL 5.2: the test effort follows the risk). */
+export function riskGuide(requirement) {
+  const said = `likelihood ${requirement.likelihood}, impact ${requirement.impact}`;
+  if (requirement.risk === 'high') {
+    return `HIGH (${said}). Test it in depth: every class of inputs and every limit of each criterion, the combinations of conditions that change the result, the moves between states, and what usually goes wrong — a failure here costs the most.`;
+  }
+  if (requirement.risk === 'medium') {
+    return `Medium (${said}). The expected path, the alternatives, and the errors and limits a user will meet.`;
+  }
+  if (requirement.risk === 'low') {
+    return `Low (${said}). Keep it short: the expected path of each criterion and its main error — no combinations, no rare limits.`;
+  }
+  return 'Not assessed. Design as for a medium risk: the expected path, the alternatives, and the errors and limits a user will meet.';
+}
+
 /**
  * The method applied to one requirement, as the agent reads it. `answer`: "json" (the
  * dashboard: the answer is read by IziTest) or "mcp" (the agent shows it to the user, then
@@ -75,6 +90,7 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
   lines.push('', '## Acceptance criteria');
   if (requirement.criteria.length) for (const c of requirement.criteria) lines.push(`${c.position}. ${c.text}`);
   else lines.push('(none written: the title and description are all there is — the review says which criteria are missing)');
+  lines.push('', '## Product risk', riskGuide(requirement));
 
   if (requirement.cases.length) {
     lines.push('', '## Cases it already has — do not propose them again');
@@ -136,6 +152,7 @@ export function designBrief(requirement, { answer = 'json' } = {}) {
     '   an agent records it later, browsing the app.',
     '6. Priority: high for the expected path and for what loses data, money or access; medium for the alternatives and',
     '   the errors users will meet; low for the rest.',
+    '   How many scenarios follows the product risk above: the higher it is, the deeper the design.',
     `7. Write the issues, questions, rewordings and reasons in the language of the requirement. Write the scenarios —`,
     `   titles and steps — in ${words.name}, the language of the project's tests, with its keywords: ${[words.scenario, words.Given, words.When, words.Then, words.And].join(' / ')}.`);
 

@@ -20,6 +20,12 @@ Issues ([connectors](mcp-tools.md#connecteurs--les-outils-doù-viennent-les-exig
 A requirement has acceptance criteria; its coverage says which criteria a test proves, and how
 that test last ran: *not covered*, *not run*, *failing*, *passing*.
 
+A requirement also has a **product risk**: how likely it is to go wrong (*Likelihood*: new or
+complex code, changed often, failed before) and what it costs when it does (*Impact*). Both rated,
+they give its risk level, shown in the list. A high-risk requirement gets more cases when its
+tests are designed, runs first in a campaign, and is named in the reports while it does not pass
+(the *residual risk*).
+
 ## 3. Design its tests
 
 On a requirement, *Propose scenarios* asks the agent set in *Settings* for a test design:
@@ -98,10 +104,31 @@ test that failed last time, and the tests you always run. A shared file — depe
 configuration, the database schema — runs every test. The preview shows the tests left out; run
 one anyway with *Run it anyway*.
 
+A campaign can have a **test plan**, written in *New campaign → Test plan* or later on the
+campaign's page: its objective, what is in and out of scope, and its exit criteria — what says
+the testing can stop:
+
+- every requirement of high priority or high risk passes;
+- no high-severity bug is left open (a bug said fixed still counts until its test confirms it;
+  a deferred one does not);
+- at least a given share of the acceptance criteria has a test that ran;
+- at least a given share of the tests pass.
+
+The campaign's page and its reports then give the verdict, criterion by criterion with what was
+measured, and the residual risk: the requirements at risk that do not pass. With a plan, the HTML
+report of a finished campaign is its completion report. *Run again* keeps the plan.
+
 From a CI job:
 
 ```bash
 node mcp-server/bin/campaign.js --project 3 --version 1.4.0 --headless --junit reports/junit.xml
+```
+
+With exit criteria, they decide the exit code instead of "every test passed":
+
+```bash
+node mcp-server/bin/campaign.js --project 3 --objective "Release 1.4 can ship" \
+  --require-high --no-high-bug --min-coverage 80 --min-pass-rate 95 --headless
 ```
 
 Only what the branch changed since `origin/main`, the commit kept with the campaign:
@@ -112,7 +139,36 @@ node mcp-server/bin/campaign.js --project 3 --changed origin/main --headless --j
 
 Exit code 0 when every test passed, or when the change touches no test.
 
-## 8. Take the tests elsewhere
+## 8. Bugs
+
+The *Bugs* page keeps what the tests met (a requirement not met, a regression), what exploring an
+app found, and what people report.
+
+*Report a bug*: say what goes wrong in your own words, what you expected and where. *Reproduce*
+then asks the agent to follow your report in the browser and to keep the test that shows it: that
+test fails while the bug is there, and the bug closes by itself when it passes.
+
+*Handle* on a bug sets its severity, how urgent its fix is and who has it, and its status:
+
+- *To retest*: the developers say it is fixed; its test has to confirm it. Passing closes the
+  bug, failing opens it again.
+- *Deferred*: a real bug, not fixed for now. It stays in the backlog and in the reports.
+- *Duplicate* of another bug, or *Dismissed*: not a bug.
+
+*Send to Jira…* makes the bug an issue of the team's tracker: a preview first, nothing is written
+before you confirm. Sent again, the same issue is updated. Its Jira status stays the team's:
+IziTest does not read it back.
+
+## 9. Reports
+
+*Reports* says where the testing stands over a period: runs and how many passed, the campaigns
+and whether each met its exit criteria, the requirements by coverage and by risk, the bugs opened
+and fixed with their trend, what is in the way, the residual risk and what comes next. *Open as a
+page to print or send* gives the same report as one HTML page, readable without IziTest
+(`/api/reports/progress.html?project_id=3&from=2026-11-01&to=2026-11-07`). An agent gets it with
+`get_progress_report`.
+
+## 10. Take the tests elsewhere
 
 A test's *Gherkin* tab shows it as a scenario, editable; its *Code* tab exports it to Playwright,
 plain or with Cucumber.

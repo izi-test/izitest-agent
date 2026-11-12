@@ -23,9 +23,16 @@
 // the commit tested (sha, branch, message) is kept with the campaign, its short sha the version.
 // Nothing to run (the change touches no test): exit code 0.
 //
+// A campaign with a test plan and exit criteria — what says the testing can stop:
+//   node bin/campaign.js --project 3 --objective "Release 1.4 can ship" --scope-note "Not the admin pages" \
+//     --require-high --no-high-bug --min-coverage 80 --min-pass-rate 95
+// --require-high: every requirement of high priority or high risk passes; --no-high-bug: no
+// high-severity bug met is left open; --min-coverage: % of the acceptance criteria a test ran
+// for; --min-pass-rate: % of the tests that passed. The exit code then follows the verdict.
+//
 // The token is read from IZITEST_TOKEN, the server from IZITEST_URL (default
-// http://127.0.0.1:3467). Exit code 0: every test passed; 1: a test failed or did not run;
-// 2: the campaign could not be run.
+// http://127.0.0.1:3467). Exit code 0: every test passed — or, with exit criteria, they are all
+// met; 1: a test failed or did not run, or a criterion is not met; 2: the campaign could not be run.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
@@ -109,6 +116,14 @@ try {
     name: option('name'),
     concurrency: option('concurrency') ? Number(option('concurrency')) : undefined,
     headless: args.includes('--headless'),
+    objective: option('objective'),
+    scope_note: option('scope-note'),
+    exit_criteria: {
+      high_requirements_passing: args.includes('--require-high') || undefined,
+      no_open_high_bug: args.includes('--no-high-bug') || undefined,
+      min_coverage: option('min-coverage') ? Number(option('min-coverage')) : undefined,
+      min_pass_rate: option('min-pass-rate') ? Number(option('min-pass-rate')) : undefined,
+    },
   });
   if (answer.nothing_to_run) {
     console.log(answer.message);
@@ -135,6 +150,13 @@ try {
 
   if (option('junit')) save(option('junit'), await api('GET', `/api/campaigns/${started.id}/junit.xml`));
   if (option('html')) save(option('html'), await api('GET', `/api/campaigns/${started.id}/report.html`));
+  if (campaign.residual_risk?.length) console.log(`Residual risk: ${campaign.residual_risk.map((r) => `${r.key} (${r.risk} risk, ${r.status.replace('_', ' ')})`).join(', ')}`);
+  // With exit criteria, they decide: a campaign can be done with a low-risk test failing.
+  if (campaign.exit) {
+    console.log(`Exit criteria ${campaign.exit.verdict === 'met' ? 'met' : 'NOT met'}:`);
+    for (const x of campaign.exit.criteria) console.log(`  ${x.met ? '✓' : '✗'} ${x.label} (${x.target}): ${x.actual}${x.failing?.length ? ` — ${x.failing.join(', ')}` : ''}`);
+    process.exit(campaign.exit.verdict === 'met' ? 0 : 1);
+  }
   process.exit(totals.passed === campaign.total ? 0 : 1);
 } catch (err) {
   console.error(`Campaign not run: ${err.message}`);

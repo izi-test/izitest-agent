@@ -4,6 +4,7 @@
 // requirement stands — and its results sent to a tool (lib/connectors: Xray).
 
 import { z } from 'zod';
+import { progressReport, formatProgress } from '../reports.js';
 import { startCampaign, getCampaign, listCampaigns, stopCampaign, formatCampaign, MAX_CONCURRENCY } from '../campaigns.js';
 import { connectorsFor, sendResults, formatResults } from '../connectors/index.js';
 import { selectTests, formatSelection } from '../regression.js';
@@ -26,6 +27,13 @@ const commitParam = z.object({
   dirty: z.boolean().optional().describe('true: changes not committed yet are tested with it'),
 }).optional();
 
+const exitParam = z.object({
+  high_requirements_passing: z.boolean().optional().describe('Every requirement of high priority or high risk the campaign checks passes'),
+  no_open_high_bug: z.boolean().optional().describe('No high-severity bug the campaign met is left open'),
+  min_coverage: z.number().min(0).max(100).optional().describe('The share of the acceptance criteria a test of the campaign ran for, in %'),
+  min_pass_rate: z.number().min(0).max(100).optional().describe('The share of its tests that passed, in %'),
+}).optional().describe('Its exit criteria: the campaign\'s report says whether each is met, and the verdict');
+
 export function registerCampaignTools(server, { sendCommand }) {
   // --- Tool: run_campaign ---
   server.tool(
@@ -41,6 +49,9 @@ export function registerCampaignTools(server, { sendCommand }) {
       'independent when they can be (each creates its own data); stages are for what cannot.',
       'With changed_files (and project_id): only the tests the change needs, each chosen with why — plan_regression shows',
       'the choice first. commit: the commit tested, kept with the campaign; its short sha is the version.',
+      'A test manager\'s campaign has a plan: objective, scope_note, and exit_criteria — what says the testing can stop. The',
+      'report then gives the verdict (met or not, criterion by criterion) and the residual risk: the requirements at risk that',
+      'do not pass. The tests of a project or a requirement run the riskiest first (save_requirement: likelihood, impact).',
     ].join('\n'),
     {
       project_id: z.number().optional().describe('All the tests of this project'),
@@ -59,12 +70,15 @@ export function registerCampaignTools(server, { sendCommand }) {
       headless: z.boolean().optional().describe('Run in the Chrome without windows the server starts (its own profile: no login of the user\'s Chrome), out of the user\'s sight. Installed from the dashboard: Settings → Headless browser'),
       ...changeParams,
       commit: commitParam.describe('The commit tested: kept with the campaign, its short sha the version by default'),
+      objective: z.string().optional().describe('Its test plan, first line: what this campaign is for ("check release 1.4 can ship")'),
+      scope_note: z.string().optional().describe('Its test plan: what is in scope and what is left out, in a sentence or two'),
+      exit_criteria: exitParam,
     },
-    async ({ project_id, requirement, tests, stages, version, name, concurrency, wait, headless, changed_files, touched, include, commit }) => {
+    async ({ project_id, requirement, tests, stages, version, name, concurrency, wait, headless, changed_files, touched, include, commit, objective, scope_note, exit_criteria }) => {
       let started;
       const changes = changed_files?.length || touched?.length ? { changed_files: changed_files ?? [], touched: touched ?? [], include: include ?? [] } : null;
       try {
-        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true, stages: stages ?? null, changes, commit: commit ?? null }, { sendCommand });
+        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true, stages: stages ?? null, changes, commit: commit ?? null, objective, scopeNote: scope_note, exitCriteria: exit_criteria ?? null }, { sendCommand });
       } catch (err) {
         // A change that touches no test: nothing to run is an answer, not a failure.
         return text(err.message, err.code !== 'NOTHING_TO_RUN');
@@ -110,6 +124,30 @@ export function registerCampaignTools(server, { sendCommand }) {
     async ({ id }) => {
       const campaign = getCampaign(id);
       return campaign ? text(formatCampaign(campaign)) : text(`No campaign #${id}.`, true);
+    }
+  );
+
+  // --- Tool: get_progress_report ---
+  server.tool(
+    'get_progress_report',
+    [
+      'The test progress report over a period (the last 7 days by default): the runs and how many passed, the campaigns and',
+      'whether each met its exit criteria, where the requirements stand (by coverage, by risk), the bugs opened and fixed with',
+      'their trend and those unresolved, what is in the way, the residual risk, what comes next. For a test manager who',
+      'reports to people who do not open the tool: give it as it is, or shortened. The same report is a page to share at',
+      '/api/reports/progress.html (the dashboard\'s Reports page). A campaign\'s own report (get_campaign) is its completion report.',
+    ].join('\n'),
+    {
+      project_id: z.number().optional().describe('The project reported; all of them when not said'),
+      from: z.string().optional().describe('First day of the period, e.g. "2026-11-03" (default: 7 days before `to`)'),
+      to: z.string().optional().describe('Last day of the period (default: now)'),
+    },
+    async ({ project_id, from, to }) => {
+      try {
+        return text(formatProgress(progressReport({ projectId: project_id ?? null, from, to })));
+      } catch (err) {
+        return text(err.message, true);
+      }
     }
   );
 

@@ -25,6 +25,12 @@
 //       prepare(campaign, options, { ref }) → { target, items: [{ test, status, links }], payload, ... },
 //       async send(ctx, prepared, { ref }) → { ref, url },
 //     },
+//     bugs?: {                        // a bug of IziTest's, sent as an item of the tool
+//       what: 'issue', options: [{ name, label, placeholder }], note?,
+//       prepare(bug, options, { ref, suggestedProject }) → { target, type, summary, text, payload },
+//       async send(ctx, prepared, { ref }) → { ref, action, url },
+//       urlOf?(ctx, ref) → its link,
+//     },
 //   }
 //
 // ctx is { config, fetch, configOf(id) }: the connector's settings, the fetch to call its API with
@@ -38,6 +44,7 @@ import { log } from '../logger.js';
 import { applyImport } from '../requirement-import.js';
 import { getRequirement } from '../requirements.js';
 import { getCampaign } from '../campaigns.js';
+import { getBug } from '../bugs.js';
 import { jira } from './jira.js';
 import { xray } from './xray.js';
 import { github } from './github.js';
@@ -49,7 +56,7 @@ export function registerConnector(connector) {
   if (!/^[a-z][a-z0-9_-]*$/.test(connector?.id ?? '')) throw new Error(`A connector needs an id of lowercase letters, digits, - and _: "${connector?.id}"`);
   if (['prompt', 'manual', 'import'].includes(connector.id)) throw new Error(`"${connector.id}" is a source of requirements of IziTest's own`);
   if (!connector.name || typeof connector.test !== 'function') throw new Error(`The connector ${connector.id} needs a name and a test()`);
-  if (!connector.requirements && !connector.coverage && !connector.results) throw new Error(`The connector ${connector.id} does nothing: no requirements, coverage or results`);
+  if (!connector.requirements && !connector.coverage && !connector.results && !connector.bugs) throw new Error(`The connector ${connector.id} does nothing: no requirements, coverage, results or bugs`);
   connectors.set(connector.id, connector);
 }
 
@@ -63,7 +70,7 @@ export function connectorOf(id) {
   return connector;
 }
 
-/** The connectors of a role (requirements, coverage, results). */
+/** The connectors of a role (requirements, coverage, results, bugs). */
 export const connectorsFor = (role) => listConnectors().filter((c) => c[role]);
 
 // ─── Settings ────────────────────────────────────────────────────────
@@ -159,6 +166,7 @@ export function describeConnectors() {
     },
     coverage: c.coverage && { where: c.coverage.where },
     results: c.results && { what: c.results.what, options: c.results.options ?? [], note: c.results.note ?? null },
+    bugs: c.bugs && { what: c.bugs.what, options: c.bugs.options ?? [], note: c.bugs.note ?? null },
     config: maskedConfig(c.id),
   }));
 }
@@ -174,13 +182,16 @@ function keepRef(connector, kind, itemId, ref) {
     .run(connector, kind, itemId, String(ref));
 }
 
-/** Where a campaign's results were sent: each connector's ref, and a link to it when it gives one. */
-export function sentTo(campaignId) {
-  return db.prepare("SELECT connector, ref FROM connector_refs WHERE kind = 'campaign' AND item_id = ? ORDER BY connector").all(campaignId)
+// The role that sends each kind of thing kept.
+const ROLE_OF_KIND = { campaign: 'results', bug: 'bugs' };
+
+/** Where a campaign's results (or, `kind` 'bug', a bug) were sent: each connector's ref, and a link to it when it gives one. */
+export function sentTo(itemId, kind = 'campaign') {
+  return db.prepare('SELECT connector, ref FROM connector_refs WHERE kind = ? AND item_id = ? ORDER BY connector').all(kind, itemId)
     .filter((r) => connectors.has(r.connector))
     .map(({ connector, ref }) => {
       const c = connectorOf(connector);
-      return { connector, name: c.name, ref, url: c.results?.urlOf?.({ configOf: connectorConfig }, ref) ?? null };
+      return { connector, name: c.name, ref, url: c[ROLE_OF_KIND[kind]]?.urlOf?.({ configOf: connectorConfig }, ref) ?? null };
     });
 }
 
@@ -302,7 +313,42 @@ export async function sendResults(id, campaignId, { options = {}, dryRun = true 
   return { sent: true, ...summary, ref: sent.ref ?? null, url: sent.url ?? null };
 }
 
+/**
+ * Sends a bug to a connector's tool, as an item of it (`options`: the connector's, e.g. the
+ * project it goes in — by default the one of the requirement it breaks, when that came from the
+ * tool) — or, sent before, the same item updated. A dry run unless `dryRun` is false.
+ */
+export async function sendBug(id, bugId, { options = {}, dryRun = true } = {}, { fetch } = {}) {
+  const connector = connectorOf(id);
+  if (!connector.bugs) throw new Error(`${connector.name} takes no bugs`);
+  const bug = getBug(bugId);
+  if (!bug) throw new Error(`No bug #${bugId}`);
+  const ref = refOf(id, 'bug', bug.id);
+  // The project of the requirement it breaks, when that one was read from this tool.
+  const fromTool = (bug.details?.requirements ?? []).map((r) => getRequirement(r.key)).find((r) => r?.source === id);
+  const suggestedProject = fromTool ? fromTool.key.replace(/-\d+$/, '') : null;
+  const prepared = connector.bugs.prepare(bug, options ?? {}, { ref, suggestedProject });
+  const summary = { connector: id, name: connector.name, what: connector.bugs.what, bug: bug.id, target: prepared.target, type: prepared.type ?? null, ref, updates: !!ref, title: prepared.summary, text: prepared.text };
+  if (dryRun) return { sent: false, ...summary, payload: prepared.payload };
+  const sent = await connector.bugs.send(contextOf(connector, { fetch }), prepared, { ref });
+  keepRef(id, 'bug', bug.id, sent.ref);
+  log(`${connector.name}: bug #${bug.id} ${sent.action} as ${sent.ref}`);
+  return { sent: true, ...summary, ref: sent.ref, action: sent.action, url: sent.url ?? null };
+}
+
 // ─── For the agent ───────────────────────────────────────────────────
+
+/** A bug sent (or to be) as the agent reads it. */
+export function formatBugSent(result) {
+  if (result.sent) return `Sent to ${result.name}: bug #${result.bug} ${result.action} as ${result.ref}${result.url ? ` (${result.url})` : ''}.`;
+  const note = connectorOf(result.connector).bugs.note;
+  return [
+    `Dry run — would ${result.updates ? `update the ${result.what} ${result.ref}` : `create a ${result.type ?? result.what} in ${result.target}`}. Nothing sent; dry_run: false sends it.`,
+    `Title: ${result.title}`,
+    result.text.replace(/^/gm, '    '),
+    ...(note ? [note] : []),
+  ].join('\n');
+}
 
 /** A coverage sent (or to be) as the agent reads it. */
 export function formatCoverage(result) {

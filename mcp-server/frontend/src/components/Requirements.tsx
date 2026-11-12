@@ -68,6 +68,12 @@ const testNameFor = (key: string, title: string) => `${key} ${title}`
 
 const errorOf = (err: unknown) => (err as { data?: { error?: string } })?.data?.error ?? 'The request failed';
 
+/** A requirement's product risk — how likely it is to go wrong, with what it costs when it does. */
+export function RiskPill({ risk, title }: { risk: Requirement['risk'] | undefined; title?: string }) {
+  if (!risk) return null;
+  return <span className={`tag ${risk === 'high' ? 'tag--red' : risk === 'medium' ? 'tag--amber' : ''}`} title={title ?? 'Product risk: likelihood × impact'}>{risk} risk</span>;
+}
+
 function CoverageBadge({ coverage }: { coverage: Requirement['coverage'] }) {
   return (
     <StatusPill
@@ -162,7 +168,7 @@ export function RequirementsPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Key</th><th>Title</th>{projectId === null && <th>Project</th>}<th>Source</th><th>Criteria covered</th><th className="col-num">Tests</th><th>Coverage</th><th className="col-chevron" />
+                  <th>Key</th><th>Title</th>{projectId === null && <th>Project</th>}<th>Source</th><th>Risk</th><th>Criteria covered</th><th className="col-num">Tests</th><th>Coverage</th><th className="col-chevron" />
                 </tr>
               </thead>
               <tbody>
@@ -172,6 +178,7 @@ export function RequirementsPage() {
                     <td className="req-title">{r.title}</td>
                     {projectId === null && <td><ProjectChip project={projects.find((p) => p.id === r.project_id)} /></td>}
                     <td><span className="tag">{sources[r.source] ?? r.source}</span></td>
+                    <td>{r.risk ? <RiskPill risk={r.risk} /> : <span className="cell-muted">not rated</span>}</td>
                     <td>
                       <div className="coverage-cell">
                         <div className="result-bar">
@@ -287,6 +294,8 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
   const [title, setTitle] = useState(requirement.title);
   const [description, setDescription] = useState(requirement.description);
   const [priority, setPriority] = useState(requirement.priority);
+  const [likelihood, setLikelihood] = useState(requirement.likelihood);
+  const [impact, setImpact] = useState(requirement.impact);
   const [criteria, setCriteria] = useState(requirement.criteria.map((c) => ({ id: c.id as number | undefined, text: c.text })));
   const [error, setError] = useState<string | null>(null);
   const [preset, setPreset] = useState<CreateTestPreset | null>(null);
@@ -298,6 +307,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
   const design = requirement.design;
   const missing = (design?.missing ?? []).filter((m) => !criteria.some((c) => sameText(c.text, m.text)));
   const dirty = title !== requirement.title || description !== requirement.description || priority !== requirement.priority
+    || likelihood !== requirement.likelihood || impact !== requirement.impact
     || JSON.stringify(criteria) !== JSON.stringify(requirement.criteria.map((c) => ({ id: c.id, text: c.text })));
   const project = projects.find((p) => p.id === requirement.project_id) ?? null;
   const ranIn = campaigns.filter((c) => c.scope.requirement === requirement.key);
@@ -311,7 +321,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
   const save = async () => {
     setError(null);
     try {
-      await update({ ref: requirement.key, title, description, priority, criteria: criteria.filter((c) => c.text.trim()) }).unwrap();
+      await update({ ref: requirement.key, title, description, priority, likelihood, impact, criteria: criteria.filter((c) => c.text.trim()) }).unwrap();
       dispatch(showToast({ message: `${requirement.key} saved` }));
     } catch (err) {
       setError(errorOf(err));
@@ -362,6 +372,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
               <KeyChip>{requirement.key}</KeyChip>
               <CoverageBadge coverage={requirement.coverage} />
               <span className="tag">{sources[requirement.source] ?? requirement.source}</span>
+              <RiskPill risk={requirement.risk} />
               {requirement.external_url && (
                 <a className="meta-item" href={requirement.external_url} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Source</a>
               )}
@@ -392,6 +403,23 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
               <option value="low">Low</option>
             </select>
           </label>
+        </div>
+        <div className="req-head__risk">
+          {([['Likelihood', 'How likely it is to go wrong: new or complex code, changed often', likelihood, setLikelihood], ['Impact', 'What it costs the business or the user when it does', impact, setImpact]] as const).map(([label, hint, value, set]) => (
+            <label className="field" key={label}>
+              <span className="field__label">{label}</span>
+              <select value={value ?? ''} onChange={(e) => set((e.target.value || null) as Requirement['risk'])}>
+                <option value="">Not rated</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+              <span className="field__hint">{hint}</span>
+            </label>
+          ))}
+          <p className="help req-head__risk-note">
+            The product risk is the level of both. The riskiest requirements are tested first in a campaign, and those that do not pass are its residual risk.
+          </p>
         </div>
         {dirty && (
           <div className="unsaved">

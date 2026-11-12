@@ -900,6 +900,9 @@ textarea { resize: vertical; line-height: 1.5; }
 .req-head { display: flex; flex-direction: column; gap: 12px; }
 .req-head__top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .req-head__fields { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 12px; align-items: start; }
+.req-head__risk { display: grid; grid-template-columns: 200px 200px minmax(0, 1fr); gap: 12px; align-items: start; }
+.req-head__risk-note { margin: 22px 0 0; }
+@media (max-width: 900px) { .req-head__risk { grid-template-columns: 1fr 1fr; } .req-head__risk-note { grid-column: 1 / -1; margin: 0; } }
 
 /* ─── Campaigns ─── */
 .campaign-version { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; margin-left: 6px; border-radius: 5px; font-size: 11px; font-weight: 600; font-family: var(--mono); color: var(--primary-navy); background: var(--primary-tint); border: 1px solid var(--primary-tint-border); vertical-align: middle; }
@@ -937,7 +940,19 @@ textarea { resize: vertical; line-height: 1.5; }
 .bug-item__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .bug-item__title { font-weight: 600; }
 .bug-item__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12px; color: var(--text-muted); }
-.bug-item__actions { display: flex; gap: 6px; flex-shrink: 0; }
+.bug-item__actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; max-width: 340px; }
+/* Under a bug's row: how it is handled, its issue in the tracker. */
+.bug-item { flex-wrap: wrap; }
+.bug-item__below { flex-basis: 100%; margin: 0; }
+.bug-handling { display: flex; flex-direction: column; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-subtle); }
+.bug-handling .writeback-fields select, .bug-handling .writeback-fields input { height: 32px; font-weight: 400; }
+.bug-handling .writeback-fields input[type="number"] { width: 90px; }
+.bug-handling__inline { display: flex; gap: 6px; align-items: center; }
+.bug-handling .writeback-panel { margin-top: 0; background: var(--surface); }
+/* A bug a person reports. */
+.bug-report { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 14px; }
+.bug-report__wide { grid-column: 1 / -1; }
+@media (max-width: 900px) { .bug-report { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* A test's bug: the diagnosis, the requirement criterion it breaks. */
 .bug-item__facts { display: flex; flex-direction: column; gap: 6px; }
 .bug-item__summary { font-size: 13px; color: var(--text-secondary, var(--text-muted)); overflow-wrap: anywhere; }
@@ -3338,3 +3353,38 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 .campaign-commit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--text-secondary); min-width: 0; }
 .campaign-commit__message { color: var(--text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .field textarea.mono { font-family: var(--mono); font-size: 12px; }
+
+/* A campaign's test plan (CampaignPlan.tsx): the fields, then where the campaign stands against it. */
+.plan-details { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.plan-details > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.plan-details[open] > summary { margin-bottom: 12px; }
+.plan-fields { display: flex; flex-direction: column; gap: 12px; }
+.plan-criteria { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.plan-criteria label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.plan-criteria input[type="checkbox"] { width: auto; flex: none; margin: 0; accent-color: var(--primary); }
+.plan-criteria input[type="number"] { width: 72px; flex: none; padding: 4px 8px; }
+.plan p { margin: 0 0 8px; }
+.plan__label { display: inline-block; min-width: 84px; font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
+.plan__verdict { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 12px 0 8px; }
+.plan__verdict--green { color: var(--green); }
+.plan__verdict--red { color: var(--red); }
+.plan__verdict--slate { color: var(--text-muted); }
+.plan__residual { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.plan__residual-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; margin-bottom: 8px; color: var(--amber); }
+
+/* The Reports page (ReportsPage.tsx). */
+.report-period { align-items: flex-end; }
+.report-period .field { width: 170px; }
+.report-period__quick { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+.kpi--static, .kpi--static:hover { cursor: default; border-color: var(--border); box-shadow: var(--shadow-sm); }
+.report-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.report-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
+@media (max-width: 900px) { .report-split { grid-template-columns: 1fr; } }
+.bug-trend { margin: 0; }
+.bug-trend svg { width: 100%; height: auto; display: block; }
+.bug-trend__grid { stroke: var(--border); stroke-width: 1; }
+.bug-trend__tick { font-size: 11px; fill: var(--text-muted); }
+.bug-trend__area { fill: var(--red-bg); }
+.bug-trend__line { fill: none; stroke: var(--red); stroke-width: 2; stroke-linejoin: round; }
+.bug-trend__dot { fill: var(--surface); stroke: var(--red); stroke-width: 2; }
+.bug-trend figcaption { font-size: 12px; margin-top: 4px; }

@@ -1348,6 +1348,66 @@ La campagne liste les bugs que ses tests ont rencontrés, nouveaux ou déjà vus
 corrigés : dans son rapport (texte, HTML, carte *Bugs* du tableau de bord), et à côté de chaque test en
 échec. `run_test` dit le bug ouvert ou revu, puis ceux que le test passé a corrigés.
 
+#### Signaler et traiter un bug : `report_bug`, `update_bug`, `send_bug`
+
+`report_bug` garde un bug qu'une personne décrit avec ses mots : `title`, `description` (ce qui se
+passe et comment y arriver), `expected`, `page_url`, `severity`, `priority`, `assignee`,
+`project_id`, `requirement`. Le bug n'a pas encore de test. La réponse dit à l'agent comment le
+reproduire : suivre le signalement dans le navigateur, puis enregistrer le test `bug_<id>_repro`, qui
+finit par un contrôle du comportement **attendu**. Ce test échoue tant que le bug est là ; quand il
+passe, le bug se ferme seul. Le nom du test suffit à le lier au bug. Si l'agent ne reproduit pas le
+bug, il n'enregistre rien et dit ce qu'il a essayé. Dans le tableau de bord : *Bugs → Report a bug*,
+puis *Reproduce*.
+
+`update_bug` traite un bug : `priority` (urgence de la correction), `assignee`, `severity`, `title`,
+`repro_test`, et `status` :
+
+| Statut | Sens |
+|---|---|
+| `open` | À corriger. |
+| `to_retest` | Les développeurs le disent corrigé : son test doit le confirmer. S'il passe, le bug est *fixed* ; s'il échoue, il repasse *open*. |
+| `deferred` | Vrai bug, pas corrigé pour l'instant. Il le reste s'il est revu, et se ferme si son test passe. |
+| `duplicate` | Le même qu'un autre (`duplicate_of`). |
+| `fixed` | Posé par le test qui repasse ; à la main seulement quand aucun test ne peut le montrer. |
+| `dismissed` | Pas un bug. |
+
+`list_bugs` accepte ces statuts, et `unresolved` : *open*, *to_retest* et *deferred*.
+
+`send_bug` envoie le bug au gestionnaire de tickets de l'équipe (connecteur `jira`, rôle `bugs`) :
+ce qui ne va pas, ce qui était attendu, le test qui le reproduit, l'exigence touchée. C'est un
+**essai à blanc par défaut** : la réponse montre ce qui serait écrit. `dry_run: false` écrit, et
+l'agent ne le fait que sur un oui explicite de la personne. `project_key` dit le projet Jira ; à
+défaut, celui de l'exigence touchée quand elle vient de Jira. Renvoyé, le même ticket est mis à jour
+(titre et description). IziTest ne relit pas le statut du ticket Jira.
+
+### Risque produit, plan de test et rapports
+
+`save_requirement` prend `likelihood` et `impact` (`low`, `medium`, `high`) : la probabilité que
+l'exigence casse et ce que cela coûte. Les deux donnent son niveau de risque. `design_tests` prévoit
+plus de cas pour un risque haut, une campagne joue ses tests en premier, et les rapports la nomment
+tant qu'elle ne passe pas : c'est le risque résiduel.
+
+`run_campaign` prend un plan de test : `objective`, `scope_note` et `exit_criteria`.
+
+| Critère | Atteint quand |
+|---|---|
+| `high_requirements_passing` | Chaque exigence de priorité haute ou de risque haut que la campagne vérifie passe. |
+| `no_open_high_bug` | Aucun bug de gravité haute rencontré par la campagne n'est *open* ou *to_retest*. Un bug *deferred* ne compte pas. |
+| `min_coverage` | La part des critères d'acceptation qu'un test de la campagne a joués atteint ce pourcentage. |
+| `min_pass_rate` | La part des tests réussis atteint ce pourcentage. |
+
+`get_campaign` donne alors le verdict, critère par critère avec la valeur mesurée, et le risque
+résiduel. Le rapport HTML d'une campagne finie qui a un plan est son rapport de clôture. L'API :
+`POST /api/campaigns` prend les mêmes champs, `PUT /api/campaigns/:id` change le plan d'une campagne
+existante. En ligne de commande : `--objective`, `--scope-note`, `--require-high`, `--no-high-bug`,
+`--min-coverage`, `--min-pass-rate` ; le code de sortie suit alors le verdict.
+
+`get_progress_report` donne le rapport d'avancement d'une période (`project_id`, `from`, `to` ; les
+7 derniers jours par défaut) : exécutions et taux de réussite, campagnes et verdicts, exigences par
+couverture et par risque, bugs ouverts et corrigés avec leur tendance, obstacles, risque résiduel,
+suite prévue. La même chose en page à imprimer ou à envoyer :
+`/api/reports/progress.html?project_id=&from=&to=`, et dans la page *Reports* du tableau de bord.
+
 ### Triage et réparation d'un test qui échoue
 
 Un échec est diagnostiqué au moment où il arrive, sur la page où il s'est produit (la fenêtre du

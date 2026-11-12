@@ -33,6 +33,10 @@ created or repaired.
 - **Campaigns.** A project's tests, or a requirement's, replayed together for a version of the
   application, a few at a time, with or without windows. JUnit and HTML reports, a command line
   for CI, results sent to Xray, coverage sent to Jira.
+- **Test management.** A product risk per requirement, a test plan with exit criteria on a
+  campaign and its verdict, bugs handled from report to confirmation test (priority, assignee,
+  deferred, duplicate, sent to Jira), and a progress report over a period that reads without
+  the tool.
 - **Triage and repair.** A failure is classified (the application changed, the test is fragile,
   the page was slow…) and a repair proposed, checked on a replay before it is applied.
 - **Export.** Every test reads as Gherkin and exports to Playwright (plain or Cucumber).

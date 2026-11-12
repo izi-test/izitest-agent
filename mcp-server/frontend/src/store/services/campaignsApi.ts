@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Campaign, CampaignCommit, CampaignStage, CampaignSummary, ResultsSend, CoverageSend, RegressionSelection } from '../../types';
+import type { Campaign, CampaignCommit, CampaignStage, CampaignSummary, ExitCriteria, ProgressReport, ResultsSend, CoverageSend, RegressionSelection } from '../../types';
 
 /** What a campaign is started with: a project's tests, a requirement's, or a list. */
 export interface CampaignInput {
@@ -18,6 +18,10 @@ export interface CampaignInput {
   touched?: string[];
   include?: string[];
   commit?: CampaignCommit;
+  /** Its plan: what it is for, what is in and out of scope, what says the testing can stop. */
+  objective?: string | null;
+  scope_note?: string | null;
+  exit_criteria?: ExitCriteria | null;
 }
 
 /** What a change is, to choose the tests it needs. */
@@ -63,6 +67,15 @@ export const campaignsApi = createApi({
       query: (body) => ({ url: 'api/campaigns/select', method: 'POST', body }),
       transformResponse: (response: { selection: RegressionSelection }) => response.selection,
     }),
+    updateCampaignPlan: builder.mutation<{ campaign: Campaign }, { id: number } & Pick<CampaignInput, 'objective' | 'scope_note' | 'exit_criteria'>>({
+      query: ({ id, ...body }) => ({ url: `api/campaigns/${id}`, method: 'PUT', body }),
+      invalidatesTags: (_result, _error, { id }) => ['Campaigns', { type: 'Campaign', id }],
+    }),
+    // Where the testing stands over a period (mcp-server/lib/reports.js).
+    getProgressReport: builder.query<ProgressReport, { projectId?: number | null; from: string; to: string }>({
+      query: ({ projectId, from, to }) => `api/reports/progress?from=${from}&to=${to}${projectId ? `&project_id=${projectId}` : ''}`,
+      providesTags: ['Campaigns'],
+    }),
     stopCampaign: builder.mutation<{ campaign: Campaign }, number>({
       query: (id) => ({ url: `api/campaigns/${id}/stop`, method: 'POST' }),
       invalidatesTags: (_result, _error, id) => ['Campaigns', { type: 'Campaign', id }],
@@ -91,6 +104,8 @@ export const {
   useStartChangeCampaignMutation,
   usePlanCampaignMutation,
   useSelectTestsMutation,
+  useUpdateCampaignPlanMutation,
+  useGetProgressReportQuery,
   useStopCampaignMutation,
   useDeleteCampaignMutation,
   useSendResultsMutation,

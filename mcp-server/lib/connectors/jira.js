@@ -2,7 +2,8 @@
 // description, acceptance criteria (a field of their own, or the list under "Acceptance criteria"
 // in the description), priority, link — by a JQL query, their keys, or again to see which
 // changed; and each story told where it stands in IziTest, as a comment of IziTest's (one a
-// story, updated after) — only when asked, after a dry run.
+// story, updated after) — only when asked, after a dry run. A bug of IziTest's is sent as an
+// issue of a project (a Bug, unless said otherwise), updated when sent again.
 //
 // The site, the account's email and an API token of that account are set in the dashboard
 // (Settings → Connectors → Jira), else read from JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN.
@@ -53,6 +54,7 @@ export function jiraClient(config, { fetch = globalThis.fetch } = {}) {
       const error = new Error(refusal(res.status, data, path));
       error.status = res.status;
       error.messages = data?.errorMessages ?? [];
+      error.fields = Object.keys(data?.errors ?? {});
       throw error;
     }
     return data;
@@ -241,6 +243,93 @@ async function postComment(client, requirement, body, ref) {
   return { ref: String(comment.id), action: 'added', url: link(comment.id) };
 }
 
+// ─── Writing back: a bug, as an issue ────────────────────────────────
+
+const BUG_STATUS_WORDS = {
+  open: 'open', to_retest: 'said fixed — waiting for its test to confirm', deferred: 'fix deferred', duplicate: 'duplicate',
+  fixed: 'fixed — its test passes again', dismissed: 'dismissed',
+};
+const BUG_KIND_WORDS = { non_conformity: 'a requirement is not met', regression: 'regression', reported: 'reported by a person' };
+const JIRA_PRIORITIES = { high: 'High', medium: 'Medium', low: 'Low' };
+
+/** A Jira project key, as given: upper case, checked. */
+function projectKeyOf(value) {
+  const key = String(value ?? '').trim().toUpperCase();
+  if (!key) throw new Error('Say which Jira project the bug goes in: its key (e.g. SHOP)');
+  if (!/^[A-Z][A-Z0-9_]+$/.test(key)) throw new Error(`Not a Jira project key: "${value}"`);
+  return key;
+}
+
+/**
+ * A bug of IziTest's as a Jira issue: its title, and a description saying what goes wrong, what
+ * was expected, the test that reproduces it, the requirement it breaks, where it was last seen
+ * and how it stands in IziTest.
+ */
+export function bugIssue(bug, { projectKey, issueType = 'Bug', now = new Date() } = {}) {
+  const t = (text, marks) => ({ type: 'text', text, ...(marks ? { marks: marks.map((type) => ({ type })) } : {}) });
+  const p = (...content) => ({ type: 'paragraph', content });
+  const line = (label, value) => p(t(`${label}: `, ['strong']), t(String(value)));
+  const d = bug.details ?? {};
+  const requests = (d.failed_requests ?? []).map((r) => `${r.method ?? 'GET'} ${r.url} → ${r.status || 'no answer'}`);
+  const criteria = (d.requirements ?? []).flatMap((r) => (r.criteria?.length
+    ? r.criteria.map((c) => `${r.key} criterion ${c.number}: ${c.text}`)
+    : [`${r.key} ${r.title}`]));
+  const content = [
+    ...(d.description ? [p(t(d.description))] : []),
+    ...(d.summary ? [p(t(d.summary))] : []),
+    ...(d.expected ? [line('Expected', d.expected)] : []),
+    ...(d.actual ? [line('Actual', d.actual)] : []),
+    ...(bug.page_url ? [line('Page', bug.page_url)] : []),
+    ...(requests.length ? [line('Requests refused', requests.join(' ; '))] : []),
+    ...(criteria.length ? [p(t('Requirement not met: ', ['strong'])), { type: 'bulletList', content: criteria.map((c) => ({ type: 'listItem', content: [p(t(c))] })) }] : []),
+    ...(bug.repro_test
+      ? [line('Reproduced by the test', `${bug.repro_test}${d.step?.order ? `, step ${d.step.order}${d.step.intent ? ` (${d.step.intent})` : ''}` : ''} — it passes again once the bug is fixed`)]
+      : [p(t('No test reproduces it yet.', ['em']))]),
+    ...(d.campaign ? [line('Last seen in', `campaign #${d.campaign.id} "${d.campaign.name}"${d.campaign.version ? ` (${d.campaign.version})` : ''}${d.campaign.commit ? `, commit ${d.campaign.commit}` : ''}`)] : []),
+    line('Severity', `${bug.severity}${bug.priority ? ` · fix priority ${bug.priority}` : ''} · ${BUG_KIND_WORDS[bug.kind] ?? bug.kind} · seen ${bug.occurrences} time${bug.occurrences > 1 ? 's' : ''}`),
+    p(t(`IziTest bug #${bug.id} — ${BUG_STATUS_WORDS[bug.status] ?? bug.status}. Updated by IziTest on ${now.toISOString().slice(0, 16).replace('T', ' ')} UTC.`, ['em'])),
+  ];
+  const description = { type: 'doc', version: 1, content };
+  const summary = bug.title.length > 250 ? `${bug.title.slice(0, 249)}…` : bug.title;
+  return {
+    summary, description,
+    fields: {
+      project: { key: projectKey }, issuetype: { name: issueType }, summary, description, labels: ['izitest'],
+      ...(bug.priority ? { priority: { name: JIRA_PRIORITIES[bug.priority] } } : {}),
+    },
+  };
+}
+
+// What a project's screens may not have: left out when Jira refuses them, the issue still made.
+const OPTIONAL_FIELDS = ['priority', 'labels'];
+
+/** Sends fields, without those of OPTIONAL_FIELDS Jira refuses. */
+async function withoutRefused(fields, send) {
+  try {
+    return await send(fields);
+  } catch (err) {
+    const refused = (err.fields ?? []).filter((f) => OPTIONAL_FIELDS.includes(f) && f in fields);
+    if (err.status !== 400 || !refused.length) throw err;
+    return send(Object.fromEntries(Object.entries(fields).filter(([name]) => !refused.includes(name))));
+  }
+}
+
+/** Makes a bug's issue, or updates the one made before (`ref`) while it is still there: its key, what was done, its link. */
+async function postBug(client, prepared, ref) {
+  const link = (key) => `${client.baseUrl}/browse/${key}`;
+  const { project, issuetype, ...content } = prepared.payload.fields;
+  if (ref) {
+    try {
+      await withoutRefused(content, (fields) => client.put(`/rest/api/3/issue/${encodeURIComponent(ref)}`, { fields }));
+      return { ref, action: 'updated', url: link(ref) };
+    } catch (err) {
+      if (err.status !== 404) throw err; // deleted in Jira since: a new one
+    }
+  }
+  const issue = await withoutRefused({ project, issuetype, ...content }, (fields) => client.post('/rest/api/3/issue', { fields }));
+  return { ref: issue.key, action: 'created', url: link(issue.key) };
+}
+
 // ─── The connector ───────────────────────────────────────────────────
 
 export const jira = {
@@ -280,5 +369,24 @@ export const jira = {
       return { body, text: adfToText(body) };
     },
     post: ({ config, fetch }, requirement, body, { ref }) => postComment(jiraClient(config, { fetch }), requirement, body, ref),
+  },
+  bugs: {
+    what: 'issue',
+    options: [
+      { name: 'project_key', label: 'Jira project', placeholder: 'SHOP' },
+      { name: 'issue_type', label: 'Issue type', placeholder: 'Bug' },
+    ],
+    note: 'Sent again, the same issue is updated: its title and description, not its Jira status — that stays the team\'s.',
+    prepare(bug, options = {}, { ref = null, suggestedProject = null } = {}) {
+      const projectKey = ref ? ref.replace(/-\d+$/, '') : projectKeyOf(options.project_key || suggestedProject);
+      const issueType = String(options.issue_type ?? '').trim() || 'Bug';
+      const issue = bugIssue(bug, { projectKey, issueType });
+      return { target: projectKey, type: issueType, summary: issue.summary, text: adfToText(issue.description), payload: { fields: issue.fields } };
+    },
+    send: ({ config, fetch }, prepared, { ref }) => postBug(jiraClient(config, { fetch }), prepared, ref),
+    urlOf: (ctx, key) => {
+      const site = ctx.configOf('jira')?.baseUrl;
+      return key && site ? `${site}/browse/${key}` : null;
+    },
   },
 };

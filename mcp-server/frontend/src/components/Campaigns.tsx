@@ -17,6 +17,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { CampaignWriteBack } from './CampaignWriteBack';
 import { StageEditor } from './StageEditor';
 import { HeadlessSwitch } from './HeadlessSwitch';
+import { CampaignPlanCard, PlanFields, emptyPlan, hasPlan, planOf, type PlanDraft } from './CampaignPlan';
 import { useRunHeadless } from '../headless';
 import { Card, Dialog, EmptyState, KeyChip, Menu, PageHeader, Pill, ProjectChip, ResultBar, Segmented, StatusPill } from './ui';
 import { dateTime, formatDuration } from '../format';
@@ -163,6 +164,7 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
   const [version, setVersion] = useState('');
   const [name, setName] = useState('');
   const [concurrency, setConcurrency] = useState(3);
+  const [testPlan, setTestPlan] = useState<PlanDraft>(emptyPlan);
   const [error, setError] = useState<string | null>(null);
   const [start, { isLoading }] = useStartCampaignMutation();
   const [plan, { isLoading: planning }] = usePlanCampaignMutation();
@@ -220,7 +222,7 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
     setError(null);
     if (change) {
       try {
-        const answer = await startChange({ ...change, version: version.trim() || undefined, name: name.trim() || undefined, concurrency, headless }).unwrap();
+        const answer = await startChange({ ...change, version: version.trim() || undefined, name: name.trim() || undefined, concurrency, headless, ...(hasPlan(testPlan) ? planOf(testPlan) : {}) }).unwrap();
         if (answer.nothing_to_run) setError(answer.message.split('\n')[0]);
         else onStarted(answer.campaign.id);
       } catch (err) {
@@ -233,7 +235,7 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
     try {
       const { campaign } = await start({
         ...(staged ? { stages: stages! } : scope), version: version.trim() || undefined,
-        name: name.trim() || (staged ? defaultName : undefined) || undefined, concurrency, headless,
+        name: name.trim() || (staged ? defaultName : undefined) || undefined, concurrency, headless, ...(hasPlan(testPlan) ? planOf(testPlan) : {}),
       }).unwrap();
       onStarted(campaign.id);
     } catch (err) {
@@ -332,6 +334,10 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
           </select>
         </label>
       </div>
+      <details className="plan-details">
+        <summary>Test plan <span className="field__optional">optional — objective, scope and exit criteria; it can be written later on the campaign</span></summary>
+        <PlanFields draft={testPlan} onChange={setTestPlan} />
+      </details>
       <HeadlessSwitch />
       {error && <div className="alert alert--error">{error}</div>}
       <div className="form__actions">
@@ -433,7 +439,7 @@ export function CampaignPage({ id }: { id: number }) {
     try {
       const scope = c.scope.stages?.length ? { stages: c.scope.stages }
         : c.scope.requirement ? { requirement: c.scope.requirement } : c.scope.project_id ? { project_id: c.scope.project_id } : { tests: c.scope.tests };
-      const { campaign: next } = await start({ ...scope, name: c.scope.stages?.length ? c.name : undefined, version: c.version ?? undefined, concurrency: c.concurrency, headless: c.headless }).unwrap();
+      const { campaign: next } = await start({ ...scope, name: c.scope.stages?.length ? c.name : undefined, version: c.version ?? undefined, concurrency: c.concurrency, headless: c.headless, objective: c.objective, scope_note: c.scope_note, exit_criteria: c.exit_criteria }).unwrap();
       navigate(withScope(`/campaigns/${next.id}`, c.project_id), { replace: true, state: back.state });
     } catch (err) {
       setError(errorOf(err));
@@ -495,6 +501,8 @@ export function CampaignPage({ id }: { id: number }) {
         <div className="result-bar result-bar--lg"><ResultBarParts totals={c.totals} /></div>
         {error && <div className="alert alert--error">{error}</div>}
       </Card>
+
+      <CampaignPlanCard campaign={c} onOpenRequirement={openRequirement} />
 
       {c.non_conformities.length > 0 && (
         <Card title="Non-conformities" icon={AlertTriangle} subtitle="The app does not do what the requirement says — report it, do not change the test.">

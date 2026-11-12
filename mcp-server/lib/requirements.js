@@ -16,6 +16,32 @@ import { projectLanguage } from './gherkin/step-definition-store.js';
 export const SOURCES = ['prompt', 'manual', 'import'];
 const SOURCE = /^[a-z][a-z0-9_-]*$/;
 export const PRIORITIES = ['high', 'medium', 'low'];
+// The product risk of a requirement (ISTQB CTFL 5.2): how likely it is to go wrong (it is new,
+// complex, often changed) and what it costs when it does (money, data, access, image) — each
+// high, medium or low. Their product is the risk level: it says how much to test, what to run
+// first, and what a campaign leaves at risk.
+export const RISK_LEVELS = ['high', 'medium', 'low'];
+const RISK_SCORE = { high: 3, medium: 2, low: 1 };
+
+/** The risk level of a likelihood and an impact: high (6 or 9), medium (3 or 4), low (1 or 2); null when one is not said. */
+export function riskOf(likelihood, impact) {
+  if (!RISK_SCORE[likelihood] || !RISK_SCORE[impact]) return null;
+  const score = RISK_SCORE[likelihood] * RISK_SCORE[impact];
+  return score >= 6 ? 'high' : score >= 3 ? 'medium' : 'low';
+}
+
+/** What orders requirements, the riskiest first: the risk level, then the priority. One with no risk said comes as a medium one. */
+export function riskRank(requirement) {
+  return RISK_SCORE[requirement.risk ?? 'medium'] * 10 + RISK_SCORE[requirement.priority ?? 'medium'];
+}
+
+/** A likelihood or an impact as given: undefined keeps what is there, null or '' removes it. */
+function riskField(name, value, kept) {
+  if (value === undefined) return kept ?? null;
+  if (value === null || value === '') return null;
+  if (!RISK_LEVELS.includes(value)) throw new Error(`No such ${name}: ${value} (${RISK_LEVELS.join(', ')})`);
+  return value;
+}
 // The kinds of case a requirement is tested with: the expected path, another way through,
 // an error the app must handle, a value at the edge of what is allowed.
 export const CASE_KINDS = ['nominal', 'alternative', 'error', 'boundary'];
@@ -53,27 +79,29 @@ function rowOf(ref) {
 /**
  * Save a requirement: a new one, or — same key — the one already there, updated. Its
  * criteria are replaced by `criteria` (texts, or `{ id, text }` to keep a criterion and the
- * cases that check it). A requirement with no key of its own is REQ-<id>. The requirement,
- * whether it is new, and whether its content changed.
+ * cases that check it). A requirement with no key of its own is REQ-<id>. Its `likelihood` and
+ * `impact` (its product risk) are kept when not given: a story imported again keeps the risk
+ * said here. The requirement, whether it is new, and whether its content changed.
  */
-export function saveRequirement({ key, title, description = '', criteria = [], source = 'manual', url = null, projectId = null, priority = 'medium' }) {
+export function saveRequirement({ key, title, description = '', criteria = [], source = 'manual', url = null, projectId = null, priority = 'medium', likelihood, impact }) {
   if (!title?.trim()) throw new Error('A requirement needs a title');
   if (!SOURCE.test(String(source))) throw new Error(`No such source: ${source} (${SOURCES.join(', ')}, or a connector's id)`);
   if (!PRIORITIES.includes(priority)) throw new Error(`No such priority: ${priority}`);
   const items = criteria.map((c) => (typeof c === 'string' ? { text: c } : c)).filter((c) => c.text?.trim());
   const hash = contentHash({ title: title.trim(), description, criteria: items.map((c) => c.text.trim()) });
   const known = key ? rowOf(key) : null;
+  const risk = [riskField('likelihood', likelihood, known?.likelihood), riskField('impact', impact, known?.impact)];
 
   return db.transaction(() => {
     let id = known?.id;
     if (known) {
       db.prepare(`UPDATE requirements SET title = ?, description = ?, source = ?, external_url = ?, project_id = COALESCE(?, project_id),
-                    priority = ?, content_hash = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
-        .run(title.trim(), description, source, url, projectId, priority, hash, id);
+                    priority = ?, likelihood = ?, impact = ?, content_hash = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
+        .run(title.trim(), description, source, url, projectId, priority, ...risk, hash, id);
     } else {
-      id = db.prepare(`INSERT INTO requirements (key, project_id, title, description, source, external_url, priority, content_hash)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
-        .get(key ?? null, projectId, title.trim(), description, source, url, priority, hash).id;
+      id = db.prepare(`INSERT INTO requirements (key, project_id, title, description, source, external_url, priority, likelihood, impact, content_hash)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+        .get(key ?? null, projectId, title.trim(), description, source, url, priority, ...risk, hash).id;
       if (!key) db.prepare('UPDATE requirements SET key = ? WHERE id = ?').run(`REQ-${id}`, id);
     }
     replaceCriteria(id, items);
@@ -150,7 +178,7 @@ export function getRequirement(ref) {
   ).all(row.id).map((c) => ({ ...c, last_run: c.test_id ? lastRunOf(c.test_id) : null }));
   const design = designOf(row.design);
   return {
-    ...row, design, design_stale: !!design && design.content_hash !== row.content_hash,
+    ...row, risk: riskOf(row.likelihood, row.impact), design, design_stale: !!design && design.content_hash !== row.content_hash,
     criteria, cases, coverage: coverageOf(criteria, cases),
   };
 }
@@ -352,6 +380,9 @@ export function formatRequirement(requirement) {
   const { coverage } = requirement;
   const lines = [
     `${requirement.key} — ${requirement.title} [${requirement.source}, ${requirement.priority}]${requirement.external_url ? ` ${requirement.external_url}` : ''}`,
+    requirement.risk
+      ? `Risk: ${requirement.risk.toUpperCase()} (likelihood ${requirement.likelihood}, impact ${requirement.impact})`
+      : 'Risk: not assessed — save_requirement(likelihood, impact) says how likely it is to go wrong and what it costs',
     `Coverage: ${STATUS_LABELS[coverage.status]} — ${coverage.criteria ? `${coverage.covered}/${coverage.criteria} criteria covered, ` : ''}${coverage.tests} test(s)${coverage.planned ? `, ${coverage.planned} case(s) planned, not recorded yet` : ''}`,
   ];
   if (requirement.description) lines.push(`  ${requirement.description.split('\n').join('\n  ')}`);

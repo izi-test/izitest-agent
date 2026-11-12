@@ -1,7 +1,7 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import type { Requirement, RequirementCase, RequirementImport, TestRequirement } from '../../types';
 
-type RequirementInput = Partial<Pick<Requirement, 'title' | 'description' | 'priority' | 'source' | 'key'>> & {
+type RequirementInput = Partial<Pick<Requirement, 'title' | 'description' | 'priority' | 'likelihood' | 'impact' | 'source' | 'key'>> & {
   criteria?: Array<string | { id?: number; text: string }>;
   url?: string | null;
   project_id?: number | null;

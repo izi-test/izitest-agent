@@ -219,16 +219,25 @@ export interface Execution {
 export interface Bug {
   id: number;
   /** The explorer's kinds, then those of a test's run: the app breaks a requirement, or fails where the test passed. */
-  kind: 'console_error' | 'failed_request' | 'broken_link' | 'a11y' | 'non_conformity' | 'regression';
-  /** Found by exploring, or met by a test's run (its diagnosis put the failure on the app). */
-  source: 'exploration' | 'test';
+  kind: 'console_error' | 'failed_request' | 'broken_link' | 'a11y' | 'non_conformity' | 'regression' | 'reported';
+  /** Found by exploring, met by a test's run (its diagnosis put the failure on the app), or reported by a person. */
+  source: 'exploration' | 'test' | 'report';
   severity: 'high' | 'medium' | 'low';
   title: string;
   page_url: string;
   details: Record<string, unknown>;
   repro_test: string | null;
   reproduced: boolean | null;
-  status: 'open' | 'dismissed' | 'fixed';
+  /** to_retest: said fixed, its test has not confirmed it yet; deferred: known, not fixed for now; duplicate: the same as another. */
+  status: 'open' | 'to_retest' | 'deferred' | 'duplicate' | 'fixed' | 'dismissed';
+  /** How urgent its fix is — the severity says how bad it is. */
+  project_id: number | null;
+  priority: 'high' | 'medium' | 'low' | null;
+  assignee: string | null;
+  duplicate_of: number | null;
+  fixed_at: string | null;
+  /** The issues it was sent as (mcp-server/lib/connectors): a Jira bug. */
+  sent_to?: Array<{ connector: string; name: string; ref: string; url: string | null }>;
   occurrences: number;
   first_seen: string;
   last_seen: string;
@@ -238,6 +247,33 @@ export interface Bug {
   campaign_id: number | null;
   data_row: number | null;
   fixed_execution_id: number | null;
+}
+
+/** What a person's report holds (mcp-server/lib/bugs.js reportBug). */
+export interface ReportedBugDetails {
+  description: string;
+  expected: string | null;
+  requirements: Array<{ key: string; title: string; criteria: Array<{ number: number; text: string }> }>;
+  /** Its test passed in this run without having ever failed on the bug: not taken as fixed. */
+  passed_unreproduced?: number;
+}
+
+/** A bug as sent (or to be sent) to a connector's tool: a Jira issue. */
+export interface BugSend {
+  sent: boolean;
+  connector: string;
+  name: string;
+  what: string;
+  bug: number;
+  /** Where it goes: the Jira project. */
+  target: string;
+  type: string | null;
+  ref: string | null;
+  updates: boolean;
+  title: string;
+  text: string;
+  action?: string;
+  url?: string | null;
 }
 
 /** What a test's run kept of the bug it met (mcp-server/lib/bugs.js recordRunBug). */
@@ -362,6 +398,10 @@ export interface Requirement {
   source: string;
   external_url: string | null;
   priority: 'high' | 'medium' | 'low';
+  /** The product risk: how likely it is to go wrong, what it costs when it does; `risk` is the level of both. */
+  likelihood: RiskLevel | null;
+  impact: RiskLevel | null;
+  risk: RiskLevel | null;
   created_at: string;
   updated_at: string;
   criteria: Criterion[];
@@ -369,6 +409,22 @@ export interface Requirement {
   design: RequirementDesign | null;
   design_stale: boolean;
   coverage: { status: 'passing' | 'failing' | 'not_run' | 'not_covered'; criteria: number; covered: number; tests: number; planned: number };
+}
+
+export type RiskLevel = 'high' | 'medium' | 'low';
+
+/** What says a campaign's testing can stop (mcp-server/lib/campaigns.js exitCriteriaOf). */
+export interface ExitCriteria {
+  high_requirements_passing?: boolean;
+  no_open_high_bug?: boolean;
+  min_coverage?: number;
+  min_pass_rate?: number;
+}
+
+/** Where a campaign stands against its exit criteria. */
+export interface CampaignExit {
+  verdict: 'met' | 'not_met' | 'pending';
+  criteria: Array<{ id: keyof ExitCriteria; label: string; target: string; actual: string; met: boolean; failing?: string[] }>;
 }
 
 /** A requirement a test checks, with the criteria it covers there. */
@@ -417,6 +473,8 @@ export interface CampaignRequirement {
   title: string;
   /** Where it comes from: a connector's id (jira), told its coverage there. */
   source: string;
+  priority?: Requirement['priority'];
+  risk?: RiskLevel | null;
   status: Requirement['coverage']['status'];
   criteria: Array<{ number: number; text: string; status: 'passing' | 'failing' | 'not_run' | 'not_covered' }>;
 }
@@ -481,6 +539,39 @@ export interface Campaign {
   sent_to?: Array<{ connector: string; name: string; ref: string; url: string | null }>;
   /** Run in the Chrome without windows (mcp-server/lib/headless.js). */
   headless: boolean;
+  /** Its plan: what it is for, what is in and out, what says it can stop — and where it stands against that. */
+  objective: string | null;
+  scope_note: string | null;
+  exit_criteria: ExitCriteria | null;
+  exit: CampaignExit | null;
+  /** The requirements at risk that do not pass in it, the riskiest first. */
+  residual_risk: Array<{ key: string; title: string; risk: RiskLevel; priority: Requirement['priority']; status: Requirement['coverage']['status'] }>;
+}
+
+/** Where the testing stands over a period (mcp-server/lib/reports.js progressReport). */
+export interface ProgressReport {
+  project: { id: number; name: string } | null;
+  period: { from: string; to: string; days: number };
+  generated_at: string;
+  campaigns: Array<{
+    id: number; name: string; version: string | null; created_at: string; status: string; total: number; passed: number; failed: number;
+    pass_rate: number; exit: CampaignExit | null; objective: string | null; regressed: string[];
+  }>;
+  runs: { total: number; passed: number; failed: number; pass_rate: number; tests: number; causes: Record<string, number> };
+  requirements: {
+    total: number; passing: number; failing: number; not_run: number; not_covered: number;
+    criteria: number; criteria_covered: number; coverage: number;
+    by_risk: Record<RiskLevel, { total: number; passing: number }>; unrated: number;
+  };
+  bugs: {
+    opened: number; fixed: number; unresolved: number;
+    by_severity: Record<Bug['severity'], number>; by_status: Record<string, number>;
+    list: Array<Pick<Bug, 'id' | 'title' | 'severity' | 'priority' | 'assignee' | 'status' | 'first_seen'>>;
+    trend: Array<{ date: string; opened: number; fixed: number; unresolved: number }>;
+  };
+  residual_risk: Campaign['residual_risk'];
+  obstacles: Array<{ id: string; count: number; text: string }>;
+  next: string[];
 }
 
 /**
@@ -502,6 +593,8 @@ export interface Connector {
   coverage?: { where: string };
   /** Sent a campaign's results. */
   results?: { what: string; options: Array<{ name: string; label: string; placeholder?: string }>; note: string | null };
+  /** Sent a bug, as an issue. */
+  bugs?: { what: string; options: Array<{ name: string; label: string; placeholder?: string }>; note: string | null };
   config: (Record<string, string> & { from: 'settings' | 'env' | 'default' }) | null;
 }
 

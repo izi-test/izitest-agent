@@ -14,7 +14,7 @@ import { createAdHocSession, destroySession, runInSession, listSessions } from '
 import { datasetOfTest } from './datasets.js';
 import { loadTest } from './test-store.js';
 import { keptNames } from './server-steps.js';
-import { getRequirement, coverageOf, requirementsOfTest } from './requirements.js';
+import { getRequirement, listRequirements, coverageOf, requirementsOfTest, riskRank } from './requirements.js';
 import { selectTests, formatSelection } from './regression.js';
 
 // The campaigns running now, and whether each was asked to stop.
@@ -80,6 +80,117 @@ function defaultName(scope, projectId, names, selection) {
 }
 
 /**
+ * The tests, the riskiest first: by the product risk, then the priority, of the requirements
+ * each checks (lib/requirements.js riskRank) — a campaign stopped early has run what matters
+ * most. Those that check none come last. As they are when no requirement has its risk said.
+ */
+export function byRisk(names) {
+  const rankOf = new Map(names.map((name) => {
+    const requirements = requirementsOfTest(name).map((r) => getRequirement(r.id));
+    return [name, { rank: Math.max(0, ...requirements.map(riskRank)), assessed: requirements.some((r) => r.risk) }];
+  }));
+  if (![...rankOf.values()].some((r) => r.assessed)) return names;
+  return [...names].sort((a, b) => rankOf.get(b).rank - rankOf.get(a).rank);
+}
+
+/**
+ * The exit criteria of a campaign, checked — what says its testing can stop (ISTQB CTFL 5.1.3):
+ * `high_requirements_passing` (every requirement of high priority or high risk it checks
+ * passes), `no_open_high_bug` (no high-severity bug it met is left open), `min_coverage` (the
+ * share of the acceptance criteria a test of it ran for, in %), `min_pass_rate` (the share of
+ * its tests that passed, in %). Null when none is asked.
+ */
+export function exitCriteriaOf(input) {
+  if (!input || typeof input !== 'object') return null;
+  const criteria = {};
+  if (input.high_requirements_passing === true) criteria.high_requirements_passing = true;
+  if (input.no_open_high_bug === true) criteria.no_open_high_bug = true;
+  for (const key of ['min_coverage', 'min_pass_rate']) {
+    if (input[key] == null || input[key] === '') continue;
+    const percent = Number(input[key]);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error(`${key}: a percentage from 0 to 100, not "${input[key]}"`);
+    if (percent > 0) criteria[key] = Math.round(percent);
+  }
+  return Object.keys(criteria).length ? criteria : null;
+}
+
+/** Change the plan of a campaign — its objective, what is in and out of scope, its exit criteria — whatever was given. */
+export function updateCampaignPlan(id, { objective, scope_note: scopeNote, exit_criteria: exitCriteria } = {}) {
+  const row = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(Number(id));
+  if (!row) throw new Error(`No campaign #${id}`);
+  const criteria = exitCriteria === undefined ? row.exit_criteria : JSON.stringify(exitCriteriaOf(exitCriteria));
+  db.prepare('UPDATE campaigns SET objective = ?, scope_note = ?, exit_criteria = ? WHERE id = ?').run(
+    objective === undefined ? row.objective : String(objective ?? '').trim() || null,
+    scopeNote === undefined ? row.scope_note : String(scopeNote ?? '').trim() || null,
+    criteria === 'null' ? null : criteria, row.id);
+  return getCampaign(row.id);
+}
+
+// A bug still to handle: open, or fixed by its developers and waiting for its test to pass again.
+const UNRESOLVED = ['open', 'to_retest'];
+const percentOf = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
+
+/**
+ * Where a campaign stands against its exit criteria: each with its target, what the campaign
+ * measured and whether it is met, and the verdict — met (they all are), not_met, or pending
+ * while it runs. Null when it has none.
+ */
+function exitOf(criteria, c) {
+  if (!criteria) return null;
+  const list = [];
+  if (criteria.high_requirements_passing) {
+    const high = c.requirements.filter((r) => r.priority === 'high' || r.risk === 'high');
+    const passing = high.filter((r) => r.status === 'passing');
+    list.push({
+      id: 'high_requirements_passing', label: 'Every requirement of high priority or high risk passes', target: 'all',
+      actual: high.length ? `${passing.length} of ${high.length}` : 'none in this campaign', met: passing.length === high.length,
+      ...(passing.length < high.length ? { failing: high.filter((r) => r.status !== 'passing').map((r) => r.key) } : {}),
+    });
+  }
+  if (criteria.no_open_high_bug) {
+    const open = c.bugs.met.filter((b) => b.severity === 'high' && UNRESOLVED.includes(b.status));
+    list.push({
+      id: 'no_open_high_bug', label: 'No high-severity bug is left open', target: '0',
+      actual: String(open.length), met: open.length === 0, ...(open.length ? { failing: open.map((b) => `#${b.id}`) } : {}),
+    });
+  }
+  if (criteria.min_coverage) {
+    const all = c.requirements.flatMap((r) => r.criteria);
+    const ran = all.filter((x) => x.status === 'passing' || x.status === 'failing');
+    list.push({
+      id: 'min_coverage', label: 'Acceptance criteria a test ran for', target: `≥ ${criteria.min_coverage}%`,
+      actual: all.length ? `${percentOf(ran.length, all.length)}% (${ran.length} of ${all.length})` : 'no criterion', met: all.length > 0 && percentOf(ran.length, all.length) >= criteria.min_coverage,
+    });
+  }
+  if (criteria.min_pass_rate) {
+    const rate = percentOf(c.totals.passed, c.total);
+    list.push({
+      id: 'min_pass_rate', label: 'Tests that passed', target: `≥ ${criteria.min_pass_rate}%`,
+      actual: `${rate}% (${c.totals.passed} of ${c.total})`, met: rate >= criteria.min_pass_rate,
+    });
+  }
+  return { criteria: list, verdict: c.running ? 'pending' : list.every((x) => x.met) ? 'met' : 'not_met' };
+}
+
+/**
+ * What a campaign leaves at risk: the requirements of high or medium risk that do not pass in
+ * it — a test failed, did not run, or a criterion has none — and, for a project's campaign,
+ * those of the project none of its tests checks. The riskiest first.
+ */
+function residualRiskOf(row, requirements) {
+  const scope = parseJson(row.scope);
+  const seen = new Set(requirements.map((r) => r.key));
+  const untested = scope?.project_id
+    ? listRequirements({ projectId: scope.project_id }).filter((r) => !seen.has(r.key))
+      .map((r) => ({ key: r.key, title: r.title, priority: r.priority, risk: r.risk, status: 'not_covered' }))
+    : [];
+  return [...requirements, ...untested]
+    .filter((r) => (r.risk === 'high' || r.risk === 'medium') && r.status !== 'passing')
+    .sort((a, b) => riskRank(b) - riskRank(a))
+    .map((r) => ({ key: r.key, title: r.title, risk: r.risk, priority: r.priority, status: r.status }));
+}
+
+/**
  * The stages of a campaign, checked: each its tests (by name, each in one stage only), run
  * side by side (`parallel`) or one after the other in their order (`sequential`); one with
  * `needs_previous` runs only when every test of the stages before it passed.
@@ -118,8 +229,9 @@ export function checkStages(stages) {
  * `sendCommand` is the extension's, unscoped: the campaign runs in a session of its own. The
  * campaign as it starts, and `finished`, settled once its last test ran.
  */
-export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false, stages = null, changes = null, commit = null }, { sendCommand }) {
+export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false, stages = null, changes = null, commit = null, objective = null, scopeNote = null, exitCriteria = null }, { sendCommand }) {
   const commitInfo = commitOf(commit);
+  const criteria = exitCriteriaOf(exitCriteria);
   let selection = null;
   if (changes) {
     if (!projectId) throw new Error('project_id: the project whose tests the change needs');
@@ -144,7 +256,8 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
   const scope = tests?.length ? { tests: [...new Set(tests)], ...(staged ? { stages: staged } : {}) }
     : requirement ? { requirement: getRequirement(requirement)?.key ?? String(requirement) }
       : { project_id: projectId };
-  const names = testsOfScope({ tests, requirement, projectId });
+  // The tests of a project or of a requirement run the riskiest first; a list keeps its order.
+  const names = tests?.length ? testsOfScope({ tests, requirement, projectId }) : byRisk(testsOfScope({ tests, requirement, projectId }));
   if (!names.length) throw new Error('No test to run: none in that scope');
   // Without stages, the tests are one stage, side by side.
   const plan = staged ?? [{ mode: 'parallel', tests: names, needs_previous: false }];
@@ -158,11 +271,12 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
   // Chosen tests all of one project belong to it: the campaign is listed with the project's.
   const project = projectId ?? selection?.project_id ?? (scope.requirement ? getRequirement(scope.requirement).project_id : projectOfTests(names));
   const { id } = db.prepare(
-    `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency, headless, commit_info, selection)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+    `INSERT INTO campaigns (name, project_id, scope, scope_key, version, tests, concurrency, headless, commit_info, selection, objective, scope_note, exit_criteria)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
   ).get(name?.trim() || defaultName(scope, project, names, selection), project, JSON.stringify(scope), scopeKeyOf(scope, names),
     version?.trim() || null, JSON.stringify(entries), lanes, headless ? 1 : 0,
-    commitInfo ? JSON.stringify(commitInfo) : null, selection ? JSON.stringify(selection) : null);
+    commitInfo ? JSON.stringify(commitInfo) : null, selection ? JSON.stringify(selection) : null,
+    objective?.trim() || null, scopeNote?.trim() || null, criteria ? JSON.stringify(criteria) : null);
   const state = { stop: false };
   running.set(id, state);
   log(`Campaign #${id} started: ${entries.length} run(s) of ${names.length} test(s), ${lanes} at a time${staged ? `, in ${staged.length} stage(s)` : ''}${version ? `, version ${version}` : ''}`);
@@ -497,6 +611,7 @@ function requirementsOf(tests) {
     return {
       // Where it comes from: a tool's (lib/connectors) is told its coverage there.
       key: requirement.key, title: requirement.title, source: requirement.source,
+      priority: requirement.priority, risk: requirement.risk,
       status: coverageOf(requirement.criteria, cases).status,
       criteria: requirement.criteria.map((c) => ({ number: c.position, text: c.text, status: criterionStatus(c) })),
     };
@@ -541,16 +656,23 @@ export function getCampaign(id) {
   const totals = Object.fromEntries(STATUSES.map((s) => [s, tests.filter((t) => t.status === s).length]));
   const changes = changesOf(row, tests);
   const project = row.project_id ? db.prepare('SELECT name FROM projects WHERE id = ?').get(row.project_id)?.name ?? null : null;
+  const requirements = requirementsOf(tests);
+  const bugs = bugsOf(row, tests);
+  const exitCriteria = parseJson(row.exit_criteria);
   return {
     ...row, scope: parseJson(row.scope), tests: undefined, errors: undefined, project, headless: !!row.headless,
     commit_info: undefined, commit: parseJson(row.commit_info), selection: parseJson(row.selection),
     running: running.has(row.id), totals, total: tests.length,
     duration_ms: row.finished_at ? Date.parse(row.finished_at) - Date.parse(row.created_at) : null,
-    changes, requirements: requirementsOf(tests),
+    // Its plan: what it is for, what is in and out, what says it can stop — and where it stands against that.
+    exit_criteria: exitCriteria,
+    exit: exitOf(exitCriteria, { requirements, bugs, totals, total: tests.length, running: running.has(row.id) }),
+    residual_risk: residualRiskOf(row, requirements),
+    changes, requirements,
     one_at_a_time: row.concurrency > 1 && !row.headless ? sharedSessions(tests.map((t) => t.name)) : [],
     stages: stagesOf(parseJson(row.scope)?.stages, tests),
     non_conformities: tests.filter((t) => t.triage?.cause === 'non_conformity').map((t) => t.label),
-    bugs: bugsOf(row, tests),
+    bugs,
     runs: tests,
   };
 }
@@ -581,6 +703,8 @@ export function sinceLabel({ since, campaigns }) {
 
 const seconds = (ms) => (ms == null ? '' : ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m${String(Math.round((ms % 60_000) / 1000)).padStart(2, '0')}s`);
 
+const VERDICTS = { met: 'MET: the testing planned is done', not_met: 'NOT MET', pending: 'pending, the campaign is running' };
+
 /** A campaign as the agent reads it. */
 export function formatCampaign(c) {
   const { totals } = c;
@@ -588,6 +712,12 @@ export function formatCampaign(c) {
   const lines = [
     `Campaign #${c.id} "${c.name}"${c.version ? ` — version ${c.version}` : ''} — ${c.running ? 'RUNNING' : c.status}: ${counts} (${c.total} test(s), ${c.concurrency} at a time${c.headless ? ', headless' : ''}${c.duration_ms != null ? `, ${seconds(c.duration_ms)}` : ''})`,
   ];
+  if (c.objective) lines.push(`Objective: ${c.objective}`);
+  if (c.scope_note) lines.push(`In and out of scope: ${c.scope_note}`);
+  if (c.exit) {
+    lines.push(`Exit criteria — ${VERDICTS[c.exit.verdict]}:`);
+    for (const x of c.exit.criteria) lines.push(`  ${x.met ? '✓' : '✗'} ${x.label} (${x.target}): ${x.actual}${x.failing?.length ? ` — ${x.failing.join(', ')}` : ''}`);
+  }
   if (c.commit) lines.push(`Commit ${c.commit.sha ? c.commit.sha.slice(0, 10) : '?'}${c.commit.dirty ? ' (with changes not committed)' : ''}${c.commit.branch ? ` on ${c.commit.branch}` : ''}${c.commit.message ? `: ${c.commit.message.split('\n')[0].slice(0, 120)}` : ''}`);
   if (c.selection) {
     const s = c.selection;
@@ -618,8 +748,11 @@ export function formatCampaign(c) {
   if (c.requirements.length) {
     lines.push('Requirements:');
     for (const r of c.requirements) {
-      lines.push(`  ${r.key} — ${r.title}: ${r.status.replace('_', ' ')}${r.criteria.length ? ` (${r.criteria.map((x) => `${x.number}: ${x.status.replace('_', ' ')}`).join(', ')})` : ''}`);
+      lines.push(`  ${r.key} — ${r.title}${r.risk ? ` [${r.risk} risk]` : ''}: ${r.status.replace('_', ' ')}${r.criteria.length ? ` (${r.criteria.map((x) => `${x.number}: ${x.status.replace('_', ' ')}`).join(', ')})` : ''}`);
     }
+  }
+  if (c.residual_risk?.length) {
+    lines.push(`Residual risk — ${c.residual_risk.length} requirement(s) at risk that do not pass: ${c.residual_risk.map((r) => `${r.key} (${r.risk} risk, ${r.status.replace('_', ' ')})`).join(', ')}`);
   }
   if (c.bugs?.met.length) {
     lines.push('Bugs met — kept in the Bugs page, marked fixed when their test passes again:');
@@ -688,7 +821,7 @@ export function htmlReport(c) {
     : '';
   const requirements = c.requirements.length
     ? `<section><h2>Requirements</h2>${c.requirements.map((r) => `
-       <div class="requirement"><div><strong>${html(r.key)}</strong> ${html(r.title)} ${chip(r.status.replace('_', ' '), REQUIREMENT_COLORS[r.status])}</div>
+       <div class="requirement"><div><strong>${html(r.key)}</strong> ${html(r.title)} ${r.risk ? chip(`${r.risk} risk`, { high: '#b91c1c', medium: '#b45309', low: '#6b7280' }[r.risk]) : ''} ${chip(r.status.replace('_', ' '), REQUIREMENT_COLORS[r.status])}</div>
        <ol>${r.criteria.map((x) => `<li>${html(x.text)} ${chip(x.status.replace('_', ' '), REQUIREMENT_COLORS[x.status])}</li>`).join('')}</ol></div>`).join('')}</section>`
     : '';
   const rows = c.runs.map((t) => `
@@ -696,6 +829,19 @@ export function htmlReport(c) {
     <td>${t.status === 'failed' || t.status === 'error'
       ? `${t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}${html(String(t.error ?? '').split('\n')[0].slice(0, 300))}${t.triage ? `<div class="why"><strong>${html(t.triage.cause.replace('_', ' '))}</strong> — ${html(t.triage.summary)}</div>` : ''}${t.bug ? `<div class="why">Bug #${t.bug.id}</div>` : ''}`
       : ''}</td></tr>`).join('');
+  const RISK_COLORS = { high: '#b91c1c', medium: '#b45309', low: '#6b7280' };
+  const plan = c.objective || c.scope_note
+    ? `<section><h2>Test plan</h2>${c.objective ? `<p><strong>Objective.</strong> ${html(c.objective)}</p>` : ''}${c.scope_note ? `<p><strong>In and out of scope.</strong> ${html(c.scope_note)}</p>` : ''}</section>`
+    : '';
+  const exit = c.exit
+    ? `<section><h2>Exit criteria ${chip({ met: 'met', not_met: 'not met', pending: 'pending' }[c.exit.verdict], { met: '#15803d', not_met: '#b91c1c', pending: '#1d4ed8' }[c.exit.verdict])}</h2>
+       <table><tr><th>Criterion</th><th>Target</th><th>Measured</th><th></th></tr>${c.exit.criteria.map((x) => `
+       <tr><td>${html(x.label)}</td><td>${html(x.target)}</td><td>${html(x.actual)}${x.failing?.length ? `<div class="why">${x.failing.map(html).join(', ')}</div>` : ''}</td><td>${chip(x.met ? 'met' : 'not met', x.met ? '#15803d' : '#b91c1c')}</td></tr>`).join('')}</table>
+       <p class="meta">${c.exit.verdict === 'met' ? 'Every exit criterion is met: the testing planned for this campaign is done.' : c.exit.verdict === 'pending' ? 'The campaign is still running.' : 'The exit criteria are not met: the testing planned is not done.'}</p></section>`
+    : '';
+  const residual = c.residual_risk?.length
+    ? `<section><h2>Residual risk</h2><p class="meta">Requirements at risk that do not pass in this campaign.</p><ul>${c.residual_risk.map((r) => `<li><strong>${html(r.key)}</strong> ${html(r.title)} ${chip(`${r.risk} risk`, RISK_COLORS[r.risk])} ${chip(r.status.replace('_', ' '), REQUIREMENT_COLORS[r.status])}</li>`).join('')}</ul></section>`
+    : '';
   const { totals } = c;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -717,6 +863,9 @@ export function htmlReport(c) {
 <h1>Campaign #${c.id} — ${html(c.name)}</h1>
 <div class="meta">${c.version ? `Version ${html(c.version)} · ` : ''}${html(when)} · ${c.total} test(s), ${c.concurrency} at a time${c.headless ? ', headless' : ''}${c.duration_ms != null ? ` · ${seconds(c.duration_ms)}` : ''} · ${html(c.running ? 'running' : c.status)}</div>
 <div class="totals">${STATUSES.filter((s) => totals[s]).map((s) => `<div style="color:${STATUS_COLORS[s]}">${totals[s]}<span>${s}</span></div>`).join('')}</div>
+${plan}
+${exit}
+${residual}
 ${c.bugs?.met.length || c.bugs?.fixed.length ? `<section><h2>Bugs</h2>${c.bugs.met.length ? `<ul>${c.bugs.met.map((b) => `<li><strong>#${b.id}</strong> ${chip(b.new ? 'new' : `seen ${b.occurrences} times`, b.new ? '#b91c1c' : '#6b7280')} ${html(b.test)}: ${html(b.title)}</li>`).join('')}</ul>` : ''}${c.bugs.fixed.length ? `<p><strong class="good">Fixed</strong> — their test passes again: ${c.bugs.fixed.map((b) => `#${b.id} (${html(b.test)})`).join(', ')}</p>` : ''}</section>` : ''}
 ${c.non_conformities.length ? `<section><h2 class="bad">Non-conformities</h2><p>The app does not do what the requirement says: ${c.non_conformities.map(html).join(', ')}.</p></section>` : ''}
 ${changes}

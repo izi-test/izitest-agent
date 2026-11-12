@@ -478,6 +478,31 @@ export function initDatabase() {
     log(`Migration warning (datasets): ${err.message}`);
   }
 
+  // What a test manager plans and follows (ISTQB CTFL 5): the product risk of a requirement — how
+  // likely it is to go wrong, what it costs when it does (lib/requirements.js riskOf) —, the plan
+  // of a campaign and its exit criteria (lib/campaigns.js exitOf), and a bug's handling: how
+  // urgent its fix is, who has it, the bug it repeats (lib/bugs.js updateBug).
+  try {
+    const requirementCols = db.prepare('PRAGMA table_info(requirements)').all().map(c => c.name);
+    if (!requirementCols.includes('likelihood')) db.exec('ALTER TABLE requirements ADD COLUMN likelihood TEXT DEFAULT NULL');
+    if (!requirementCols.includes('impact')) db.exec('ALTER TABLE requirements ADD COLUMN impact TEXT DEFAULT NULL');
+    const campaignCols = db.prepare('PRAGMA table_info(campaigns)').all().map(c => c.name);
+    if (!campaignCols.includes('objective')) db.exec('ALTER TABLE campaigns ADD COLUMN objective TEXT DEFAULT NULL');
+    if (!campaignCols.includes('scope_note')) db.exec('ALTER TABLE campaigns ADD COLUMN scope_note TEXT DEFAULT NULL');
+    if (!campaignCols.includes('exit_criteria')) db.exec('ALTER TABLE campaigns ADD COLUMN exit_criteria TEXT DEFAULT NULL');
+    const bugCols = db.prepare('PRAGMA table_info(bugs)').all().map(c => c.name);
+    if (!bugCols.includes('priority')) db.exec('ALTER TABLE bugs ADD COLUMN priority TEXT DEFAULT NULL');
+    if (!bugCols.includes('assignee')) db.exec('ALTER TABLE bugs ADD COLUMN assignee TEXT DEFAULT NULL');
+    if (!bugCols.includes('duplicate_of')) db.exec('ALTER TABLE bugs ADD COLUMN duplicate_of INTEGER DEFAULT NULL');
+    if (!bugCols.includes('fixed_at')) {
+      db.exec('ALTER TABLE bugs ADD COLUMN fixed_at TEXT DEFAULT NULL');
+      // Those fixed before: when the run that saw them fixed ended, else when they were last seen.
+      db.exec(`UPDATE bugs SET fixed_at = COALESCE((SELECT e.finished_at FROM test_executions e WHERE e.id = bugs.fixed_execution_id), last_seen) WHERE status = 'fixed'`);
+    }
+  } catch (err) {
+    log(`Migration warning (risk, test plan, bug handling): ${err.message}`);
+  }
+
   // The secrets of a project (lib/secrets.js): a password, a key a test types, its value
   // encrypted with a key of this machine; {{secret.NAME}} in a step.
   db.exec(`

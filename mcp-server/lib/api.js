@@ -30,16 +30,17 @@ import { listSecrets, saveSecret, deleteSecret, secretLines, secretValue } from 
 import { pendingAsks, answerAsk, cancelAsk, cancelAsksOfRun, followAsks } from './asks.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
-import { listBugs, setBugStatus, listExplorations, getExploration, runExploration } from './bugs.js';
+import { listBugs, getBug, updateBug, reportBug, reproBrief, adoptReproTest, listExplorations, getExploration, runExploration } from './bugs.js';
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
 import { designTests, planDesigned, placeMissing, withResolution, recordingBrief, projectBrief } from './requirement-design.js';
 import { importRequirements } from './requirement-import.js';
 import {
-  describeConnectors, connectorOf, saveConnectorConfig, testConnector, connectorConfig, importFromConnector, sendCoverage, sendResults, sentTo,
+  describeConnectors, connectorOf, saveConnectorConfig, testConnector, connectorConfig, importFromConnector, sendCoverage, sendResults, sendBug, sentTo,
 } from './connectors/index.js';
 import { complete, agentName } from './agent/complete.js';
-import { startCampaign, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport, proposeStages, testsOfScope } from './campaigns.js';
+import { progressReport, htmlProgress } from './reports.js';
+import { startCampaign, updateCampaignPlan, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport, proposeStages, testsOfScope } from './campaigns.js';
 import { selectTests } from './regression.js';
 import { generateTestCode } from './codegen/index.js';
 import { listSessions } from './session.js';
@@ -537,6 +538,7 @@ export async function apiRouter(req, res, url) {
         const { requirement } = saveRequirement({
           key: body.key || undefined, title: body.title, description: body.description ?? '', criteria: body.criteria ?? [],
           source: body.source ?? 'manual', url: body.url ?? null, projectId: body.project_id ?? null, priority: body.priority ?? 'medium',
+          likelihood: body.likelihood, impact: body.impact,
         });
         return json(res, 201, { requirement });
       } catch (err) {
@@ -659,6 +661,8 @@ export async function apiRouter(req, res, url) {
           criteria: body.criteria ?? existing.criteria.map((c) => ({ id: c.id, text: c.text })),
           source: body.source ?? existing.source, url: body.url ?? existing.external_url,
           projectId: body.project_id ?? existing.project_id, priority: body.priority ?? existing.priority,
+          // Its product risk: null removes one, not given it stays.
+          likelihood: body.likelihood, impact: body.impact,
         });
         return json(res, 200, { requirement });
       } catch (err) {
@@ -800,6 +804,8 @@ export async function apiRouter(req, res, url) {
           projectId: body.project_id ?? null, version: body.version ?? null, concurrency: body.concurrency ?? 3,
           headless: body.headless === true, stages: Array.isArray(body.stages) ? body.stages : null,
           changes, commit: body.commit && typeof body.commit === 'object' ? body.commit : null,
+          // Its test plan: what it is for, what is in and out, what says it can stop.
+          objective: body.objective ?? null, scopeNote: body.scope_note ?? null, exitCriteria: body.exit_criteria ?? null,
         }, { sendCommand });
         return json(res, 201, { campaign });
       } catch (err) {
@@ -810,6 +816,16 @@ export async function apiRouter(req, res, url) {
 
     // GET | DELETE /api/campaigns/:id — its report; gone (its runs stay, as runs of their tests)
     params = matchRoute(path, '/api/campaigns/:id');
+    // PUT /api/campaigns/:id — { objective, scope_note, exit_criteria }: its plan changed, the verdict with it
+    if (params && method === 'PUT') {
+      const body = await readBody(req);
+      try {
+        const campaign = updateCampaignPlan(params.id, body);
+        return json(res, 200, { campaign: { ...campaign, sent_to: sentTo(campaign.id) } });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
     if (params && (method === 'GET' || method === 'DELETE')) {
       if (method === 'GET') {
         const campaign = getCampaign(params.id);
@@ -846,6 +862,22 @@ export async function apiRouter(req, res, url) {
       }
     }
 
+    // GET /api/reports/progress | progress.html ?project_id=&from=&to= — where the testing stands over a period
+    if (method === 'GET' && (path === '/api/reports/progress' || path === '/api/reports/progress.html')) {
+      try {
+        const projectId = Number(url.searchParams.get('project_id')) || null;
+        const report = progressReport({ projectId, from: url.searchParams.get('from') || undefined, to: url.searchParams.get('to') || undefined });
+        if (path.endsWith('.html')) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(htmlProgress(report));
+          return;
+        }
+        return json(res, 200, report);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
     // GET /api/campaigns/:id/junit.xml | report.html — the report for a CI, and to share
     params = matchRoute(path, '/api/campaigns/:id/:file');
     if (method === 'GET' && params && ['junit.xml', 'report.html'].includes(params.file)) {
@@ -862,18 +894,49 @@ export async function apiRouter(req, res, url) {
 
     // ── Bugs the explorer found (lib/bugs.js), and its explorations ──
 
-    // GET /api/bugs?status=open|dismissed|fixed|all&project_id=
+    // GET /api/bugs?status=open|unresolved|to_retest|deferred|duplicate|dismissed|fixed|all&project_id=
     if (method === 'GET' && path === '/api/bugs') {
       const projectId = url.searchParams.get('project_id');
-      return json(res, 200, { bugs: listBugs({ status: url.searchParams.get('status') || 'open', projectId: projectId ? Number(projectId) : undefined }) });
+      const bugs = listBugs({ status: url.searchParams.get('status') || 'open', projectId: projectId ? Number(projectId) : undefined });
+      return json(res, 200, { bugs: bugs.map((bug) => ({ ...bug, sent_to: sentTo(bug.id, 'bug') })) });
     }
 
-    // PUT /api/bugs/:id — { status: open | dismissed | fixed }
+    // POST /api/bugs — a bug a person reports: { title, description, expected, page_url, severity, priority, assignee, project_id, requirement }
+    if (method === 'POST' && path === '/api/bugs') {
+      const body = await readBody(req);
+      try {
+        const bug = reportBug({
+          title: body.title, description: body.description, expected: body.expected, pageUrl: body.page_url, severity: body.severity ?? 'medium',
+          priority: body.priority ?? null, assignee: body.assignee ?? null, projectId: body.project_id ?? null, requirement: body.requirement ?? null,
+        });
+        return json(res, 201, { bug: { ...bug, sent_to: [] } });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // PUT /api/bugs/:id — how it is handled: { status, priority, assignee, duplicate_of, severity, title, repro_test }
     params = matchRoute(path, '/api/bugs/:id');
     if (method === 'PUT' && params) {
       const body = await readBody(req);
       try {
-        return json(res, 200, { bug: setBugStatus(parseInt(params.id), body.status) });
+        const bug = updateBug(parseInt(params.id), {
+          status: body.status, priority: body.priority, assignee: body.assignee, duplicate_of: body.duplicate_of,
+          severity: body.severity, title: body.title, repro_test: body.repro_test,
+        });
+        return json(res, 200, { bug: { ...bug, sent_to: sentTo(bug.id, 'bug') } });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // POST /api/bugs/:id/send/:connector — the bug as an issue of the team's tracker: { options, dry_run }. A dry run unless dry_run is false.
+    params = matchRoute(path, '/api/bugs/:id/send/:connector');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      try {
+        const result = await sendBug(params.connector, parseInt(params.id), { options: body.options ?? {}, dryRun: body.dry_run !== false });
+        return json(res, 200, { result });
       } catch (err) {
         return json(res, 400, { error: err.message });
       }
@@ -1486,6 +1549,13 @@ export async function apiRouter(req, res, url) {
     if (method === 'POST' && path === '/api/agent/run') {
       const body = await readBody(req);
       if (!body.prompt) return json(res, 400, { error: 'prompt is required' });
+      // A reported bug to reproduce (lib/bugs.js): the agent is told how, and the test it records is the bug's.
+      const reportedBug = body.bug_id ? getBug(body.bug_id) : null;
+      if (body.bug_id && !reportedBug) return json(res, 404, { error: `No bug #${body.bug_id}` });
+      if (reportedBug) {
+        body.prompt += `\n\n${reproBrief(reportedBug)}`;
+        req.on('close', () => { try { adoptReproTest(`bug_${reportedBug.id}_repro`); } catch { /* no test recorded */ } });
+      }
       // The requirement the test is for (the dashboard saves the request as one): linked when recorded.
       const requirementLink = body.requirement ? { requirement: String(body.requirement), caseId: body.case_id ?? null, criterion: null } : null;
 
