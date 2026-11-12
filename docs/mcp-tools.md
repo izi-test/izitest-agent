@@ -121,7 +121,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `list_tests` | Lists all saved tests and their variables. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
 | `save_requirement` | Saves a requirement — from a request, written by hand, or an issue of a tool (a Jira story) — with its acceptance criteria (see below). |
-| `import_requirements` | Imports requirements from a file — CSV, TSV, Excel, a Jira CSV export, JSON, Markdown —, a dry run first (see below). |
+| `import_requirements` | Imports requirements from a file — CSV, TSV, Excel, a Jira CSV export, JSON, Markdown, Word `.docx`, a Postman collection, an OpenAPI document —, a dry run first (see below). Any other document (a PDF, an email, notes): the agent reads it and passes its requirements as Markdown `content`. |
 | `import_from_connector` | Reads requirements from a tool set in the dashboard (a connector: Jira, GitHub Issues) — a query, their keys, or again (`sync`) —, a dry run first (see below). |
 | `send_coverage` | Tells a tool where each requirement imported from it stands — a campaign's, or those of their keys — as IziTest's comment on it (Jira), updated after; a dry run first (see below). |
 | `design_tests` | Lays out how to design a requirement's tests: its criteria, its cases, the app, the project's Gherkin phrases, and the method — review, what is left unsaid, scenarios by test technique (see below). |
@@ -872,6 +872,7 @@ les testent. Le même objet, d'où qu'elle vienne :
 | :--- | :--- |
 | Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré ; l'agent reçoit l'URL de base et le contexte du projet, et s'il s'arrête sans sauver le test (pas d'URL d'où partir), la fenêtre reste ouverte avec son dernier message. |
 | Un fichier (un cahier de recette, un export) | `import_requirements(path)` ou le bouton **Import** de la page Requirements (voir plus bas). |
+| N'importe quel document (une spec Word, un e-mail, des notes) | l'agent le lit : dans le tableau de bord, « Have the agent read it » de l'import ; en MCP, l'agent lit le document lui-même et passe ses exigences en Markdown à `import_requirements(content)` (voir plus bas). |
 | Un outil branché (Jira, GitHub Issues) | `import_from_connector(connector, query)` ou l'onglet **From Jira**, **From GitHub Issues**… de l'import (voir les connecteurs plus bas), une fois l'outil réglé dans Settings. |
 | Un outil sans connecteur (une page Notion) | l'agent la lit (par exemple avec le serveur MCP de l'outil) et la garde : `source` l'id d'un connecteur (`"jira"`) ou un nom de son choix (`"notion"`), sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |
 | Un testeur | page **Requirements** du tableau de bord : écrire l'exigence et ses critères, demander des scénarios (« Propose scenarios »), planifier des cas, y lier des tests. |
@@ -919,6 +920,21 @@ Beaucoup de cahiers de recette vivent dans des tableurs. L'import lit :
 - **du Markdown** — un titre par exigence (sa clé en tête : `## SHOP-12 — Titre`), les éléments de ses
   listes comme critères, une ligne `Priorité :` ou `Lien :`, le reste comme description. Le titre du
   document et ceux des chapitres (des titres sans liste à eux, au-dessus d'autres) n'en sont pas.
+- **un document Word** (`.docx`) écrit de la même façon : ses titres (styles Titre, Titre 1, Titre 2…),
+  ses listes et ses tableaux sont lus comme du Markdown. Un document écrit autrement ne donne rien sans
+  l'agent, et l'aperçu le dit.
+- **une API** — une **collection Postman** (v2.0, v2.1, reconnue à son `info.schema` ou à son `info` et
+  ses `item`) ou un document **OpenAPI** 3 / **Swagger** 2 en JSON. Chaque requête (chaque opération) est
+  une exigence : sa clé est son `id` Postman (son `operationId`), son titre son nom précédé de ses dossiers
+  (« Auth / Login » ; pour OpenAPI, son `summary` précédé de son premier tag), sa description celle de la
+  requête suivie de sa méthode et de son URL. Ses critères : les comportements que sa description range
+  en liste (ou sous « Acceptance criteria »), une réponse par exemple enregistré ou par réponse documentée
+  (« Answers 401 (Wrong password) »), et le nom de chaque test de ses scripts (`pm.test("…")`). Un dossier
+  n'est pas une exigence, et sa description n'est pas reprise. Le corps des réponses n'est jamais lu :
+  une collection peut donc peser jusqu'à 30 Mo (5 Mo pour les autres fichiers). Lue par l'agent, l'API
+  lui est envoyée sous cette forme, sans les corps. Un OpenAPI en YAML n'est pas lu tel quel : le
+  convertir en JSON, ou le faire lire par l'agent en collant son texte. Ces exigences décrivent une API :
+  `call_api` vérifie le statut d'une réponse, pas encore son contenu.
 
 Sans colonne de critères, ceux qu'une description range sous « Acceptance criteria » ou « Critères
 d'acceptation » (y compris le `h3.` et les listes `#` de Jira) en sont extraits.
@@ -937,6 +953,37 @@ signalée. Dans le tableau de bord, le bouton **Import** de la page Requirements
 ou déposé) ou un texte collé, montre l'aperçu et la colonne de chaque champ (modifiable), puis importe
 dans le projet choisi en tête du panneau : celui du tableau de bord par défaut ; avec « All projects », à
 choisir (« No project » compris, mais exprès).
+
+#### N'importe quel document, lu par l'agent
+
+Une spec Word rédigée librement, un e-mail, des notes, le texte d'un PDF n'ont ni colonnes ni titres à
+reconnaître : c'est à un agent de les lire. Une exigence dit ce que dit sa source, et ses tests le
+vérifient : l'agent reprend le document, il n'invente rien.
+
+- **Dans le tableau de bord** : cocher **Have the agent read it** dans l'import, puis choisir un fichier
+  (`.docx`, `.txt`, ou tout fichier accepté) ou coller un texte. Sur un aperçu sans exigence ou qui ne
+  ressemble pas au document, **Have the agent read it** relit le même fichier avec l'agent. L'agent réglé
+  dans Settings (le même que « Propose scenarios ») reçoit le texte du document — un `.docx` en Markdown,
+  avec ses titres, listes et tableaux — et les exigences déjà enregistrées du projet (clé, titre). Ses
+  consignes : garder les clés et les titres du document ; reprendre la clé d'une exigence déjà enregistrée
+  quand c'est la même ; n'écrire que les critères que le document énonce, jamais un critère ni une valeur
+  qu'il ne donne pas ; citer le passage d'où vient chaque exigence ; lister les passages flous ou
+  contradictoires, sans trancher. Il répond en JSON, qu'IziTest vérifie : une clé qui n'est ni dans le
+  document ni dans le projet est retirée (une nouvelle sera donnée) ; le passage cité doit se trouver dans
+  le document ; un critère dont un chiffre, ou la plupart des mots, n'y sont pas est marqué « not in the
+  document as written ». L'aperçu est celui de tout import — nouvelle, modifiée, inchangée —, avec sous
+  chaque exigence le passage d'où elle vient, et en tête les passages à éclaircir. Rien n'est enregistré
+  avant **Import** ; c'est alors l'aperçu qui est enregistré, tel quel : l'agent n'est pas relu, sa
+  réponse suivante pourrait différer de ce que la personne a vérifié. Lire un document prend jusqu'à
+  quelques minutes, 60 000 caractères au plus (une quinzaine de pages) : au-delà, l'importer par parties.
+- **Le PDF** n'est pas lu par IziTest (il faudrait une bibliothèque lourde) : ouvrir le PDF, copier son
+  texte et le coller dans l'import, avec l'agent. Un vieux `.doc` : l'enregistrer en `.docx` dans Word.
+- **En MCP** : l'agent du développeur lit le document lui-même (un PDF, une page wiki, un e-mail), puis
+  passe ses exigences en Markdown à `import_requirements(content, project_id)`, un essai d'abord —
+  `## SHOP-12 — Titre` pour chacune (une clé écrite autrement sur une ligne `Key: US 3.2`), sa
+  description, ses critères en liste, `Priority: high` si le document la donne —, avec les mêmes règles.
+  Il montre l'essai, le passage d'où vient chaque exigence et les passages flous, puis importe
+  (`dry_run: false`) avec l'accord de la personne.
 
 ### Connecteurs : les outils d'où viennent les exigences, et où vont les résultats
 

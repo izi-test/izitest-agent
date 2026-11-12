@@ -13,9 +13,11 @@ created or repaired.
 
 ## What it does
 
-- **Requirements first.** Write them, import them from a file (CSV, Excel, JSON, Markdown), Jira
-  or GitHub Issues. Each has its acceptance criteria, and its coverage shows which criteria a
-  passing test proves.
+- **Requirements first.** Write them, import them from a file (CSV, Excel, JSON, Markdown, Word, a
+  Postman collection or an OpenAPI document), Jira or GitHub Issues — or have the agent read any
+  document (a spec, an email, notes): it keeps the document's words, shows the passage each
+  requirement comes from, and saves nothing until you confirm. Each has its acceptance criteria, and
+  its coverage shows which criteria a passing test proves.
 - **Test design.** The agent reviews the criteria (can a test tell pass from fail?), lists the
   rules the requirement leaves unsaid — where each belongs, and at which level to test it —, and
   proposes scenarios with standard techniques (equivalence classes, boundary values, decision

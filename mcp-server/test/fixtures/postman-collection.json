@@ -1,0 +1,11 @@
+{
+  "info": { "name": "Expense API", "description": "API of the expense notes app", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "item": [
+    { "name": "Auth", "item": [
+      { "name": "Login", "request": { "method": "POST", "url": { "raw": "{{base}}/api/login" }, "description": "Logs a user in. A wrong password answers 401.\n\n- Returns a token valid 1 hour\n- Locks the account after 5 failures" },
+        "response": [ { "name": "OK", "code": 200 }, { "name": "Wrong password", "code": 401 } ] }
+    ]},
+    { "name": "Create expense", "request": { "method": "POST", "url": "{{base}}/api/expenses", "description": "Creates an expense. The amount must be positive." },
+      "event": [ { "listen": "test", "script": { "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));"] } } ] }
+  ]
+}

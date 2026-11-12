@@ -1,5 +1,8 @@
 // Requirements imported from a file: a spreadsheet (CSV, TSV, Excel .xlsx — a test plan, a
-// Jira export), a JSON export, a Markdown spec. Each is read into the records save_requirement
+// Jira export), a JSON export, a Markdown spec, a Word document (.docx: read as Markdown, a
+// heading per requirement), an API described in JSON (a Postman collection, an OpenAPI
+// document: a request, an operation per requirement). Any other document is read by the agent (lib/requirement-reading.js),
+// and its requirements shown the same way. Each is read into the records save_requirement
 // keeps — key, title, description, acceptance criteria, priority, link — and shown before
 // anything is saved: what is new, what changed, what is the same. Saved, a requirement
 // imported again is updated under its key (or, without one, its title), and its criteria
@@ -9,9 +12,11 @@ import { inflateRawSync } from 'node:zlib';
 import { db } from './db.js';
 import { saveRequirement, getRequirement, contentHash, PRIORITIES } from './requirements.js';
 
-export const FORMATS = ['csv', 'xlsx', 'json', 'markdown'];
+export const FORMATS = ['csv', 'xlsx', 'json', 'markdown', 'docx'];
 export const FIELDS = ['key', 'title', 'description', 'criteria', 'priority', 'url'];
-const MAX_BYTES = 5 * 1024 * 1024;
+export const MAX_BYTES = 5 * 1024 * 1024;
+// A JSON file is allowed more: a Postman collection keeps the bodies of its example responses (never read).
+export const MAX_JSON_BYTES = 30 * 1024 * 1024;
 
 // ─── Text ────────────────────────────────────────────────────────────
 
@@ -154,11 +159,11 @@ export function parseCsv(text, delimiter = delimiterOf(text)) {
   return rows;
 }
 
-/** The files of a ZIP archive (an .xlsx is one): name → content. Stored or deflated entries. */
-function unzip(buffer) {
+/** The files of a ZIP archive (an .xlsx, a .docx is one): name → content. Stored or deflated entries. */
+function unzip(buffer, what = 'an Excel file (.xlsx)') {
   let end = buffer.length - 22;
   while (end >= 0 && buffer.readUInt32LE(end) !== 0x06054b50) end--;
-  if (end < 0) throw new Error('Not an Excel file (.xlsx): no ZIP directory in it');
+  if (end < 0) throw new Error(`Not ${what}: no ZIP directory in it`);
   const count = buffer.readUInt16LE(end + 10);
   let at = buffer.readUInt32LE(end + 16);
   const files = new Map();
@@ -224,6 +229,68 @@ export function parseXlsx(buffer, sheetName = null) {
   }
   return Array.from(rows, (r) => r ?? []);
 }
+
+// ─── Word ────────────────────────────────────────────────────────────
+
+/** A paragraph's text: its runs, tabs and line breaks (deleted text, a text box's fallback copy left out). */
+function paragraphText(xml) {
+  const body = xml.replace(/<w:pPr\b[\s\S]*?<\/w:pPr>/g, '').replace(/<mc:Fallback\b[\s\S]*?<\/mc:Fallback>/g, '');
+  return [...body.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:(tab|br|cr)\b[^>]*\/>/g)]
+    .map((m) => (m[2] === 'tab' ? '\t' : m[2] ? '\n' : unescapeXml(m[1]))).join('');
+}
+
+/**
+ * A paragraph as a Markdown line: a heading ("Heading 2", "Titre 2", an outline level) its
+ * "#"s — the document's title one, a heading one more —, an item of a list its "- ".
+ */
+function paragraphLine(xml) {
+  const text = paragraphText(xml).trim();
+  if (!text) return '';
+  const properties = /<w:pPr\b[\s\S]*?<\/w:pPr>/.exec(xml)?.[0] ?? '';
+  const style = /<w:pStyle\s+w:val="([^"]*)"/.exec(properties)?.[1] ?? '';
+  // An outline level of 9 is body text.
+  const outline = /<w:outlineLvl\s+w:val="([0-8])"/.exec(properties)?.[1];
+  const numbered = /^(?:heading|titre|berschrift|titulo|kop)\s*(\d)$/i.exec(style)?.[1] ?? (outline != null ? Number(outline) + 1 : null);
+  const level = /^(?:title|titre)$/i.test(style) ? 1 : numbered != null ? Number(numbered) + 1 : 0;
+  if (level) return `${'#'.repeat(Math.min(level, 6))} ${text.replace(/\s+/g, ' ')}`;
+  if (/<w:numPr>/.test(properties) || /list|liste/i.test(style)) {
+    const level = Number(/<w:ilvl\s+w:val="(\d)"/.exec(properties)?.[1] ?? 0);
+    return `${'  '.repeat(level)}- ${text.replace(/\n/g, ' ')}`;
+  }
+  return text;
+}
+
+/** A table as Markdown: a row a line, its cells between "|", a cell's paragraphs joined by <br>. */
+function tableLines(xml) {
+  const rows = [...xml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)].map(([row]) => [...row.matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/g)]
+    .map(([cell]) => [...cell.matchAll(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g)].map(([p]) => paragraphText(p).trim()).filter(Boolean)
+      .join('<br>').replace(/\|/g, '\\|').replace(/\s*\n\s*/g, '<br>')));
+  const lines = rows.filter((cells) => cells.some(Boolean)).map((cells) => `| ${cells.join(' | ')} |`);
+  if (lines.length > 1) lines.splice(1, 0, `|${' --- |'.repeat(rows[0].length)}`);
+  return lines;
+}
+
+/**
+ * The text of a Word document (.docx) as Markdown: its paragraphs in order, its headings,
+ * lists and tables kept — what the agent reads, and what is read as a Markdown spec without it.
+ */
+export function docxText(buffer) {
+  const xml = unzip(buffer, 'a Word document (.docx)').get('word/document.xml')?.toString('utf8');
+  if (!xml) throw new Error('Not a Word document (.docx): no word/document.xml in it');
+  const body = /<w:body>([\s\S]*)<\/w:body>/.exec(xml)?.[1] ?? xml;
+  const lines = [];
+  for (const [block] of body.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>|<w:p\b[^>]*\/>|<w:p\b[^>]*>[\s\S]*?<\/w:p>/g)) {
+    if (block.startsWith('<w:tbl>')) lines.push('', ...tableLines(block), '');
+    else {
+      const line = paragraphLine(block);
+      lines.push(...(line.startsWith('#') ? ['', line] : [line]));
+    }
+  }
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Whether a file is a ZIP archive (an .xlsx, a .docx): its first bytes. */
+const isZip = (content) => typeof content !== 'string' && content?.[0] === 0x50 && content?.[1] === 0x4b;
 
 // What each field's column is called, in English and French; a Jira CSV export's names too.
 const HEADERS = {
@@ -326,7 +393,11 @@ export function requirementsFromRows(rows, columnsGiven = {}) {
 
 const first = (object, names) => names.map((n) => object?.[n]).find((v) => v != null && v !== '');
 
-/** Requirements from JSON: a list of them, { requirements: [...] }, or one; field names as written by most tools. */
+/**
+ * Requirements from JSON: a list of them, { requirements: [...] }, or one; field names as
+ * written by most tools. A Postman collection or an OpenAPI document is read as one (its
+ * `format` says which).
+ */
 export function requirementsFromJson(text) {
   let data;
   try {
@@ -334,6 +405,8 @@ export function requirementsFromJson(text) {
   } catch (err) {
     throw new Error(`Not valid JSON: ${err.message}`);
   }
+  if (isPostman(data)) return requirementsFromPostman(data);
+  if (isOpenApi(data)) return requirementsFromOpenApi(data);
   const list = Array.isArray(data) ? data : Array.isArray(data?.requirements) ? data.requirements : Array.isArray(data?.issues) ? data.issues : [data];
   const warnings = [];
   const requirements = list.flatMap((item, i) => {
@@ -357,6 +430,158 @@ export function requirementsFromJson(text) {
     }];
   });
   return { requirements, warnings };
+}
+
+// ─── An API: a Postman collection, an OpenAPI document ───────────────
+
+const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+
+/** A Postman collection (v2): its schema says so, or it has an info and items. */
+export const isPostman = (data) => isObject(data)
+  && (/getpostman\.com/i.test(String(data.info?.schema ?? '')) || (isObject(data.info) && Array.isArray(data.item)));
+
+/** An OpenAPI document, or a Swagger 2 one, in JSON: its version and its paths. */
+export const isOpenApi = (data) => isObject(data) && (data.openapi != null || data.swagger != null) && isObject(data.paths);
+
+/** A description as Postman and OpenAPI write it: a string, or { content }. */
+const descriptionOf = (value) => (typeof value === 'string' ? value : typeof value?.content === 'string' ? value.content : '').trim();
+
+/**
+ * The criteria a description states: those under an "Acceptance criteria" line, else the items
+ * of its lists (outside its code blocks; a "#" line is a heading) — and the rest, its description.
+ */
+function describedCriteria(text) {
+  const under = criteriaFromText(text);
+  if (under.criteria.length) return { ...under, description: under.description.replace(/\n{3,}/g, '\n\n') };
+  const listed = [];
+  const rest = [];
+  let code = false;
+  for (const line of text.split(/\r?\n/)) {
+    const fence = /^\s*(```|~~~)/.test(line);
+    if (fence) code = !code;
+    if (!code && !fence && BULLET.test(line) && !/^\s*#/.test(line)) listed.push(line);
+    else rest.push(line);
+  }
+  return { criteria: splitCriteria(listed.join('\n')), description: rest.join('\n').replace(/\n{3,}/g, '\n\n').trim() };
+}
+
+/** A response the API is documented to give, as a criterion: "Answers 401 (Wrong password)". */
+function answerOf(code, said) {
+  const text = String(said ?? '').trim().replace(/\s+/g, ' ');
+  if (code === 'default') return `Answers any other status${text ? ` (${text})` : ''}`;
+  if (code == null || code === '') return text ? `Answers "${text}"` : null;
+  return text && text !== String(code) ? `Answers ${code} (${text})` : `Answers ${code}`;
+}
+
+// What a Postman test script checks, by name: pm.test("…", …), or the older tests["…"] = ….
+const TEST_NAME = /\bpm\.test\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1|\btests\[\s*(['"])((?:\\.|(?!\3)[^\\])*)\3\s*\]/g;
+
+/** The names of the tests a request's scripts run after it (listen: "test"). */
+function testNamesOf(events) {
+  const names = [];
+  for (const event of Array.isArray(events) ? events : []) {
+    if (event?.listen !== 'test' || event.disabled) continue;
+    const exec = event.script?.exec;
+    const source = Array.isArray(exec) ? exec.join('\n') : typeof exec === 'string' ? exec : '';
+    for (const m of source.matchAll(TEST_NAME)) names.push((m[2] ?? m[4]).replace(/\\(.)/g, '$1').trim());
+  }
+  return names.filter(Boolean);
+}
+
+/** Criteria with none twice (case aside), in order. */
+const distinct = (criteria) => criteria.filter((c, i) => criteria.findIndex((d) => d.toLowerCase() === c.toLowerCase()) === i);
+
+/** Two requirements of one title and no key: imported again, only the first is found. */
+function sameTitles(requirements, warnings) {
+  const seen = new Set();
+  for (const r of requirements) {
+    if (r.key) continue;
+    if (seen.has(r.title)) warnings.push(`Two requests are named "${r.title}" and have no id: name them apart, or imported again they are taken for one`);
+    seen.add(r.title);
+  }
+}
+
+/**
+ * Requirements from a Postman collection (v2.0, v2.1): each request is one — its id as key, its
+ * name after its folders' as title ("Auth / Login"), its description and its method and URL as
+ * description; as criteria, the behaviours its description lists, the responses saved as its
+ * examples ("Answers 401 (Wrong password)") and the tests its scripts run (pm.test("…")). A
+ * folder is no requirement. The bodies of the examples are not read.
+ */
+export function requirementsFromPostman(collection) {
+  const requirements = [];
+  const warnings = [];
+  const walk = (items, folders) => {
+    for (const item of Array.isArray(items) ? items : []) {
+      if (!isObject(item)) continue;
+      const name = String(item.name ?? '').trim().replace(/\s+/g, ' ');
+      if (Array.isArray(item.item)) {
+        walk(item.item, name ? [...folders, name] : folders);
+        continue;
+      }
+      if (item.request == null) continue;
+      if (!name) {
+        warnings.push(`A request in ${folders.length ? `"${folders.join(' / ')}"` : 'the collection'} has no name — skipped`);
+        continue;
+      }
+      const request = typeof item.request === 'string' ? { url: item.request } : item.request;
+      const url = typeof request.url === 'string' ? request.url : String(request.url?.raw ?? '');
+      const described = describedCriteria(descriptionOf(request.description ?? item.description));
+      const examples = (Array.isArray(item.response) ? item.response : []).map((r) => answerOf(r?.code, r?.name ?? r?.status));
+      const key = String(item.id ?? item._postman_id ?? '').trim();
+      requirements.push({
+        key: key || null,
+        title: [...folders, name].join(' / '),
+        description: [described.description, `${String(request.method ?? 'GET').toUpperCase()} ${url}`.trim()].filter(Boolean).join('\n\n'),
+        criteria: distinct([...described.criteria, ...examples.filter(Boolean), ...testNamesOf(item.event)]),
+        priority: 'medium', url: null, source: 'import',
+      });
+    }
+  };
+  walk(collection.item, []);
+  if (!requirements.length) warnings.push('The collection has no request');
+  sameTitles(requirements, warnings);
+  return { format: 'postman', requirements, warnings };
+}
+
+const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
+
+/**
+ * Requirements from an OpenAPI document (3.x) or a Swagger one (2.0), in JSON: each operation
+ * is one — its operationId as key, its summary (after its first tag) as title, its description
+ * and its method and path as description; as criteria, the behaviours its description lists and
+ * the responses it documents ("Answers 404 (No such expense)").
+ */
+export function requirementsFromOpenApi(api) {
+  // A reference inside the document ("#/components/responses/NotFound"): what it points at.
+  const resolve = (value) => {
+    if (typeof value?.$ref !== 'string' || !value.$ref.startsWith('#/')) return value;
+    return value.$ref.slice(2).split('/').map((p) => p.replace(/~1/g, '/').replace(/~0/g, '~')).reduce((v, p) => v?.[p], api) ?? value;
+  };
+  const requirements = [];
+  const warnings = [];
+  for (const [path, entry] of Object.entries(api.paths)) {
+    const operations = resolve(entry);
+    for (const method of HTTP_METHODS) {
+      const operation = operations?.[method];
+      if (!isObject(operation)) continue;
+      const id = typeof operation.operationId === 'string' ? operation.operationId.trim() : '';
+      const name = String(operation.summary ?? '').trim().replace(/\s+/g, ' ') || id || `${method.toUpperCase()} ${path}`;
+      const tag = Array.isArray(operation.tags) && typeof operation.tags[0] === 'string' ? operation.tags[0].trim() : '';
+      const described = describedCriteria(descriptionOf(operation.description));
+      const responses = Object.entries(isObject(operation.responses) ? operation.responses : {}).map(([code, r]) => answerOf(code, resolve(r)?.description));
+      requirements.push({
+        key: id || null,
+        title: tag ? `${tag} / ${name}` : name,
+        description: [described.description, `${method.toUpperCase()} ${path}`].filter(Boolean).join('\n\n'),
+        criteria: distinct([...described.criteria, ...responses.filter(Boolean)]),
+        priority: 'medium', url: null, source: 'import',
+      });
+    }
+  }
+  if (!requirements.length) warnings.push('The API document has no operation');
+  sameTitles(requirements, warnings);
+  return { format: 'openapi', requirements, warnings };
 }
 
 // ─── Markdown ────────────────────────────────────────────────────────
@@ -427,6 +652,25 @@ export function requirementsFromMarkdown(text) {
 
 // ─── Any file ────────────────────────────────────────────────────────
 
+/**
+ * A file that can be read at all: not empty, 5 MB at most, not a PDF nor an old binary Word
+ * document — their text is copied and pasted, or read by an agent that opens them.
+ */
+export function checkFile({ content, filename = '' }) {
+  if (content == null || (content.length ?? 0) === 0) throw new Error('The file is empty');
+  const head = typeof content === 'string' ? content.slice(0, 8) : content.subarray(0, 8).toString('latin1');
+  const json = /\.json$/i.test(filename) || /^(?:\uFEFF|\xEF\xBB\xBF)?\s*[{[]/.test(head);
+  if (content.length > (json ? MAX_JSON_BYTES : MAX_BYTES)) {
+    throw new Error(`The file is too big (${Math.round(content.length / 1024)} KB, ${json ? '30' : '5'} MB at most)`);
+  }
+  if (/\.pdf$/i.test(filename) || head.startsWith('%PDF-')) {
+    throw new Error('A PDF is not read here: open it, copy its text and paste it below — the agent reads pasted text the same way');
+  }
+  if (/\.doc$/i.test(filename) || head.startsWith('\xD0\xCF\x11\xE0')) {
+    throw new Error('An old Word document (.doc) is not read here: save it as .docx in Word, or copy its text and paste it');
+  }
+}
+
 /** A file's format, from its name, else from what it holds. */
 export function detectFormat({ filename = '', content }) {
   const extension = /\.([a-z0-9]+)$/i.exec(filename)?.[1]?.toLowerCase();
@@ -434,7 +678,9 @@ export function detectFormat({ filename = '', content }) {
   if (extension === 'json') return 'json';
   if (['md', 'markdown'].includes(extension)) return 'markdown';
   if (['csv', 'tsv', 'tab'].includes(extension)) return 'csv';
-  if (typeof content !== 'string' && content?.[0] === 0x50 && content?.[1] === 0x4b) return 'xlsx';
+  if (extension === 'docx') return 'docx';
+  // A ZIP names its files in clear: a Word document holds word/document.xml.
+  if (isZip(content)) return content.includes('word/document.xml') ? 'docx' : 'xlsx';
   const text = textOf(content).trimStart();
   if (text.startsWith('{') || text.startsWith('[')) return 'json';
   if (/^#{1,6}\s/m.test(text) && !/^[^\n]*[;,\t][^\n]*\n/.test(text)) return 'markdown';
@@ -446,13 +692,18 @@ export function detectFormat({ filename = '', content }) {
  * `format` when known; `columns` for a table, the header of each field; `sheet` for Excel.
  */
 export function parseRequirements({ content, filename = '', format = null, columns = {}, sheet = null }) {
-  if (content == null || (content.length ?? 0) === 0) throw new Error('The file is empty');
-  if (content.length > MAX_BYTES) throw new Error(`The file is too big (${Math.round(content.length / 1024)} KB, 5 MB at most)`);
+  checkFile({ content, filename });
   const kind = format ?? detectFormat({ filename, content });
   if (!FORMATS.includes(kind)) throw new Error(`No such format: ${kind} (${FORMATS.join(', ')})`);
-  if (kind === 'xlsx') {
-    if (typeof content === 'string') throw new Error('An Excel file has to be given as its bytes, not as text');
-    return { format: kind, ...requirementsFromRows(parseXlsx(content, sheet), columns) };
+  if (kind === 'xlsx' || kind === 'docx') {
+    if (typeof content === 'string') throw new Error(`${kind === 'xlsx' ? 'An Excel file' : 'A Word document'} has to be given as its bytes, not as text`);
+  }
+  if (kind === 'xlsx') return { format: kind, ...requirementsFromRows(parseXlsx(content, sheet), columns) };
+  if (kind === 'docx') {
+    // Read as Markdown: a heading per requirement. A document written otherwise is the agent's to read.
+    const read = requirementsFromMarkdown(docxText(content));
+    if (!read.requirements.length) read.warnings.push('No requirement found under the headings of the document: it is written otherwise — an agent has to read it');
+    return { format: kind, ...read };
   }
   const text = textOf(content);
   if (kind === 'json') return { format: kind, ...requirementsFromJson(text) };
@@ -489,7 +740,13 @@ export function applyImport(requirements, { format, headers = null, columns = nu
     const existing = existingOf(requirement, projectId);
     const hash = contentHash({ title: requirement.title.trim(), description: requirement.description, criteria: requirement.criteria.map((c) => c.trim()) });
     const status = !existing ? 'new' : existing.content_hash === hash ? 'unchanged' : 'changed';
-    return { ...requirement, key: requirement.key ?? existing?.key ?? null, status, linked_tests: existing?.coverage.tests ?? 0 };
+    // What saving it takes away from the one saved: its title, its criteria no longer listed (and the cases of them).
+    const kept = new Set(requirement.criteria.map((c) => c.trim().toLowerCase()));
+    const changes = status === 'changed' ? {
+      title_before: existing.title !== requirement.title.trim() ? existing.title : null,
+      dropped_criteria: existing.criteria.filter((c) => !kept.has(c.text.trim().toLowerCase())).map((c) => c.text),
+    } : {};
+    return { ...requirement, key: requirement.key ?? existing?.key ?? null, status, linked_tests: existing?.coverage.tests ?? 0, ...changes };
   });
   if (!dryRun) {
     db.transaction(() => {
@@ -518,8 +775,13 @@ export function formatImport(result) {
   for (const item of result.items) {
     lines.push(`  ${item.status.toUpperCase().padEnd(9)} ${item.key ?? '(new key)'} — ${item.title} [${item.priority}, ${item.criteria.length} criteria]`
       + (item.status === 'changed' && item.linked_tests ? ` — ${item.linked_tests} test(s) linked: check they still match it` : ''));
+    if (item.title_before) lines.push(`            was titled "${item.title_before}"`);
+    for (const dropped of item.dropped_criteria ?? []) lines.push(`            no longer in it: "${dropped}"`);
   }
   for (const warning of result.warnings) lines.push(`  ! ${warning}`);
+  if (['postman', 'openapi'].includes(result.format)) {
+    lines.push('These requirements describe an API: call_api checks a request\'s status, not yet what its response holds.');
+  }
   if (!result.saved) lines.push('Nothing saved yet: show this to the user, then import again with dry_run: false.');
   else if (result.new + result.changed) lines.push('Next: design_tests on each new or changed one, to review its criteria and design its tests.');
   return lines.join('\n');

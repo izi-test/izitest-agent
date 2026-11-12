@@ -15,8 +15,14 @@ the name.
 
 ## 2. Requirements
 
-*Requirements → New requirement*, or *Import*: a file (CSV, Excel, JSON, Markdown), Jira, or GitHub
-Issues ([connectors](mcp-tools.md#connecteurs--les-outils-doù-viennent-les-exigences-et-où-vont-les-résultats)).
+*Requirements → New requirement*, or *Import*: a file (CSV, Excel, JSON, Markdown, Word, a Postman
+collection or an OpenAPI document — a request per requirement), Jira, or GitHub Issues
+([connectors](mcp-tools.md#connecteurs--les-outils-doù-viennent-les-exigences-et-où-vont-les-résultats)).
+Any other document — a Word spec written freely, an email, notes, the text of a PDF — is read by the
+agent set in Settings: tick *Have the agent read it*, then choose the file or paste the text. It keeps
+the document's keys, titles and words, writes only the criteria the document states, and lists the
+passages that are unclear. The preview shows each requirement with the passage it comes from; nothing
+is saved until you import, and then what you checked is saved as it is.
 A requirement has acceptance criteria; its coverage says which criteria a test proves, and how
 that test last ran: *not covered*, *not run*, *failing*, *passing*.
 
