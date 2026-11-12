@@ -137,8 +137,38 @@ OpenCode) or a model through an API key.
 ## 5. Replay without windows (optional)
 
 To run tests and campaigns out of sight, IziTest uses Chrome for Testing with its extension and
-a profile of its own. Install it once from *Settings → Headless browser* (about 150 MB, in
-`~/.izitest/browsers`); it then starts by itself when a run asks for it.
+a profile of its own. Install it once from *Settings → Headless browser*, or from a terminal on
+Windows, macOS or Linux (about 150 MB, in `~/.izitest/browsers`); it then starts by itself when a
+run asks for it:
+
+```bash
+npm run headless:install
+```
+
+**Behind a company proxy** that inspects HTTPS (Zscaler, a PKI of the company), the download can
+fail with `self-signed certificate in certificate chain`: Node does not trust the company's root.
+- With Node 22.15 / 23.8 or later, IziTest trusts the system's certificates as well, by itself
+  (`IZITEST_SYSTEM_CA=0` turns it off).
+- Otherwise, give Node the company's root certificate (ask your IT for the `.pem` file):
+  `NODE_EXTRA_CA_CERTS=C:\certs\company-root.pem` (on Windows, set it with `setx`, then open a new
+  terminal and restart the server).
+- Where the download is blocked altogether, unzip Chrome for Testing by hand from
+  <https://googlechromelabs.github.io/chrome-for-testing/> and set `IZITEST_CHROME_PATH` to its
+  `chrome.exe` (or `chrome`).
+
+**Each test starts logged out** in this browser: what the app left there (cookies, storage) is
+cleared before a test played from its first step, so that a session kept from the test before, or
+from the agent recording it, cannot lead the app elsewhere (a login page answering "Access Denied"
+to a user already logged in). Never in your own Chrome. Untick *Projects → Edit → Each test starts
+logged out* for an app whose tests count on staying logged in from one to the next.
+
+**When Chrome may not have extensions** (a company computer that blocks them), skip step 2 and
+install this browser instead. With no Chrome with the extension connected, agents work in it:
+they record tests there, and runs not asked headless go there too. Nothing shows a window;
+follow the agents in the dashboard's *Live* page. Its cookies and logins are its own, so a test
+of an app behind a login logs in itself. IziTest waits 30 s after your Chrome disconnects before
+it does this, so a Chrome that restarts its extension keeps the agent's session. Check first that
+your company allows a second browser: blocking extensions is often a security rule.
 
 ## Ports and environment
 

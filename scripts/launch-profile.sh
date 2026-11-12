@@ -25,7 +25,7 @@ echo "IMPORTANT: Install the IziTest Agent extension in this profile:"
 echo "  1. Go to chrome://extensions"
 echo "  2. Enable Developer Mode"
 echo "  3. Click 'Load unpacked'"
-echo "  4. Select the 'extension' folder"
+echo "  4. Select the 'extension/dist' folder"
 echo "  5. Set the profile ID to '$PROFILE_NAME' in the popup"
 echo ""
 

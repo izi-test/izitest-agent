@@ -7,6 +7,7 @@ import { CampaignsPage } from './components/Campaigns';
 import { TestDetailRoute, RequirementRoute, CampaignRoute, ProjectRedirect } from './components/Routes';
 import { BugsPage } from './components/BugsPage';
 import { ReportsPage } from './components/ReportsPage';
+import { LivePage } from './components/LivePage';
 import { ElementsPage } from './components/ElementsPage';
 import { DatasetsPage } from './components/DatasetsPage';
 import { ProjectsPage } from './components/ProjectsPage';
@@ -30,6 +31,7 @@ export const router = createBrowserRouter([
       { path: 'campaigns/:id', element: <CampaignRoute /> },
       { path: 'bugs', element: <BugsPage /> },
       { path: 'reports', element: <ReportsPage /> },
+      { path: 'watch', element: <LivePage /> },
       { path: 'elements', element: <ElementsPage /> },
       { path: 'datasets', element: <DatasetsPage /> },
       { path: 'projects', element: <ProjectsPage /> },

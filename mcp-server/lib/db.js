@@ -14,6 +14,9 @@ mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(process.env.IZITEST_DB_PATH || join(DATA_DIR, 'izitest.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+// What is deleted is overwritten, not left in the file's free pages: a test removed with the
+// password it typed in plain, a secret deleted, a run's values.
+db.pragma('secure_delete = ON');
 
 export function initDatabase() {
   db.exec(`
@@ -447,6 +450,8 @@ export function initDatabase() {
     if (!projectCols.includes('language')) db.exec("ALTER TABLE projects ADD COLUMN language TEXT NOT NULL DEFAULT 'en'");
     // How long a replayed step waits for its element, in ms; null: the default (lib/projects.js).
     if (!projectCols.includes('element_timeout_ms')) db.exec('ALTER TABLE projects ADD COLUMN element_timeout_ms INTEGER DEFAULT NULL');
+    // Whether each test starts logged out in the browser without windows (lib/projects.js).
+    if (!projectCols.includes('clean_start')) db.exec('ALTER TABLE projects ADD COLUMN clean_start INTEGER NOT NULL DEFAULT 1');
     const definitionCols = db.prepare('PRAGMA table_info(step_definitions)').all().map(c => c.name);
     if (!definitionCols.includes('language')) {
       db.exec('ALTER TABLE step_definitions ADD COLUMN language TEXT DEFAULT NULL');

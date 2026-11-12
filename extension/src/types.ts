@@ -301,6 +301,8 @@ export interface RefNodeInfo {
   selector?: string;
   locators?: Locator[];
   rect?: { x: number; y: number; w: number; h: number };
+  /** A password field: what is typed in it is kept as a secret of the project, never in the test. */
+  secret?: boolean;
 }
 
 export interface SnapshotResult {

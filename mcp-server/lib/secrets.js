@@ -127,6 +127,55 @@ export function saveSecret(projectId, name, { value, description } = {}) {
   return listSecrets(projectId).find((secret) => secret.name === name);
 }
 
+/** A secret's name made from a field's label: "Mot de passe" → MOT_DE_PASSE; PASSWORD without one. */
+export function secretNameOf(label) {
+  const name = String(label ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, '_$1').slice(0, 40);
+  return name || 'PASSWORD';
+}
+
+/**
+ * A password the agent typed in plain while recording, kept as a secret of the project instead
+ * of in the test: the same value under that name is reused, another gets a name of its own
+ * (PASSWORD_2…). Returns the name, to be written {{secret.NAME}} in the step, or { error }.
+ */
+export function keepTypedPassword(projectId, value, label) {
+  const base = secretNameOf(label);
+  for (let n = 1; n < 100; n += 1) {
+    const name = n === 1 ? base : `${base}_${n}`;
+    const exists = db.prepare('SELECT id FROM secrets WHERE project_id = ? AND name = ?').get(projectId, name);
+    if (exists && secretValue(projectId, name) !== value) continue;
+    if (!exists) {
+      const saved = saveSecret(projectId, name, { value, description: `Typed in the field "${label || 'password'}" while a test was recorded` });
+      if (saved?.error) return saved;
+    }
+    return name;
+  }
+  return { error: 'Too many secrets named after this field' };
+}
+
+/**
+ * What a fill recorded in `recording` keeps of `value`: a password field's plain value becomes
+ * {{secret.NAME}} of the recording's project. Returns { recorded, note } — note tells the agent.
+ */
+export function recordedPassword(value, result, recording) {
+  const plain = typeof value === 'string' && value !== '' && !/\{\{.+\}\}/.test(value);
+  if (!recording || !plain || !result?.target?.secret) return { recorded: value, note: '' };
+  const label = result.target.name || '';
+  if (recording.projectId == null) {
+    return {
+      recorded: value,
+      note: '\n\nThis is a password field, and the recording has no project: the password stays in plain in the test. Record with start_recording(project_id) — it is then kept as a secret of the project — or type {{secret.NAME}} of a project secret.',
+    };
+  }
+  const name = keepTypedPassword(recording.projectId, value, label);
+  if (name?.error) return { recorded: value, note: `\n\nThis password could not be kept as a secret (${name.error}): it stays in plain in the test.` };
+  return {
+    recorded: `{{secret.${name}}}`,
+    note: `\n\nThis is a password field: what you typed is kept as the secret ${name} of the project, and the test types {{secret.${name}}} — never the value. Type {{secret.${name}}} yourself next time.`,
+  };
+}
+
 /** Deletes a secret of a project: true when there was one. */
 export function deleteSecret(projectId, name) {
   const { changes } = db.prepare('DELETE FROM secrets WHERE project_id = ? AND name = ?').run(projectId, name);

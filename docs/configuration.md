@@ -42,6 +42,14 @@ Voir [security.md](security.md).
 
 Voir [mcp-tools.md](mcp-tools.md#secrets--ce-quun-test-tape-sans-que-personne-le-lise).
 
+### Navigateur sans fenêtre et réseau d'entreprise
+
+| Variable | Défaut | Description |
+|---|---|---|
+| `IZITEST_CHROME_PATH` | aucun | Un Chrome for Testing installé à la main (`chrome.exe`), quand le téléchargement est bloqué |
+| `IZITEST_SYSTEM_CA` | activé | `0` : ne pas ajouter les certificats du système à ceux de Node (Node 22.15 / 23.8 et plus) |
+| `NODE_EXTRA_CA_CERTS` | aucun | Le certificat racine de l'entreprise (`.pem`), pour un Node plus ancien derrière un proxy qui inspecte HTTPS |
+
 ### Vue en direct
 
 | Variable | Défaut | Description |

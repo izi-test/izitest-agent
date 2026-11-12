@@ -24,7 +24,7 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { Browser, detectBrowserPlatform, getInstalledBrowsers, install, resolveBuildId } from '@puppeteer/browsers';
-import { getProfiles, waitForProfile } from './websocket.js';
+import { getProfiles, waitForProfile, setFallbackBrowser } from './websocket.js';
 import { log } from './logger.js';
 
 export const HEADLESS_PROFILE = 'headless';
@@ -105,8 +105,18 @@ export function inHeadless(sendCommand, profile = HEADLESS_PROFILE) {
   return (name, command, params, ...rest) => sendCommand(name ?? profile, command, params, ...rest);
 }
 
-/** The newest Chrome for Testing installed here, or null. */
+/**
+ * The newest Chrome for Testing installed here, or null. IZITEST_CHROME_PATH names one installed
+ * by hand instead — where the download is blocked (a company network): unzipped from
+ * https://googlechromelabs.github.io/chrome-for-testing/, its chrome.exe / chrome binary.
+ */
 async function installedChrome() {
+  const own = process.env.IZITEST_CHROME_PATH;
+  if (own) {
+    if (existsSync(own)) return { executablePath: own, buildId: 'IZITEST_CHROME_PATH' };
+    lastError = `IZITEST_CHROME_PATH names no file: ${own}`;
+    return null;
+  }
   const browsers = await getInstalledBrowsers({ cacheDir: BROWSERS_DIR }).catch(() => []);
   const chromes = browsers.filter((b) => b.browser === Browser.CHROME)
     .sort((a, b) => b.buildId.localeCompare(a.buildId, undefined, { numeric: true }));
@@ -236,6 +246,23 @@ export async function stopHeadless({ from = 1 } = {}) {
   const lanes = Array.from({ length: HEADLESS_LANES }, (_, i) => i + 1).filter((n) => n >= from);
   await Promise.all(lanes.map((n) => stopLane(n)));
 }
+
+// No Chrome with the extension (a company laptop that blocks extensions): what names no
+// browser — the agent recording a test, a run — goes to this one, started if it is installed.
+// It is never downloaded unasked: installing it (Settings → Headless browser) is the go-ahead.
+// The user follows the agent in the dashboard's Live page (/watch).
+let toldFallback = false;
+export async function fallbackBrowser() {
+  if (isHeadlessConnected(1)) return HEADLESS_PROFILE;
+  if (!(await installedChrome())) return null;
+  if (!toldFallback) {
+    log('Headless: no Chrome with the IziTest extension is connected — what names no browser goes to the browser without windows');
+    toldFallback = true;
+  }
+  await startHeadless(1);
+  return HEADLESS_PROFILE;
+}
+setFallbackBrowser(fallbackBrowser);
 
 // It goes with the server.
 process.on('exit', () => { for (const proc of children.values()) proc.kill('SIGTERM'); });

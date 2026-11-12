@@ -12,7 +12,8 @@ import { runServerStep } from '../server-steps.js';
 import { resolveValues } from '../values.js';
 import { absolutePaths, readUploadFiles } from '../upload-files.js';
 import { captureActionFrame, LIVE_ACTIONS } from '../live.js';
-import { isHeadlessProfile } from '../websocket.js';
+import { isHeadlessProfile, hasWindowedProfile } from '../websocket.js';
+import { recordedPassword } from '../secrets.js';
 
 // How text is typed into fields. Default is per-character key events (human-like, slow:
 // ~2 CDP round trips per character). IZITEST_TYPING=insert makes one-shot insertion
@@ -93,7 +94,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
     {},
     async () => {
       // The headless one is said so: a command naming no profile never goes to it.
-      const list = [...getProfiles().keys()].map((id) => (isHeadlessProfile(id) ? `${id} (headless: only when named)` : id));
+      const list = [...getProfiles().keys()].map((id) => (isHeadlessProfile(id) ? `${id} (headless: when named, or when no Chrome with the extension is connected)` : id));
       return {
         content: [{
           type: 'text',
@@ -221,7 +222,11 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
         } catch(e) {}
       }
       const actionId = saveActionToHistory('navigate', { url, tabId: result?.tabId }, null, screenshotBase64, intent);
-      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      // No Chrome with the extension: the command went to IziTest's browser without windows.
+      const where = !profile && !hasWindowedProfile() && isNewSession
+        ? '\n\nNo Chrome with the IziTest extension is connected: this runs in IziTest\'s browser without windows (profile "headless"). The user does not see a window: tell them to follow you in the dashboard\'s Live page (/watch). Its cookies are its own: log in to the app as a test would.'
+        : '';
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) + where }] };
     }
   );
 
@@ -291,7 +296,8 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       intent: z.string().optional().describe('Functional description of this step (e.g. "Enter the project name"). Recorded as step intent during test recording.')
     },
     async ({ selector, value, profile, tabId, ref, clear, typing, intent }) => {
-      const result = learnTarget(ref, await sendCommand(profile, 'fill', { selector, value, tabId, ref, clear, typing: typing ?? DEFAULT_TYPING }));
+      const answer = await sendCommand(profile, 'fill', { selector, value, tabId, ref, clear, typing: typing ?? DEFAULT_TYPING });
+      const result = learnTarget(ref, answer);
       let screenshotBase64 = null;
       if (getRecording()?.use_vrt) {
         try {
@@ -299,8 +305,11 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
           if (snap?.dataUrl) screenshotBase64 = snap.dataUrl;
         } catch(e) {}
       }
-      const actionId = saveActionToHistory('fill', { selector, value, tabId, clear }, ref, screenshotBase64, intent);
-      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      // A password typed in plain while recording: kept as a secret of the project, the test
+      // keeps {{secret.NAME}} — never the value (lib/secrets.js).
+      const { recorded, note } = recordedPassword(value, answer, getRecording());
+      const actionId = saveActionToHistory('fill', { selector, value: recorded, tabId, clear }, ref, screenshotBase64, intent);
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) + note }] };
     }
   );
 

@@ -7,6 +7,7 @@
     "node": ">=22.12"
   },
   "scripts": {
+    "headless:install": "npm --prefix mcp-server run headless:install",
     "setup": "npm --prefix mcp-server install && npm --prefix mcp-server/frontend install && npm --prefix mcp-server/frontend run build && npm --prefix extension install && npm --prefix extension run build",
     "start": "npm --prefix mcp-server start",
     "test": "npm --prefix mcp-server test && npm --prefix extension test",

@@ -1,6 +1,6 @@
 import { Link, Outlet, ScrollRestoration, useLocation, useMatch } from 'react-router-dom';
 import {
-  BarChart3, Bug, ChevronRight, ClipboardList, FlaskConical, FolderKanban, Layers, LayoutDashboard, MessageSquare, MousePointerClick, Plus, Settings as SettingsIcon, Table,
+  BarChart3, Bug, ChevronRight, MonitorPlay, ClipboardList, FlaskConical, FolderKanban, Layers, LayoutDashboard, MessageSquare, MousePointerClick, Plus, Settings as SettingsIcon, Table,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setCreateTestOpen, showToast } from '../store/slices/uiSlice';
@@ -23,10 +23,10 @@ import { Button } from './Button';
 // section › item) and the new test button, and the page.
 
 const SECTIONS: Record<string, string> = {
-  tests: 'Tests', requirements: 'Requirements', campaigns: 'Campaigns', bugs: 'Bugs', reports: 'Reports', elements: 'Elements', datasets: 'Datasets', projects: 'Projects', settings: 'Settings', chat: 'Chat',
+  tests: 'Tests', requirements: 'Requirements', campaigns: 'Campaigns', bugs: 'Bugs', reports: 'Reports', elements: 'Elements', datasets: 'Datasets', projects: 'Projects', settings: 'Settings', chat: 'Chat', watch: 'Live',
 };
 /** The sections that are not of a project. */
-const UNSCOPED = new Set(['projects', 'settings']);
+const UNSCOPED = new Set(['projects', 'settings', 'watch']);
 
 export function AppLayout() {
   useScopeSync();
@@ -108,6 +108,7 @@ function Sidebar() {
         {item('/datasets', Table, 'Datasets')}
         <div className="nav__divider" />
         {item('/projects', FolderKanban, 'Projects')}
+        {item('/watch', MonitorPlay, 'Live')}
       </nav>
       <nav className="nav nav--bottom">
         {item('/chat', MessageSquare, 'Chat with AI')}

@@ -17,10 +17,15 @@ Localhost is not a wall against the browser IziTest Agent pilots: any page open 
 
 A refused request answers `403` and leaves a line in `mcp-server/data/server.log`.
 
-### 3. Cookie Masking
+### 3. What Is Typed Stays Out of the Log and the Tests
+- **The log** (`server.log`, the process manager's logs) shows what a command types by its length only (`«8 chars»`), never the value: a password an agent types while recording is not yet known as a secret when the command leaves, and a replay carries the values of the secrets it types.
+- **A password typed while recording** — in a `type="password"` field, or one marked `current-password` / `new-password` — is kept as a secret of the project (named after the field, e.g. `MOT_DE_PASSE`), and the test keeps `{{secret.MOT_DE_PASSE}}`. Without a project, the agent is told the password stays in plain.
+- **What is deleted is overwritten** in the database (`secure_delete`), not left in its free pages: a test removed with a value it typed, a secret deleted.
+
+### 4. Cookie Masking
 When using the `get_cookies` tool, IziTest Agent **masks** sensitive cookie values. It only returns the first 50 characters of a cookie's value to the AI, preventing full session tokens from being sent to external LLM providers (Anthropic, OpenAI, etc.) while still allowing the AI to verify if a cookie exists.
 
-### 4. Execution Context
+### 5. Execution Context
 JavaScript executed via the `execute_js` tool runs within the **Chrome extension's sandbox** or the **page context**. It does not have access to your local file system, environmental variables, or other sensitive system data outside the browser.
 
 ---

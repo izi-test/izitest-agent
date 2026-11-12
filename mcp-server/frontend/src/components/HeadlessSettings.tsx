@@ -34,7 +34,13 @@ export function HeadlessSettings() {
         <p className="help">
           It is Chrome for Testing{status?.installed && ` ${status.installed.version}`}, with the extension of this repository and a profile of
           its own: its cookies and logins are not your Chrome's — a test of an app behind a login logs in itself. It starts on the first
-          run asked headless, and stops with the server. Agents never work in it unless they name it (profile “headless”).
+          run asked headless, and stops with the server.
+        </p>
+        <p className="help">
+          <strong>Without the extension in your Chrome</strong> — a company computer that blocks extensions —, agents record tests
+          here: when no Chrome with the extension is connected, what an agent does goes to this browser. Follow it in the
+          page <em>Live</em> (left menu), or in the window of <em>New test → AI Agent</em>. With the extension in your Chrome,
+          agents work in your Chrome and come here only when they name it (profile “headless”).
         </p>
         {status && !status.extension_built && <div className="alert alert--warning">The extension is not built: run <code>npm run build</code> in <code>extension/</code>.</div>}
         {(status?.error || error) && <div className="alert alert--error">{status?.error ?? errorOf(error)}</div>}

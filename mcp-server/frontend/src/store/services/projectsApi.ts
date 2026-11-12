@@ -23,7 +23,7 @@ export const projectsApi = createApi({
       invalidatesTags: [{ type: 'ProjectList', id: 'LIST' }],
     }),
 
-    updateProject: builder.mutation<void, { id: number; name?: string; description?: string; context?: string; project_type?: string; base_url?: string; language?: string; element_timeout_ms?: number | null }>({
+    updateProject: builder.mutation<void, { id: number; name?: string; description?: string; context?: string; project_type?: string; base_url?: string; language?: string; element_timeout_ms?: number | null; clean_start?: boolean }>({
       query: ({ id, ...body }) => ({
         url: `api/projects/${id}`,
         method: 'PUT',

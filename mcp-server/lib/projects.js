@@ -26,6 +26,18 @@ export function elementTimeoutOf(value) {
   return ms;
 }
 
+/**
+ * Whether a test of this project starts logged out in the browser without windows: what the app
+ * left there (cookies, storage) is cleared first, so that a session kept from the test before —
+ * or from the agent recording it — does not lead the app elsewhere. On by default; off for an app
+ * whose tests count on staying logged in from one to the next. Never done in the user's Chrome.
+ */
+export function cleanStartFor(projectId) {
+  if (projectId == null) return true;
+  const row = db.prepare('SELECT clean_start FROM projects WHERE id = ?').get(projectId);
+  return row ? row.clean_start !== 0 : true;
+}
+
 /** How long a replayed step of this project waits for its element, in ms. */
 export function elementTimeoutFor(projectId) {
   if (projectId == null) return DEFAULT_ELEMENT_TIMEOUT_MS;
@@ -38,7 +50,7 @@ const originOf = (url) => { try { return new URL(url).origin; } catch { return n
 /** The projects, newest first, with how many tests each has; `url`: those whose app it is. */
 export function listProjects({ url } = {}) {
   const rows = db.prepare(`
-    SELECT p.id, p.name, p.description, p.project_type, p.base_url, p.language, p.element_timeout_ms, p.created_at, p.updated_at,
+    SELECT p.id, p.name, p.description, p.project_type, p.base_url, p.language, p.element_timeout_ms, p.clean_start, p.created_at, p.updated_at,
            (SELECT COUNT(*) FROM tests t WHERE t.project_id = p.id) AS test_count
     FROM projects p ORDER BY p.updated_at DESC
   `).all();

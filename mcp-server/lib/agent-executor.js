@@ -35,7 +35,7 @@ import { evaluateAssertion } from './test-execute.js';
 import { pageOf } from './elements.js';
 import { LIVE_ACTIONS } from './live.js';
 import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from './datasets.js';
-import { redact } from './secrets.js';
+import { redact, recordedPassword } from './secrets.js';
 import { askUser, cancelAsk, ASK_USER_DESCRIPTION, ASK_FIELD_DESCRIPTION } from './asks.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
@@ -332,13 +332,16 @@ function buildTools(sendCommand) {
       }),
       execute: async ({ selector, value, ref, clear, intent }) => {
         try {
-          const result = learnTarget(ref, await sendCommand(undefined, 'fill', { selector, value, ref, clear }));
+          const answer = await sendCommand(undefined, 'fill', { selector, value, ref, clear });
+          const result = learnTarget(ref, answer);
           let screenshotBase64 = null;
           if (getRecording()?.use_vrt) {
             try { const s = await sendCommand(undefined, 'screenshot', { annotate: false }); if (s?.dataUrl) screenshotBase64 = s.dataUrl; } catch(e) {}
           }
-          saveActionToHistory('fill', { selector, value, clear }, ref, screenshotBase64, intent);
-          return JSON.stringify(result);
+          // A password typed in plain: kept as a secret of the project (lib/secrets.js).
+          const { recorded, note } = recordedPassword(value, answer, getRecording());
+          saveActionToHistory('fill', { selector, value: recorded, clear }, ref, screenshotBase64, intent);
+          return JSON.stringify(result) + note;
         } catch (err) { return formatToolError(err, 'fill'); }
       },
     }),

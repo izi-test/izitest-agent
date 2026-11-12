@@ -13,7 +13,7 @@ import { saveRepairs } from './repairs.js';
 import { requirementsOfTest } from './requirements.js';
 import { readFootprint, saveFootprint } from './footprint.js';
 import { recordRunBug, fixRunBugs } from './bugs.js';
-import { elementTimeoutFor } from './projects.js';
+import { elementTimeoutFor, cleanStartFor } from './projects.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -685,6 +685,20 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   // Filter out assertion steps — the extension only handles browser actions
   const inPlace = assertionsInPlace(hydratedSteps);
   const { actions: actionSteps, startIndex } = actionPlan(hydratedSteps, start_step, inPlace);
+
+  // Started from the beginning, the test starts logged out: in the browser without windows, what
+  // the app left there is cleared first (the extension leaves the user's Chrome alone).
+  if (startIndex === 0 && cleanStartFor(test.project_id ?? null)) {
+    const origins = startOrigins(hydratedSteps, test.project_id);
+    if (origins.length) {
+      try {
+        const cleared = await sendCommand(undefined, 'clear_site_data', { origins }, 10000);
+        if (cleared?.cleared) log(`Started logged out: cleared what ${cleared.origins.join(', ')} left in the browser`);
+      } catch (err) {
+        log(`Could not clear the app's cookies before the run: ${err.message}`);
+      }
+    }
+  }
   const testOrder = (n) => actionSteps[n - 1]?._originalStepNumber ?? n;
   const numbered = (msg) => {
     if (msg?.type === 'step_start') return { ...msg, step: testOrder(msg.step) };
@@ -1012,6 +1026,21 @@ function pageExcerpt(text, expected) {
 // on its way to what it checks — a form sent with Enter, the next page loading; a message shown
 // once a request answers. One the page cannot be read for meanwhile (it is being replaced) is
 // read again too. It fails once this time is up, with what it read last.
+/** The origins a test goes to: the pages it navigates to, and its project's base URL. */
+export function startOrigins(steps, projectId) {
+  const urls = steps.filter((s) => s.command === 'navigate' && typeof s.params?.url === 'string').map((s) => s.params.url);
+  const base = projectId != null ? db.prepare('SELECT base_url FROM projects WHERE id = ?').get(projectId)?.base_url : null;
+  if (base) urls.push(base);
+  const origins = new Set();
+  for (const url of urls) {
+    try {
+      const { protocol, origin } = new URL(url);
+      if (protocol === 'http:' || protocol === 'https:') origins.add(origin);
+    } catch { /* a URL still holding a variable, or none */ }
+  }
+  return [...origins];
+}
+
 // The time is the project's (element_timeout_ms, 10 s by default); IZITEST_ASSERT_TIMEOUT_MS
 // overrides it for every project (0: read once).
 const ASSERTION_TIMEOUT_ENV = process.env.IZITEST_ASSERT_TIMEOUT_MS != null && process.env.IZITEST_ASSERT_TIMEOUT_MS !== ''

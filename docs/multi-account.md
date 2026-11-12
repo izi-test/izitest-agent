@@ -16,6 +16,11 @@ chmod +x scripts/launch-profile.sh
 ./scripts/launch-profile.sh <profile-name>
 ```
 
+On Windows, in PowerShell:
+```powershell
+.\scripts\launch-profile.ps1 <profile-name>
+```
+
 ### Example: an administrator and a customer
 1.  **Launch Profile 1**: `./scripts/launch-profile.sh admin`
 2.  **Launch Profile 2**: `./scripts/launch-profile.sh customer`

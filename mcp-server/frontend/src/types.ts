@@ -9,6 +9,8 @@ export interface Project {
   language?: 'en' | 'fr';
   /** How long a replayed step waits for its element, in ms; null: the default (10 s). */
   element_timeout_ms?: number | null;
+  /** Each test starts logged out in the browser without windows (1, the default) or not (0). */
+  clean_start?: number;
   created_at: string;
   updated_at: string;
   test_count?: number;

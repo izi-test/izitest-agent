@@ -19,6 +19,7 @@ import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecor
 
 // Importing puppeteer-client to register its lifecycle listeners
 import { detachBrowser } from './puppeteer-client';
+import { cmdClearSiteData } from './commands/site-data';
 import { cursorOf } from './cursor';
 
 // ─── Content-Script Commands ────────────────────────────────────────
@@ -81,6 +82,7 @@ const COMMAND_HANDLERS: Record<string, CommandHandler> = {
   wait:         (params) => cmdWait(params as unknown as Parameters<typeof cmdWait>[0]),
   execute_js:   (params) => cmdExecuteJs(params as unknown as Parameters<typeof cmdExecuteJs>[0]),
   get_cookies:  (params) => cmdGetCookies(params as unknown as Parameters<typeof cmdGetCookies>[0]),
+  clear_site_data:(params) => cmdClearSiteData(params as unknown as Parameters<typeof cmdClearSiteData>[0]),
   network_requests:(params) => cmdNetworkRequests(params as unknown as Parameters<typeof cmdNetworkRequests>[0]),
   console_messages:(params) => cmdConsoleMessages(params as unknown as Parameters<typeof cmdConsoleMessages>[0]),
   check_links:  (params) => cmdCheckLinks(params as unknown as Parameters<typeof cmdCheckLinks>[0]),

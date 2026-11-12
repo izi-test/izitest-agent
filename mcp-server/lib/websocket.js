@@ -51,6 +51,58 @@ function defaultWs() {
   return undefined;
 }
 
+/**
+ * A command's parameters as the log shows them: what is typed (every `value`) only by its length.
+ * The log is read by whoever reaches the server's files; a password an agent types while
+ * recording is not known as a secret yet when the command leaves, and a replay carries the values
+ * of the secrets it types.
+ */
+export function loggedParams(params) {
+  if (Array.isArray(params)) return params.map(loggedParams);
+  if (!params || typeof params !== 'object') return params;
+  return Object.fromEntries(Object.entries(params).map(([key, value]) => [
+    key,
+    key === 'value' && typeof value === 'string' && !/^\{\{.+\}\}$/.test(value) ? `«${value.length} chars»` : loggedParams(value),
+  ]));
+}
+
+/** Whether a Chrome with windows (the user's, with the extension) is connected. */
+export function hasWindowedProfile() {
+  return defaultWs() !== undefined;
+}
+
+// When no Chrome with windows has the extension — a company laptop that blocks extensions —,
+// a command naming no profile goes to IziTest's Chrome without windows instead (lib/headless.js
+// sets how: it starts it if it is installed). Not while the user's Chrome was connected moments
+// ago: its extension reconnects after a restart of its service worker, and the agent's session
+// would move to another browser in the middle of its work.
+const WINDOWED_GRACE_MS = 30_000;
+let windowedSeenAt = Date.now();
+let fallbackBrowser = null;
+
+/** How to get a browser when no Chrome with windows is there: a function resolving to a profile, or null. */
+export function setFallbackBrowser(provider) {
+  fallbackBrowser = provider;
+}
+
+/**
+ * The profile a command naming `profileId` goes to: that one; naming none, the user's Chrome —
+ * or, none connected for a while, the fallback browser when there is one (undefined otherwise).
+ */
+export async function routeProfile(profileId, now = Date.now()) {
+  if (profileId || defaultWs() || !fallbackBrowser) return profileId;
+  if (now - windowedSeenAt < WINDOWED_GRACE_MS) return profileId;
+  return (await fallbackBrowser().catch((err) => {
+    log(`Fallback browser: ${err.message}`);
+    return null;
+  })) ?? undefined;
+}
+
+/** For tests: a Chrome with windows last seen at `at`. */
+export function markWindowedSeen(at = Date.now()) {
+  windowedSeenAt = at;
+}
+
 export function closeWebSocket() {
   if (wss) wss.close();
 }
@@ -98,7 +150,10 @@ export function startWebSocketServer(port) {
           registeredProfileId = msg.profileId;
           profiles.set(msg.profileId, ws);
           if (msg.headless === true) headlessProfiles.add(msg.profileId);
-          else headlessProfiles.delete(msg.profileId);
+          else {
+            headlessProfiles.delete(msg.profileId);
+            windowedSeenAt = Date.now();
+          }
           profileEvents.emit('connected', msg.profileId);
           log(`Profile registered: ${msg.profileId}`);
         }
@@ -168,6 +223,7 @@ export function startWebSocketServer(port) {
       }
       // A register under the same id from a newer socket replaced this one: it stays.
       if (registeredProfileId && profiles.get(registeredProfileId) === ws) {
+        if (!headlessProfiles.has(registeredProfileId)) windowedSeenAt = Date.now();
         profiles.delete(registeredProfileId);
         headlessProfiles.delete(registeredProfileId);
         log(`Profile disconnected: ${registeredProfileId}`);
@@ -205,14 +261,18 @@ export function sendCommand(profileId, command, params, timeoutMs = 30000, onPro
   return new Promise((resolve, reject) => {
     (async () => {
       try {
+        const asked = profileId;
+        profileId = await routeProfile(profileId);
         const ws = await waitForProfile(profileId);
         if (!ws) {
           reject(new Error(
-            profileId
-              ? `Profile "${profileId}" not connected. Connected profiles: ${[...profiles.keys()].join(', ') || 'none'}`
-              : profiles.size
-                ? `Only the headless browser is connected (${[...profiles.keys()].join(', ')}): name it as the profile to use it, or open Chrome with the IziTest Agent extension.`
-                : 'No browser profiles connected. Make sure Chrome is open with the IziTest Agent extension.'
+            asked
+              ? `Profile "${asked}" not connected. Connected profiles: ${[...profiles.keys()].join(', ') || 'none'}`
+              : profileId
+                ? `No Chrome with the IziTest Agent extension is connected, and IziTest's browser without windows did not start either: ${[...profiles.keys()].join(', ') || 'nothing is connected'}.`
+                : profiles.size
+                  ? `Only the headless browser is connected (${[...profiles.keys()].join(', ')}): name it as the profile to use it, or open Chrome with the IziTest Agent extension.`
+                  : 'No browser profiles connected. Open Chrome with the IziTest Agent extension — or, where Chrome may not have extensions, install IziTest\'s browser without windows (dashboard: Settings → Headless browser → Install): the agent then works there.'
           ));
           return;
         }
@@ -231,7 +291,7 @@ export function sendCommand(profileId, command, params, timeoutMs = 30000, onPro
         if (!quiet) {
           const sessionTag = params?.sessionId ? `[${params.sessionId}] ` : '';
           log(`[OUT] ➡️ ${sessionTag}${command}`);
-          log(`  Params: ${JSON.stringify(params).substring(0, 500)}`);
+          log(`  Params: ${JSON.stringify(loggedParams(params)).substring(0, 500)}`);
         }
 
         ws.send(JSON.stringify({ type: 'command', id, command, params }));

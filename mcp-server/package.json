@@ -6,6 +6,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
+    "headless:install": "node bin/headless-install.js",
     "start": "node server.js",
     "start:stdio": "node server.js --stdio",
     "dev": "node --watch server.js",

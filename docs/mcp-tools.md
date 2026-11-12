@@ -516,6 +516,7 @@ là, donc un test qui passe ne prend pas plus de temps. Une étape qui ne trouve
 On le règle par projet, de 1 à 120 s :
 - dans le tableau de bord : *Projects → Edit → Wait for an element* (vide : le défaut) ;
 - par l'agent : `update_project_context` avec `element_timeout_ms` (`null` revient au défaut) ;
+  `clean_start: false` y coupe aussi le nettoyage des cookies avant chaque test (voir l'installation) ;
 - par l'API : `PUT /api/projects/:id` avec `element_timeout_ms`.
 
 Il vaut aussi pour les assertions. Augmentez-le quand des tests échouent sur une page encore en
@@ -679,6 +680,11 @@ texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fich
 | `start_recording(project_id, dataset)` | Enregistre un test qui joue un jeu : `{{email}}` tape la ligne 1, le test est lié au jeu à `stop_recording` |
 
 ### Secrets : ce qu'un test tape sans que personne le lise
+
+**Un mot de passe tapé en clair pendant un enregistrement** devient un secret du projet : dans un
+champ `type="password"`, la valeur est rangée sous le nom du champ (`MOT_DE_PASSE`, puis
+`MOT_DE_PASSE_2` pour une autre valeur) et le test garde `{{secret.MOT_DE_PASSE}}`. L'agent en est
+prévenu. Sans `project_id` à `start_recording`, il est prévenu que le mot de passe reste en clair.
 
 Un mot de passe, une clé d'API, un jeton : un projet les garde dans ses secrets (`lib/secrets.js`),
 et un test les écrit `{{secret.NOM}}`. IziTest tape la valeur ; personne ne la relit, ni l'agent qui

@@ -10,7 +10,8 @@
     "cookies",
     "storage",
     "debugger",
-    "alarms"
+    "alarms",
+    "browsingData"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {

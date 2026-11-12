@@ -37,7 +37,12 @@ continue donc sans rien mettre au premier plan.
 
 ## Dans le tableau de bord
 
-Le tableau de bord montre ce flux à deux endroits.
+Le tableau de bord montre ce flux à trois endroits.
+
+- **La page *Live*** (menu de gauche, `/watch`) : chaque agent connecté, avec les onglets de sa
+  fenêtre ; celui de l'agent qui a agi en dernier est montré, un clic en montre un autre. C'est là
+  qu'on suit un agent qui travaille dans le navigateur sans fenêtre, quand Chrome n'a pas
+  l'extension.
 
 - **Créer un test avec l'agent IA** : la fenêtre s'élargit dès que l'agent démarre. Le
   navigateur est à gauche, le journal de l'agent à droite. Le formulaire se replie en une

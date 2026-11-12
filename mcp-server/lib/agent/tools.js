@@ -496,13 +496,15 @@ export const AGENT_TOOLS = [
         context: { type: 'string', description: 'Free-text project context (specs, notes, URLs...)' },
         project_type: { type: 'string', enum: ['frontend', 'backend', 'fullstack'], description: 'Type of project' },
         base_url: { type: 'string', description: 'Base URL of the application' },
+        clean_start: { type: 'boolean', description: 'Whether each test starts logged out in the browser without windows (its cookies and storage for the app cleared first; default true). False for an app whose tests count on staying logged in from one to the next' },
         element_timeout_ms: { type: ['number', 'null'], description: `How long a replayed step waits for its element, and a check for what it expects, in ms (${MIN_ELEMENT_TIMEOUT_MS}–${MAX_ELEMENT_TIMEOUT_MS}; default ${DEFAULT_ELEMENT_TIMEOUT_MS}, null to go back to it). Raise it when tests fail on a page still loading` },
       },
       required: ['project_id'],
     },
-    handler({ project_id, context, project_type, base_url, element_timeout_ms }) {
+    handler({ project_id, context, project_type, base_url, element_timeout_ms, clean_start }) {
       const sets = [];
       const vals = [];
+      if (clean_start !== undefined) { sets.push('clean_start = ?'); vals.push(clean_start ? 1 : 0); }
       if (element_timeout_ms !== undefined) {
         try {
           sets.push('element_timeout_ms = ?'); vals.push(elementTimeoutOf(element_timeout_ms));
@@ -525,7 +527,7 @@ export const AGENT_TOOLS = [
 
       if (!result) return { error: 'Project not found' };
       log(`[Agent Tool] Updated context for project ${project_id}`);
-      return { data: { id: result.id, name: result.name, context: result.context, project_type: result.project_type, base_url: result.base_url, element_timeout_ms: result.element_timeout_ms ?? DEFAULT_ELEMENT_TIMEOUT_MS } };
+      return { data: { id: result.id, name: result.name, context: result.context, project_type: result.project_type, base_url: result.base_url, element_timeout_ms: result.element_timeout_ms ?? DEFAULT_ELEMENT_TIMEOUT_MS, clean_start: result.clean_start !== 0 } };
     },
   },
 ];

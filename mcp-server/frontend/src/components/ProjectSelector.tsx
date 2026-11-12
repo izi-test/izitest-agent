@@ -121,7 +121,7 @@ export function ProjectSwitcher() {
   );
 }
 
-type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string; language: 'en' | 'fr'; wait_seconds: string };
+type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string; language: 'en' | 'fr'; wait_seconds: string; clean_start: boolean };
 
 // How long a replayed step waits for its element (lib/projects.js): empty, the default.
 const DEFAULT_WAIT_SECONDS = 10;
@@ -142,6 +142,7 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
     project_type: project?.project_type ?? '', base_url: project?.base_url ?? '',
     language: project ? project.language ?? 'en' : browserLanguage(),
     wait_seconds: secondsOf(project?.element_timeout_ms),
+    clean_start: project ? project.clean_start !== 0 : true,
   });
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof ProjectFields>(field: K, value: ProjectFields[K]) => { setFields({ ...fields, [field]: value }); setError(null); };
@@ -152,10 +153,12 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
     const wait = fields.wait_seconds.trim().replace(',', '.');
     const seconds = wait === '' ? null : Number(wait);
     if (seconds !== null && !(seconds >= 1 && seconds <= 120)) return setError('The wait for an element is from 1 to 120 seconds, or empty for the default');
-    const { wait_seconds: _wait, ...rest } = fields;
+    const { wait_seconds: _wait, clean_start: cleanStart, ...rest } = fields;
     const body = {
       ...rest, name: fields.name.trim(), description: fields.description.trim(), context: fields.context.trim(), base_url: fields.base_url.trim(),
       element_timeout_ms: seconds === null ? null : Math.round(seconds * 1000),
+      // Created, a project starts logged out: only a change is sent.
+      ...(project ? { clean_start: cleanStart } : {}),
     };
     try {
       if (project) {
@@ -224,6 +227,15 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
             onChange={(e) => set('wait_seconds', e.target.value)} placeholder={`${DEFAULT_WAIT_SECONDS} (default)`} />
           <span className="field__hint">
             How long a replayed step waits for the button or field it acts on, and a check for what it expects, before it fails. Raise it when tests fail on pages still loading: a slow test server, a company laptop, the browser without windows. A test that passes is not slowed down: the wait ends as soon as the element is there.
+          </span>
+        </label>
+        <label className="field field--check">
+          <span className="checkbox-row">
+            <input type="checkbox" checked={fields.clean_start} onChange={(e) => set('clean_start', e.target.checked)} />
+            <span className="field__label">Each test starts logged out</span>
+          </span>
+          <span className="field__hint">
+            In the browser without windows, what the app left there — cookies, storage — is cleared before each test: the test logs in itself, as a user would, and a session kept from the test before cannot lead it elsewhere. Never done in your own Chrome. Untick it when the tests count on staying logged in from one to the next.
           </span>
         </label>
         <label className="field">

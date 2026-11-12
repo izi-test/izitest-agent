@@ -29,6 +29,7 @@ import { registerAgentTools } from './lib/agent/mcp-adapter.js';
 import { redactToolResults } from './lib/secrets.js';
 import { registerAskTools } from './lib/tools/ask.js';
 import { initDatabase } from './lib/db.js';
+import { trustSystemCertificates } from './lib/system-ca.js';
 import { seedAllProjectsStepDefinitions } from './lib/gherkin/step-definition-store.js';
 import { apiRouter } from './lib/api.js';
 import { parseAllowedOrigins, refuseBrowserRequest } from './lib/origin-guard.js';
@@ -105,6 +106,11 @@ const USE_STDIO = process.argv.includes('--stdio');
 // ─── Initialize Database & Start WebSocket Bridge ───────────────────
 
 initDatabase();
+// A company proxy that inspects HTTPS signs with a root the system trusts and Node does not.
+{
+  const added = trustSystemCertificates();
+  if (added) log(`Trusting ${added} certificate${added > 1 ? 's' : ''} of the system as well (IZITEST_SYSTEM_CA=0 turns it off)`);
+}
 closeInterruptedCampaigns();
 // Built-in step definitions are seeded when a project is created: give older projects the
 // ones added since ("I check {string}"…).

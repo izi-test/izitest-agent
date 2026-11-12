@@ -12,6 +12,10 @@ Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
 
 **Causes possibles** :
 
+0. **Chrome n'a pas le droit d'avoir des extensions** (poste d'entreprise)
+   - Installez le navigateur sans fenêtre d'IziTest : *Settings → Headless browser → Install*
+   - Sans Chrome avec l'extension, les agents y travaillent ; suivez-les dans la page *Live*
+
 1. **L'extension Chrome n'est pas installée**
    - Vérifiez que l'extension est chargée dans `chrome://extensions/`
    - Activez le "Mode développeur" en haut à droite
@@ -72,6 +76,19 @@ Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
    node server.js --stdio
    ```
    Vous devriez voir le serveur démarrer sans erreur.
+
+### `self-signed certificate in certificate chain` à l'installation du navigateur sans fenêtre
+
+Le réseau de l'entreprise inspecte HTTPS avec son propre certificat. Avec Node 22.15 / 23.8 ou plus
+récent, IziTest fait confiance aux certificats du système. Sinon : `NODE_EXTRA_CA_CERTS` vers le
+certificat racine de l'entreprise, ou un Chrome for Testing décompressé à la main et
+`IZITEST_CHROME_PATH` ([installation](installation.md#5-replay-without-windows-optional)).
+
+### « Access Denied » sur la page de connexion au rejeu
+
+L'application refuse la page de connexion à qui a déjà une session. Dans le navigateur sans fenêtre,
+chaque test part déconnecté : vérifiez que *Projects → Edit → Each test starts logged out* est coché.
+Dans votre Chrome, rien n'est nettoyé : déconnectez-vous de l'application avant le rejeu.
 
 ### "Command failed" / Les actions ne fonctionnent pas
 

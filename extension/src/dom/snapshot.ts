@@ -631,7 +631,14 @@ function describeElement(el: Element): RefNodeInfo {
     name: name.replace(/\s+/g, ' ').trim().slice(0, 80),
     selector: buildSelector(el),
     locators: buildLocators(el, name, role),
+    ...(isSecretField(el) ? { secret: true } : {}),
   };
+}
+
+/** A field whose value is a password: type="password", or marked so for the browser's manager. */
+function isSecretField(el: Element): boolean {
+  if (!(el instanceof HTMLInputElement)) return false;
+  return el.type === 'password' || /\b(current|new)-password\b/.test(el.autocomplete || '');
 }
 
 /**

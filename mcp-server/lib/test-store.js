@@ -67,7 +67,7 @@ export function saveTest(test) {
         step: i + 1,
         description: step.intent || `${step.command} in step ${i + 1}`
       };
-      log(`Auto-variabilized fill step ${i + 1}: {{${varName}}} = "${value}"`);
+      log(`Auto-variabilized fill step ${i + 1}: {{${varName}}} (${/\{\{secret\./.test(value) ? 'a secret' : `${value.length} chars`})`);
     }
   });
 
