@@ -19,6 +19,9 @@ import { formatTriage } from '../triage.js';
 import { getRequirement, linkRecorded, nonConformityOf } from '../requirements.js';
 import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair } from '../repairs.js';
 import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from '../datasets.js';
+import { redundantTimeWaits } from '../recorded-waits.js';
+import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from '../business-play.js';
+import { elementTimeoutFor } from '../projects.js';
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -60,13 +63,18 @@ export function cleanRecoverySteps(steps) {
     last--;
   }
 
+  // Pass 3: Remove waits of a time only that a step after them makes useless: that step waits
+  // for its element, or its check, by itself (lib/recorded-waits.js).
+  const redundant = new Set(redundantTimeWaits(cleaned).filter((i) => !toRemove.has(i)));
+  for (const i of redundant) toRemove.add(i);
+
   if (toRemove.size === 0) return { steps: cleaned, removed: [] };
 
   const removed = [...toRemove].sort((a, b) => a - b).map((i) => {
     const step = cleaned[i];
     return step.command === 'navigate' ? `a navigate repeated (${step.params.url})`
       : step.params?.selector ? `a wait for ${step.params.selector} around a repeated navigate`
-        : `a wait of ${step.params?.ms ?? 0} ms${i > last ? ' at the end (it checks nothing)' : ''}`;
+        : `a wait of ${step.params?.ms ?? 0} ms${i > last ? ' at the end (it checks nothing)' : redundant.has(i) ? ' (the step after it waits for its element by itself)' : ''}`;
   });
   const result = cleaned.filter((_, idx) => !toRemove.has(idx));
   log(`Cleaned ${toRemove.size} parasitic step(s) (${cleaned.length} → ${result.length})`);
@@ -87,7 +95,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
     session.replays ??= new Map();
     session.replays.set(tabId, { test: name, values });
   };
-  const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, sess().scope(params), ...rest);
+  // The browser the session works in (named once, e.g. "headless"), when a call names none:
+  // add_assertion checks the page of the window the test was recorded in.
+  const sendCommand = (profile, command, params, ...rest) => dispatch(profile ?? sess().profile, command, sess().scope(params), ...rest);
   const getRecording = () => sess().recording;
   const setRecording = (value) => { sess().recording = value; };
   const getAction = (id) => sess().getAction(id);
@@ -154,7 +164,12 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }).catch(() => {});
 
       const viewportMsg = viewport ? ` with viewport ${viewport.width}x${viewport.height}` : '';
-      return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.${recordingDatasetText(project_id, played.dataset)}` }] };
+      // The project's business steps: played as one (play_business_step), the test reads as them.
+      const business = businessStepsOf(project_id ?? null);
+      const businessText = business.length
+        ? `\n\nThe project's business steps — play one with play_business_step instead of doing its steps again:\n${business.map((b) => `- ${b.keyword} ${b.pattern} (${b.steps} steps)`).join('\n')}`
+        : '';
+      return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.${recordingDatasetText(project_id, played.dataset)}${businessText}` }] };
     }
   );
 
@@ -200,6 +215,46 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       const told = [name && `its variable will be {{${name}}}`, skip_variable && 'its value stays fixed', intent && 'its intent changed'].filter(Boolean).join(', ');
       return { content: [{ type: 'text', text: `Step ${at + 1} (${lastStep.command})${told ? `: ${told}` : ' unchanged'}. Steps are recorded on their own: call stop_recording when done.` }] };
+    }
+  );
+
+  // --- Tool: play_business_step ---
+  server.tool(
+    'play_business_step',
+    [
+      'Play a business step of the project — a phrase that stands for several steps, e.g. "je me connecte au portail avec',
+      'l\'identifiant "{{secret.PORTAL_USERNAME}}" et le mot de passe "{{secret.PORTAL_PASSWORD}}"" — in the browser, as one action.',
+      'While recording, its steps are recorded, linked to it: the test reads as the phrase. Use it instead of doing again what',
+      'a business step does (logging in, logging out…): start_recording and get_project_context list the project\'s business steps.',
+      'Give each {string} its value in double quotes; a secret as {{secret.NAME}}, a variable as {{name}}.',
+    ].join(' '),
+    {
+      phrase: z.string().describe('The phrase, with its values: je me déconnecte du portail'),
+      project_id: z.number().optional().describe('The project of the business step. Default: the one being recorded'),
+      tabId: z.number().optional(),
+    },
+    async ({ phrase, project_id, tabId }) => {
+      const recording = getRecording();
+      const projectId = project_id ?? recording?.projectId ?? null;
+      if (projectId == null) {
+        return { content: [{ type: 'text', text: 'Which project? Pass project_id, or start_recording with project_id.' }], isError: true };
+      }
+      const found = stepsOfBusinessPhrase(projectId, phrase);
+      if (found.error) return { content: [{ type: 'text', text: found.error }], isError: true };
+
+      const session = sess();
+      // Its values ({{secret.…}}, a value kept) worked out as the session knows them; the steps
+      // recorded keep them as written.
+      const played = await playBusinessSteps(found, {
+        sendCommand, live: (params) => session.live(params), tabId: tabId ?? session.lastTabId, elementTimeoutMs: elementTimeoutFor(projectId),
+      });
+      if (played.error) return { content: [{ type: 'text', text: played.error }], isError: true };
+      if (played.tabId) session.adoptTab(played.tabId);
+      if (recording) {
+        for (const step of found.steps) recording.steps.push(structuredClone(step));
+        log(`[${session.id}] Business step played and recorded: "${found.phrase}" (${found.steps.length} steps)`);
+      }
+      return { content: [{ type: 'text', text: `Played "${found.phrase}" (${found.steps.length} steps)${recording ? ': recorded as this business step' : ''}.` }] };
     }
   );
 

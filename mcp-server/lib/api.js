@@ -29,6 +29,7 @@ import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, data
 import { listSecrets, saveSecret, deleteSecret, secretLines, secretValue } from './secrets.js';
 import { pendingAsks, answerAsk, cancelAsk, cancelAsksOfRun, followAsks } from './asks.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
+import { stepsOfBusinessPhrase, businessStepsOf } from './business-play.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
 import { listBugs, getBug, updateBug, reportBug, reproBrief, adoptReproTest, listExplorations, getExploration, runExploration } from './bugs.js';
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
@@ -1000,6 +1001,28 @@ export async function apiRouter(req, res, url) {
 
     // ── Steps routes: /api/tests/:name/steps ──
 
+    // POST /api/tests/:name/steps/business — insert a business step of the test's project:
+    // { phrase, step_order } — its steps, with their locators, from step_order on (default: at the end).
+    params = matchRoute(path, '/api/tests/:name/steps/business');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      const test = db.prepare('SELECT id, project_id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
+      if (test.project_id == null) return json(res, 400, { error: 'This test has no project: business steps belong to a project' });
+      const found = stepsOfBusinessPhrase(test.project_id, body.phrase);
+      if (found.error) return json(res, 422, { error: found.error });
+      const { max_order: last } = db.prepare('SELECT COALESCE(MAX(step_order), 0) AS max_order FROM test_steps WHERE test_id = ?').get(test.id);
+      const from = Math.max(1, Math.min(Number(body.step_order) || last + 1, last + 1));
+      found.steps.forEach((step, i) => insertTestStep(test.id, from + i, step));
+      return json(res, 201, { phrase: found.phrase, from, count: found.steps.length });
+    }
+
+    // GET /api/projects/:id/business-steps — its business steps: phrase, steps, parameters.
+    params = matchRoute(path, '/api/projects/:id/business-steps');
+    if (method === 'GET' && params) {
+      return json(res, 200, { business_steps: businessStepsOf(Number(params.id)) });
+    }
+
     // POST /api/tests/:name/steps — add step
     params = matchRoute(path, '/api/tests/:name/steps');
     if (method === 'POST' && params) {
@@ -1642,7 +1665,9 @@ export async function apiRouter(req, res, url) {
           // What its brief tells it to use: a <select>, a file, a computed value, a value kept, an API.
           'select', 'upload_file', 'add_test_variable', 'capture_value', 'call_api',
           // The project's context (its datasets, its secrets), and a value nobody gave, asked.
-          'get_project_context', 'ask_user'
+          'get_project_context', 'ask_user',
+          // A business step of the project played as one: the test reads as its phrase.
+          'play_business_step'
         ].map(t => `mcp__izitest-agent__${t}`).join(',');
         args.push('-p', body.prompt, '--allowedTools', mcpToolNames, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
       } else if (agentConfig.cli?.provider === 'copilot') {

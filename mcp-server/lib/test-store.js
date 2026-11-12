@@ -34,8 +34,19 @@ export function loadTest(name) {
       ...(row.variable && { variable: parseJson(row.variable) }),
       ...(row.assertion && { assertion: parseJson(row.assertion) }),
       ...(row.page && { page: row.page }),
+      ...(row.step_definition_id && { step_definition_id: row.step_definition_id }),
     }))
   };
+}
+
+/**
+ * The business step a step starts, kept when it is one of the database: a phrase read from
+ * Gherkin also carries the id of a built-in definition, which no row holds.
+ */
+function definitionLink(step) {
+  const id = step.step_definition_id;
+  if (!Number.isInteger(id)) return null;
+  return db.prepare('SELECT id FROM step_definitions WHERE id = ? AND steps_template IS NOT NULL').get(id) ? id : null;
 }
 
 export function saveTest(test) {
@@ -93,8 +104,8 @@ export function saveTest(test) {
     db.prepare('DELETE FROM test_steps WHERE test_id = ?').run(testId);
 
     const insertStep = db.prepare(
-      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page, step_definition_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (let i = 0; i < test.steps.length; i++) {
       const step = test.steps[i];
@@ -118,7 +129,9 @@ export function saveTest(test) {
         step.intent || null,
         step.variable ? JSON.stringify(step.variable) : null,
         step.assertion ? JSON.stringify(step.assertion) : null,
-        step.page || null
+        step.page || null,
+        // The business step it starts, when it was played as one (serialize.js reads the link).
+        definitionLink(step)
       );
     }
 
@@ -177,11 +190,11 @@ export function insertTestStep(testId, order, step) {
     db.prepare('UPDATE test_steps SET step_order = -step_order - 1 WHERE test_id = ? AND step_order >= ?').run(testId, order);
     db.prepare('UPDATE test_steps SET step_order = -step_order WHERE test_id = ? AND step_order < 0').run(testId);
     const row = db.prepare(
-      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
+      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page, step_definition_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
     ).get(testId, order, step.command || '', JSON.stringify(step.params ?? {}), step.locators ? JSON.stringify(step.locators) : null,
       step.intent || null, step.variable ? JSON.stringify(step.variable) : null, step.assertion ? JSON.stringify(step.assertion) : null,
-      step.page || null);
+      step.page || null, definitionLink(step));
     const test = db.prepare('SELECT variables FROM tests WHERE id = ?').get(testId);
     const variables = parseJson(test?.variables) ?? {};
     for (const variable of Object.values(variables)) if (variable?.step >= order) variable.step += 1;
@@ -241,6 +254,7 @@ export function listTests() {
         ...(row.variable && { variable: parseJson(row.variable) }),
         ...(row.assertion && { assertion: parseJson(row.assertion) }),
         ...(row.page && { page: row.page }),
+        ...(row.step_definition_id && { step_definition_id: row.step_definition_id }),
       });
     }
   }

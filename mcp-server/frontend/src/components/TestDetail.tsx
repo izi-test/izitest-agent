@@ -663,6 +663,7 @@ CRITICAL RULES:
               <StepModal
                 isOpen={isStepModalOpen}
                 testName={test.name}
+                projectId={test.project_id ?? null}
                 step={editingStep}
                 onClose={() => dispatch(closeStepModal())}
                 onSaved={() => { dispatch(closeStepModal()); refetch(); }}

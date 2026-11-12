@@ -80,9 +80,13 @@ export function listElements(projectId) {
   const steps = projectSteps(projectId);
   registerElements(projectId, steps);
   const uses = new Map();
+  // How the latest step acting on each element found it: a step written by hand on that element
+  // (the dashboard's step editor) starts from it.
+  const latest = new Map();
   for (const step of steps) {
     const key = elementKey(step);
     if (!key) continue;
+    if (typeof selectorOf(step) === 'string') latest.set(key, step);
     if (!uses.has(key)) uses.set(key, new Map());
     const byTest = uses.get(key);
     byTest.set(step.test, [...(byTest.get(step.test) ?? []), step.order]);
@@ -95,6 +99,10 @@ export function listElements(projectId) {
       target: row.key.slice(row.page.length + 1),
       created_at: row.created_at,
       used_by: [...(uses.get(row.key) ?? new Map())].map(([test, orders]) => ({ test, steps: orders })),
+      ...(latest.has(row.key) && {
+        selector: selectorOf(latest.get(row.key)),
+        locators: latest.get(row.key).locators ?? [],
+      }),
     }));
 }
 

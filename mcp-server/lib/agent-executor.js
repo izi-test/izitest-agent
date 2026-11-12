@@ -36,6 +36,9 @@ import { pageOf } from './elements.js';
 import { LIVE_ACTIONS } from './live.js';
 import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from './datasets.js';
 import { redact, recordedPassword } from './secrets.js';
+import { redundantTimeWaits, TIME_WAIT_NOTE } from './recorded-waits.js';
+import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from './business-play.js';
+import { elementTimeoutFor } from './projects.js';
 import { askUser, cancelAsk, ASK_USER_DESCRIPTION, ASK_FIELD_DESCRIPTION } from './asks.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
@@ -67,6 +70,8 @@ function cleanRecoverySteps(steps) {
       }
     }
   }
+  // A wait of a time only before a step that waits by itself: useless (lib/recorded-waits.js).
+  for (const i of redundantTimeWaits(cleaned)) toRemove.add(i);
   const result = cleaned.filter((_, i) => !toRemove.has(i));
   // A trailing wait for an element checks what the test did: kept. One of a time only: not.
   while (result.length > 0 && result[result.length - 1].command === 'wait' && !result[result.length - 1].params?.selector) result.pop();
@@ -447,8 +452,30 @@ function buildTools(sendCommand) {
       },
     }),
 
+    play_business_step: tool({
+      description: 'Play a business step of the project (a phrase standing for several steps: logging in, logging out…) as one action, its values in double quotes (a secret as {{secret.NAME}}). While recording, its steps are recorded linked to it, and the test reads as the phrase. Use it instead of doing again what a business step does; start_recording lists them.',
+      inputSchema: z.object({
+        phrase: z.string().describe('The phrase, with its values'),
+      }),
+      execute: async ({ phrase }) => {
+        const session = sess();
+        const projectId = getRecording()?.projectId ?? session.projectId ?? null;
+        if (projectId == null) return 'No project: business steps belong to a project.';
+        const found = stepsOfBusinessPhrase(projectId, phrase);
+        if (found.error) return found.error;
+        const played = await playBusinessSteps(found, {
+          sendCommand, live: (params) => session.live(params), tabId: session.lastTabId, elementTimeoutMs: elementTimeoutFor(projectId),
+        });
+        if (played.error) return played.error;
+        if (played.tabId) session.adoptTab(played.tabId);
+        const recording = getRecording();
+        if (recording) for (const step of found.steps) recording.steps.push(structuredClone(step));
+        return `Played "${found.phrase}" (${found.steps.length} steps)${recording ? ': recorded as this business step' : ''}.`;
+      },
+    }),
+
     wait: tool({
-      description: 'Wait for a time or until an element appears in the active tab.',
+      description: 'Wait until an element appears in the active tab (selector) — what the page shows once ready. A wait of a time (ms) is a last resort: every step already waits for its element, and a check for what it expects.',
       inputSchema: z.object({
         ms: z.number().optional(),
         selector: z.string().optional(),
@@ -460,7 +487,7 @@ function buildTools(sendCommand) {
         try {
           const result = await sendCommand(undefined, 'wait', { ms, selector });
           saveActionToHistory('wait', { ms, selector }, null, null, intent);
-          return JSON.stringify(result);
+          return JSON.stringify(result) + (ms && !selector && getRecording() ? TIME_WAIT_NOTE : '');
         } catch (err) { return formatToolError(err, 'wait'); }
       },
     }),
@@ -557,7 +584,11 @@ function buildTools(sendCommand) {
           pushOverlayState(null, { mode: 'recording', step: 0, stepName: 'Waiting for action...' });
         }).catch(() => {});
 
-        return `Recording started for "${name}"${use_vrt ? ' (VRT enabled)' : ''}. Navigate to your target URL now.${recordingDatasetText(projectId, played.dataset)}`;
+        const business = businessStepsOf(projectId);
+        const businessText = business.length
+          ? `\n\nThe project's business steps — play one with play_business_step instead of doing its steps again:\n${business.map((b) => `- ${b.keyword} ${b.pattern} (${b.steps} steps)`).join('\n')}`
+          : '';
+        return `Recording started for "${name}"${use_vrt ? ' (VRT enabled)' : ''}. Navigate to your target URL now.${recordingDatasetText(projectId, played.dataset)}${businessText}`;
       },
     }),
 

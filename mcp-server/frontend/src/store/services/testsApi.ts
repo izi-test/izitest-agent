@@ -16,6 +16,8 @@ interface StepBody {
   locators?: unknown[] | null;
   variable?: unknown | null;
   assertion?: unknown | null;
+  /** Where a new step goes (1-indexed); the steps from there move down. Default: at the end. */
+  step_order?: number;
 }
 
 interface ReorderEntry {

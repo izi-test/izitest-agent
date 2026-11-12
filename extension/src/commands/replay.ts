@@ -2,7 +2,8 @@
 import { getPage, detachBrowser } from '../puppeteer-client';
 import { resolveTabId, delay, TOP_FRAME } from '../helpers';
 import { clickViaLocator, clickToggleViaHandle, focusViaLocator, clearAndType, isStaleContextError, toggleStateOf } from './page-helpers';
-import { findElementWithLocators, type ElementCondition } from './locators';
+import { findElementWithLocators, DEFAULT_LOCATOR_TIMEOUT_MS, type ElementCondition } from './locators';
+import { waitActionable, watchClick, untilReady, isLeftThePage } from './actionable';
 import { resolveVariableElement, type ReplayStep } from './variable-resolver';
 import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdUpload, cmdDrag, cmdKeyboard, cmdScroll, wantedChecked } from './actions';
 import { dragElements } from './drag';
@@ -30,6 +31,9 @@ async function clickAtHandle(page: Page, handle: ElementHandle<Element>): Promis
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 }
 const DEFAULT_STEP_DELAY_MS = 50;
+// After a click that did nothing, how long before the second one.
+const LEFT_PAGE_RETRIES = 3;
+const RECLICK_DELAY_MS = 500;
 
 const COMMAND_DISPATCH: Record<string, (params: any) => Promise<any>> = {
   navigate: cmdNavigate,
@@ -203,7 +207,22 @@ export async function cmdReplaySequence(
           'any';
 
         let skippedClick = false;
+        let clickedAgain = false;
+        const waitMs = elementTimeoutMs ?? DEFAULT_LOCATOR_TIMEOUT_MS;
+        // An element replaced by the page between being found and clicked (a menu drawn again
+        // as it opens) was not clicked: it is looked up again, a few times.
         const executeWithLocators = async (page: Page) => {
+          for (let attempt = 1; ; attempt++) {
+            try {
+              return await executeOnce(page);
+            } catch (err) {
+              if (attempt >= LEFT_PAGE_RETRIES || !isLeftThePage(err)) throw err;
+              console.log(`  ♻️ The element was replaced before the click: looking it up again (${attempt})`);
+              await delay(200);
+            }
+          }
+        };
+        const executeOnce = async (page: Page) => {
           const { result, errors } = await findElementWithLocators(page, step.locators!, elementCondition, elementTimeoutMs);
           if (!result) throw new Error(`All ${step.locators!.length} locators failed:\n${errors.join('\n')}`);
 
@@ -229,16 +248,39 @@ export async function cmdReplaySequence(
               if (isToggle) {
                 console.log(`  🔘 Toggle element (${locatorUsed}="${locatorValue}") — using handle.evaluate(el.click())`);
                 await clickToggleViaHandle(handle);
-              } else if (!SELECTOR_LOCATORS.has(locatorUsed)) {
-                // Found by name or text: there is no selector to look it up again, the
-                // element found is the one clicked.
-                await clickAtHandle(page, handle);
               } else {
-                // Dispose handle — handle.click() uses stale context ID.
-                // page.evaluate uses Runtime.evaluate with the current frame context.
-                await handle.dispose().catch(() => {});
-                console.log(`  🖱️ Querying element position via page.evaluate (${locatorUsed}="${locatorValue}")...`);
-                await clickViaLocator(page, locatorUsed, locatorValue);
+                // Clicked when it can take the click (visible, enabled, still, on top), and
+                // seen to do something: on an app still starting up, a button drawn before its
+                // handler was attached took a click that did nothing (actionable.ts).
+                const notReady = baseParams.viaLabel ? null : await waitActionable(handle, waitMs);
+                if (notReady) throw new Error(`Not clicked: ${notReady}`);
+                const watch = await watchClick(page, handle);
+                if (!SELECTOR_LOCATORS.has(locatorUsed)) {
+                  // Found by name or text: there is no selector to look it up again, the
+                  // element found is the one clicked.
+                  await clickAtHandle(page, handle);
+                } else {
+                  // Dispose handle — handle.click() uses stale context ID.
+                  // page.evaluate uses Runtime.evaluate with the current frame context.
+                  await handle.dispose().catch(() => {});
+                  console.log(`  🖱️ Querying element position via page.evaluate (${locatorUsed}="${locatorValue}")...`);
+                  await clickViaLocator(page, locatorUsed, locatorValue);
+                }
+                if (!(await watch.hadEffect())) {
+                  // Nothing at all happened — no change, no navigation, no request: the page was
+                  // not listening yet. Clicked once more, if the element is still there and ready.
+                  console.log('  🔁 The click had no effect: clicking once more');
+                  await delay(RECLICK_DELAY_MS);
+                  const again = await findElementWithLocators(page, step.locators!, 'visible', DEFAULT_LOCATOR_TIMEOUT_MS);
+                  if (again.result) {
+                    const stillReady = await waitActionable(again.result.handle, DEFAULT_LOCATOR_TIMEOUT_MS);
+                    if (!stillReady) {
+                      await clickAtHandle(page, again.result.handle);
+                      clickedAgain = true;
+                    }
+                    await again.result.handle.dispose().catch(() => {});
+                  }
+                }
               }
             } else if (step.command === 'fill') {
               console.log(`  ⌨️ Filling with value: "${baseParams.value}"`);
@@ -324,7 +366,7 @@ export async function cmdReplaySequence(
 
         console.log(`  ✅ Step ${i + 1} completed successfully (via ${locatorUsed})`);
         const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt,
-          { locator: locatorUsed, tabId: currentTabId, ...(skippedClick ? { detail: alreadyDetail } : {}) });
+          { locator: locatorUsed, tabId: currentTabId, ...(skippedClick ? { detail: alreadyDetail } : clickedAgain ? { detail: 'clicked twice: the first click had no effect (the page was not listening yet)' } : {}) });
         results.push(stepResult);
         onProgress?.({ type: 'step_complete', stepResult });
       } else {
@@ -333,7 +375,8 @@ export async function cmdReplaySequence(
         const handler = COMMAND_DISPATCH[step.command];
         if (!handler) throw new Error(`Unsupported command in sequence: ${step.command}`);
 
-        const res = await handler(baseParams);
+        // Its element not there yet, or under a loading veil: tried again until it can take it.
+        const res = await untilReady(() => handler(baseParams), elementTimeoutMs ?? DEFAULT_LOCATOR_TIMEOUT_MS);
         if (res && res.tabId) currentTabId = res.tabId;
         // What a wait waited for never came: the steps after it would act on another page.
         const missed = missedWait(step.command, res);

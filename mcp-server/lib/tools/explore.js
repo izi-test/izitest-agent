@@ -13,7 +13,7 @@ const CHECK_PARAM = z.array(z.enum(['console', 'network', 'links', 'a11y'])).opt
 
 export function registerExploreTools(server, { sendCommand: dispatch }) {
   const sess = () => currentSession();
-  const sendCommand = (profile, command, params, ...rest) => dispatch(profile, command, sess().scope(params), ...rest);
+  const sendCommand = (profile, command, params, ...rest) => dispatch(profile ?? sess().profile, command, sess().scope(params), ...rest);
 
   // --- Tool: explore_app ---
   server.tool(

@@ -84,6 +84,17 @@ récent, IziTest fait confiance aux certificats du système. Sinon : `NODE_EXTRA
 certificat racine de l'entreprise, ou un Chrome for Testing décompressé à la main et
 `IZITEST_CHROME_PATH` ([installation](installation.md#5-replay-without-windows-optional)).
 
+### Un clic « réussi » qui ne fait rien, puis l'étape suivante échoue
+
+L'application affichait le bouton avant de savoir y répondre. Le rejeu attend maintenant qu'il soit
+cliquable (rien par-dessus, immobile, actif) et reclique une fois si le premier clic n'a rien changé.
+Si l'étape échoue encore avec « Not clicked: … covered by … », augmentez le délai d'attente du projet.
+
+### « Concurrent Sessions Exceeded »
+
+L'application limite le nombre de sessions ouvertes par compte, et vider les cookies ne ferme pas une
+session côté serveur. Terminez chaque test qui se connecte par une déconnexion.
+
 ### « Access Denied » sur la page de connexion au rejeu
 
 L'application refuse la page de connexion à qui a déjà une session. Dans le navigateur sans fenêtre,
@@ -174,6 +185,35 @@ cd mcp-server && node -e "require('./lib/db.js').initDatabase()"
 2. Utilisez `fix_test_step` pour mettre à jour l'étape problématique
 3. Ajoutez une étape `wait` avant l'étape qui échoue
 4. Utilisez `add_assertion` pour vérifier l'état avant de continuer
+
+### « Cannot find context with specified id » dans une vérification
+
+**Symptôme** : une vérification juste après un clic qui change de page échoue avec
+`Error: Protocol error (Runtime.evaluate): {"code":-32000,"message":"Cannot find context with specified id"}`.
+
+**Cause** : la connexion gardée pour l'onglet pointait encore vers la page d'avant. Depuis cette
+version, `execute_js` (qui sert aussi aux vérifications) se reconnecte à la page et relance la
+lecture, comme le font déjà les actions du rejeu. Reconstruisez l'extension
+(`npm --prefix extension run build`) et, sans fenêtre, redémarrez le Chrome headless.
+
+### Une étape sans locators échoue tout de suite (« Element not found », « is covered »)
+
+Une étape enregistrée avec seulement un sélecteur ou un texte, sans locators, attend maintenant
+comme les autres : jusqu'au délai du projet (10 s par défaut), tant que son élément n'est pas
+encore là ou qu'un voile de chargement le couvre. Si elle échoue encore après ce délai, son
+sélecteur ne correspond à rien sur la page : corrigez l'étape (`fix_test_step`, ou choisissez un
+élément du projet dans l'éditeur d'étape).
+
+### Un clic sur un lien de menu « réussit » mais la page ne change pas
+
+Sur une page qui finit de se dessiner, le premier clic peut être perdu alors que le DOM bouge
+encore. Pour un lien vers une autre page, le rejeu ne compte plus que l'ouverture de cette page
+comme effet du clic. Sans elle, il reclique une fois.
+
+Si l'étape passe quand même par « variable », le clic a été enregistré comme le choix d'un
+élément de liste (variable `list_item`). Ce chemin ne fait pas ces contrôles. Pour un menu, ce
+n'est pas une donnée du test : retirez la variable de l'étape pour qu'elle soit jouée par ses
+locators.
 
 ---
 

@@ -334,6 +334,32 @@ stables qui diffèrent restent deux éléments, et l'attribut `name` d'une case 
 groupe, ne compte pas. Les autres paramètres (état coché, valeur saisie…) doivent toujours correspondre.
 Une étape métier créée sans locators (avant `create_business_step`) demande toujours le sélecteur exact.
 
+Une attente d'un temps seul (« j'attends 4 secondes ») ne fait partie d'aucune étape métier : elle
+n'est pas gardée à la création, et elle est ignorée pour reconnaître une étape métier dans un test, entre
+ses sous-étapes comme à la fin. Un test qui attend 4 s après sa connexion se lit quand même avec
+l'étape métier de connexion.
+
+#### Jouer une étape métier : `play_business_step`
+
+Pendant un enregistrement, l'agent joue une étape métier du projet en un seul appel, au lieu de refaire
+ses clics : `play_business_step({ phrase: 'je me connecte au portail avec l\'identifiant "{{secret.PORTAL_USERNAME}}"
+et le mot de passe "{{secret.PORTAL_PASSWORD}}"' })`. Ses étapes sont jouées dans le navigateur avec leurs
+locators et le délai d'attente du projet, puis enregistrées liées à elle : le test se lit avec la phrase,
+sans dépendre de la reconnaissance. Chaque `{string}` prend sa valeur entre guillemets ; un secret s'écrit
+`{{secret.NOM}}`, et le test garde la référence. Si une étape échoue, rien n'est enregistré et la réponse
+dit laquelle. `start_recording` liste les étapes métier du projet.
+
+#### Dans le tableau de bord
+
+*Add step* propose deux choix :
+- **A business step** : une étape métier du projet, avec ses valeurs, insérée à l'étape voulue (à la fin
+  par défaut). Le test se lit avec sa phrase. `POST /api/tests/:name/steps/business` `{ phrase, step_order }` ;
+  la liste : `GET /api/projects/:id/business-steps`.
+- **An action** : pour un clic, une saisie, un choix dans une liste, un survol, un défilement ou une attente,
+  *Element of the project* liste les éléments du projet, page par page, avec une recherche. En choisir un
+  remplit le sélecteur, les locators et l'intention, que l'on peut encore modifier. Pour une attente, c'est
+  une attente de l'élément, pas d'un temps.
+
 ### Étapes métier proposées par l'IA
 
 Après la création d'un test par l'IA, l'agent réglé dans Settings propose ses étapes métier, en
@@ -512,6 +538,22 @@ Au rejeu, chaque étape attend que son élément (le bouton, le champ…) appara
 jusqu'au délai d'attente du projet : **10 s par défaut**. L'attente s'arrête dès que l'élément est
 là, donc un test qui passe ne prend pas plus de temps. Une étape qui ne trouve pas son élément
 échoue avec « not found within 10 s ».
+
+**Un clic attend que son élément puisse le recevoir**, comme chez Playwright : visible, actif (ni
+`disabled`, ni `aria-disabled`), immobile (la même position deux fois de suite) et au-dessus de tout
+(ce qui est au milieu de l'élément est l'élément, quelque chose dedans ou son label, pas un voile de
+chargement). Sinon l'étape échoue avec la raison : « Not clicked: the element stayed covered by
+<div.loading-bg> within 10 s ».
+
+**Un clic sans effet est refait une fois.** Après un clic, le rejeu observe la page une seconde : un
+changement de la page, une navigation ou une requête suffisent. Si rien de tout cela n'arrive, la
+page n'écoutait pas encore (une application qui affiche ses boutons avant d'y brancher leurs
+actions) : le rejeu reclique, si l'élément est toujours là et prêt. Le résultat de l'étape le dit
+(« clicked twice »).
+
+**Attendre un élément, pas un temps.** Une attente en ms enregistrée juste avant une étape qui
+attend elle-même (un clic, une saisie, l'attente d'un élément, une vérification) n'est pas gardée
+dans le test : `stop_recording` le dit. L'outil `wait` le rappelle à l'agent.
 
 On le règle par projet, de 1 à 120 s :
 - dans le tableau de bord : *Projects → Edit → Wait for an element* (vide : le défaut) ;

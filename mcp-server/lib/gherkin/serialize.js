@@ -86,45 +86,43 @@ export function scenarioPhrases(test, definitions, { singleStep = (step) => step
   return phrases;
 }
 
+/**
+ * A wait of a time only: no part of what a business step does. An agent recording a test waits
+ * "4000 ms" here and there; kept in a business step, or in the test, it made the same steps a
+ * different sequence, and the login a test does read as three phrases instead of the one the
+ * project has for it. Both sides are compared without them.
+ */
+export const isTimeWait = (step) => step?.command === 'wait' && !step.params?.selector;
+
 function tryMatchComposite(steps, startIndex, composites) {
+  // A business step starts on what it does, never on a wait.
+  if (isTimeWait(steps[startIndex])) return null;
   for (const def of composites) {
-    const tpls = def.steps_template;
-    if (startIndex + tpls.length > steps.length) continue;
-
-    // Try explicit link first: if the first step points at this composite definition
-    if (steps[startIndex].step_definition_id && steps[startIndex].step_definition_id === def.id) {
-      const args = extractCompositeArgs(steps, startIndex, tpls);
-      if (args) {
-        return {
-          id: def.id,
-          keyword: def.keyword,
-          phrase: renderPattern(def.pattern, args),
-          consumed: tpls.length,
-        };
-      }
-    }
-
-    // Implicit match: every sub-step command and params must match the template
-    const args = extractCompositeArgs(steps, startIndex, tpls);
-    if (!args) continue;
-
+    const tpls = def.steps_template.filter((tpl) => !isTimeWait(tpl));
+    if (!tpls.length) continue;
+    const matched = extractCompositeArgs(steps, startIndex, tpls);
+    if (!matched) continue;
     return {
       id: def.id,
       keyword: def.keyword,
-      phrase: renderPattern(def.pattern, args),
-      consumed: tpls.length,
+      phrase: renderPattern(def.pattern, matched.args),
+      consumed: matched.consumed,
     };
   }
   return null;
 }
 
+/** The args of `tpls` matched from `startIndex`, waits of a time only between them skipped; and how many steps that took. */
 function extractCompositeArgs(steps, startIndex, tpls) {
   const args = [];
+  let i = startIndex;
   for (let j = 0; j < tpls.length; j++) {
-    if (!matchSubStep(tpls[j], steps[startIndex + j], args)) return null;
+    if (j > 0) while (i < steps.length && isTimeWait(steps[i])) i++;
+    if (i >= steps.length || !matchSubStep(tpls[j], steps[i], args)) return null;
+    i++;
   }
   if (args.some(a => a === undefined)) return null;
-  return args;
+  return { args, consumed: i - startIndex };
 }
 
 /**

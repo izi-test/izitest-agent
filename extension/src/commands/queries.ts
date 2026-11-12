@@ -12,6 +12,7 @@ import type {
 import { getPage, isBrowserAttached } from '../puppeteer-client';
 import { isOwnedWindow, forgetOwnedWindow, getWindowOwner, listOwnedWindows, listPopupWindows, popupParent, popupsOf } from '../owned-windows';
 import { detachBrowser } from '../puppeteer-client';
+import { isStaleContextError } from './page-helpers';
 import { hideCursor } from '../cursor';
 
 const MAX_SNAPSHOT_ELEMENTS = 500;
@@ -308,6 +309,20 @@ export async function cmdWait({ ms, selector, tabId, sessionId }: WaitParams) {
 
 export async function cmdExecuteJs({ code, tabId, sessionId, frame }: ExecuteJsParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
+  // After a page changed (a click that navigates), the connection kept for the tab may still
+  // point at the page that was there: "Cannot find context with specified id", every time, as
+  // long as it is kept. Like the replay's actions, connect again and run it once more.
+  try {
+    return await executeJsOnce(resolvedTabId, code, frame);
+  } catch (err) {
+    if (!isStaleContextError(err)) throw err;
+    detachBrowser(resolvedTabId);
+    await delay(300);
+    return executeJsOnce(resolvedTabId, code, frame);
+  }
+}
+
+async function executeJsOnce(resolvedTabId: number, code: string, frame: ExecuteJsParams['frame']) {
   const page = await getPage(resolvedTabId);
   if (!frame) return page.evaluate(code);
 

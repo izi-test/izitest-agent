@@ -14,6 +14,7 @@ import { absolutePaths, readUploadFiles } from '../upload-files.js';
 import { captureActionFrame, LIVE_ACTIONS } from '../live.js';
 import { isHeadlessProfile, hasWindowedProfile } from '../websocket.js';
 import { recordedPassword } from '../secrets.js';
+import { TIME_WAIT_NOTE } from '../recorded-waits.js';
 
 // How text is typed into fields. Default is per-character key events (human-like, slow:
 // ~2 CDP round trips per character). IZITEST_TYPING=insert makes one-shot insertion
@@ -37,7 +38,9 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
   // through here too.
   const sendCommand = async (profile, command, params, ...rest) => {
     const session = sess();
+    // A browser named once is the session's: the calls after it that name none go there too.
     if (profile) session.profile = profile;
+    else profile = session.profile;
     // {{…}} in an action done now — a value kept, a date — as the session knows it; the step
     // recorded keeps it as written.
     const scoped = session.scope(LIVE_ACTIONS.has(command) || command === 'wait' ? session.live(params ?? {}) : params);
@@ -614,7 +617,12 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
   // --- Tool: wait ---
   server.tool(
     'wait',
-    'Wait for a specified time (ms) or until an element appears on the page (selector). One of the two is needed.',
+    [
+      'Wait until an element appears on the page (selector): what the page shows once it is ready — the list loaded, the next',
+      'page\'s heading. You rarely need it: every action already waits for its element (and a replay waits up to the project\'s',
+      'wait for an element), and a check reads the page again until it holds. A wait of a time (ms) is a last resort: it slows',
+      'every replay and is too short on a slow day; recorded before a step that waits by itself, it is not kept.',
+    ].join(' '),
     {
       profile: z.string().optional(),
       tabId: z.number().optional(),
@@ -628,7 +636,8 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       if (nothing) return { content: [{ type: 'text', text: nothing }], isError: true };
       const result = await sendCommand(profile, 'wait', { ms, selector, tabId });
       const actionId = saveActionToHistory('wait', { ms, selector, tabId }, null, null, intent);
-      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      const note = ms && !selector && getRecording() ? TIME_WAIT_NOTE : '';
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) + note }] };
     }
   );
 

@@ -48,7 +48,14 @@ export function buildBusinessStep(test, { from_step, to_step, pattern, args = []
     return { error: `The pattern has ${parameterCount} parameter(s) ({string}, {int}…) but ${args.length} arg(s) were given: one per parameter, in order` };
   }
 
-  const steps_template = steps.slice(from_step - 1, to_step).map(step => {
+  // A wait of a time only is no part of what the steps do (serialize.js isTimeWait): left out,
+  // each sub-step kept with the number of the test's step it comes from.
+  const numbers = [];
+  const steps_template = steps.slice(from_step - 1, to_step).flatMap((step, k) => {
+    if (step.command === 'wait' && !step.params?.selector) return [];
+    numbers.push(from_step + k);
+    return [step];
+  }).map(step => {
     // Assertions keep their data in `assertion`; parsing a composite puts it back there.
     const params = structuredClone(step.command === 'assert' ? (step.assertion || step.params || {}) : (step.params || {}));
     for (const key of RUNTIME_PARAMS) delete params[key];
@@ -80,7 +87,8 @@ export function buildBusinessStep(test, { from_step, to_step, pattern, args = []
     if (!Number.isInteger(step) || step < from_step || step > to_step) {
       return { error: `Arg ${i + 1}: step ${step} is not one of the grouped steps (${from_step}–${to_step})` };
     }
-    const tpl = steps_template[step - from_step];
+    const tpl = steps_template[numbers.indexOf(step)];
+    if (!tpl) return { error: `Arg ${i + 1}: step ${step} is a wait of a time only, which a business step leaves out` };
     const recorded = tpl.params[param];
     if (recorded == null) {
       return { error: `Arg ${i + 1}: step ${step} (${tpl.command}) has no "${param}" (it has: ${Object.keys(tpl.params).join(', ') || 'nothing'})` };
