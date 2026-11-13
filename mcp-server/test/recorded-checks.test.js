@@ -124,3 +124,30 @@ test('playing a dataset, a check of what its row shows is linked to its column',
   assert.deepEqual(linked, [{ step: 2, names: ['name'] }]);
   assert.deepEqual(variables, { name: { type: 'text', defaultValue: 'Ann' } }, 'the column it names is declared');
 });
+
+test('a suggestion picked after typing, then checked: a variable of its own, and the check follows it', async () => {
+  let field = '';
+  const sendCommand = async (_profile, command, params) => {
+    if (command === 'fill') field = params.value;
+    if (command === 'click') field = 'France';
+    // The suggestions are gone once one is picked: nothing to read at stop_recording.
+    if (command === 'detect_list_context') return null;
+    if (command === 'execute_js') return { result: { value: field, pageUrl: 'http://127.0.0.1:8777/izitest-test.html' } };
+    return { success: true, tabId: 5, windowId: 50, pageUrl: 'http://127.0.0.1:8777/izitest-test.html', text: 'France',
+      ...(command === 'click' ? { locators: [{ type: 'text', value: 'France' }] } : {}) };
+  };
+  const { call, close } = await agent(sendCommand, 'checks-suggestion');
+  await call('start_recording', { name: 'country' });
+  await call('navigate', { url: 'http://127.0.0.1:8777/izitest-test.html' });
+  await call('fill', { selector: '#country-input', value: 'Fr', intent: 'Type the beginning of the country' });
+  await call('click', { selector: '#country-list > div:nth-of-type(1)', text: 'France', intent: 'Pick France among the suggestions' });
+  assert.match(await call('add_assertion', { test_name: 'country', assertion_type: 'attribute_equals', selector: '#country-input', attribute: 'value', expected: 'France' }), /recorded as step 4/);
+  const stopped = await call('stop_recording');
+  await close();
+  assert.match(stopped, /\{\{country\}\} — type: text, default: "France"/);
+  assert.match(stopped, /The check of step 4 is linked to \{\{country\}\}/);
+  const saved = loadTest('country');
+  assert.deepEqual(saved.steps[2].params, { text: '{{country}}' });
+  assert.equal(saved.steps[3].assertion.expected, '{{country}}');
+  assert.deepEqual(Object.keys(saved.variables).sort(), ['country', 'country_input']);
+});

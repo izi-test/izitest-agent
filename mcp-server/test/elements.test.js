@@ -277,3 +277,16 @@ test('the agent writing Gherkin is told the elements of the app, page by page, b
   assert.match(none, /When I click on \{string\} — the 1st \{string\} is a CSS selector\n/);
   assert.doesNotMatch(none, /## The elements of the app|or the name of an element/, 'no element, no list');
 });
+
+test('the suggestions of a field are one element, whatever their variable is named in each test', () => {
+  const page = '127.0.0.1:8777/izitest-test.html';
+  const field = { field: 'css #country-input', fieldName: 'Start typing...' };
+  const mine = { command: 'click', page, params: { text: '{{country}}' }, locators: [{ type: 'text', value: '{{country}}' }], variable: { name: 'country', type: 'text', defaultValue: 'France', suggestionOf: 'country_input', ...field } };
+  const yours = { command: 'click', page, params: { text: '{{country_choice}}' }, locators: [{ type: 'aria', value: '{{country_choice}}' }], variable: { name: 'country_choice', type: 'text', defaultValue: 'France', suggestionOf: 'country', ...field } };
+  assert.equal(elementKey(mine), `${page} suggestion of css #country-input`);
+  assert.equal(elementKey(yours), elementKey(mine));
+  // Without a field known by something stable, no element rather than one per variable.
+  assert.equal(elementKey({ ...mine, variable: { ...mine.variable, field: undefined } }), null);
+  // A name that is a variable is nobody's name.
+  assert.equal(elementKey({ command: 'click', page, params: { text: '{{city}}' }, locators: [{ type: 'text', value: '{{city}}' }] }), null);
+});

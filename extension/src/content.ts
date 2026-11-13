@@ -223,6 +223,16 @@ import { drawCursor } from './dom/cursor';
         // Get text of the selected element itself
         const selectedText = el.textContent?.trim().substring(0, 200) || '';
 
+        // A list of choices — the suggestions of a search field, the options of a listbox —: a
+        // value the test picks, whatever it sits in (a search bar in the header's <nav>).
+        const choice = !!el.closest('[role="option"], [role="listbox"], [role="combobox"], [role="grid"], datalist, .ui-autocomplete, [class*="autocomplete" i], [class*="suggest" i], [class*="typeahead" i]');
+        // A menu, a tab bar, a side menu: where the test goes, not a value it varies (the
+        // server does not make it a variable). What says so, or null.
+        const navEl = choice ? null : el.closest('[role="tab"], [role="tablist"], [role="menuitem"], [role="menu"], [role="menubar"], nav, [role="navigation"], [data-testid*="menu" i], [data-testid*="nav" i]');
+        const navigation = navEl
+          ? `${navEl.tagName.toLowerCase()}${navEl.getAttribute('role') ? `[role=${navEl.getAttribute('role')}]` : ''}${navEl.getAttribute('data-testid') ? `[data-testid=${navEl.getAttribute('data-testid')}]` : ''}`
+          : null;
+
         sendResponse({
           success: true,
           result: {
@@ -233,6 +243,8 @@ import { drawCursor } from './dom/cursor';
             selectedIndex: listInfo.elementIndex ?? 0,
             selectedText,
             itemTexts, // for LLM context
+            navigation,
+            choice,
           }
         });
       } catch (error) {

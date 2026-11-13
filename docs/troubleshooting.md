@@ -95,7 +95,10 @@ Si l'étape échoue encore avec « Not clicked: … covered by … », augmentez
 ### « Concurrent Sessions Exceeded »
 
 L'application limite le nombre de sessions ouvertes par compte, et vider les cookies ne ferme pas une
-session côté serveur. Terminez chaque test qui se connecte par une déconnexion.
+session côté serveur. Terminez chaque test qui se connecte par une déconnexion : une étape métier
+(« je me déconnecte de … ») ou des étapes dont l'intention le dit (« Se déconnecter », « Log out »).
+Quand le test échoue avant elle, le rejeu la joue quand même, dans l'onglet du test, après le
+diagnostic : le rapport montre ces étapes jouées après l'échec, et le verdict reste l'échec.
 
 ### « Access Denied » sur la page de connexion au rejeu
 
@@ -215,7 +218,8 @@ comme effet du clic. Sans elle, il reclique une fois.
 Si l'étape passe quand même par « variable », le clic a été enregistré comme le choix d'un
 élément de liste (variable `list_item`). Ce chemin ne fait pas ces contrôles. Pour un menu, ce
 n'est pas une donnée du test : retirez la variable de l'étape pour qu'elle soit jouée par ses
-locators.
+locators. Les enregistrements faits depuis cette version ne font plus de variable d'un clic dans
+un menu, une barre d'onglets ou un menu latéral : seuls les tests plus anciens en ont.
 
 ### Une vérification de fin de test échoue alors qu'elle passait à l'enregistrement
 

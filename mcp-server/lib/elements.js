@@ -60,6 +60,9 @@ const scopeOf = ({ testid, css } = {}) => (testid ? `testid ${quoted(testid)}` :
  */
 function targetOf(step) {
   if (!TARGET_COMMANDS.has(step.command) || step.variable?.listContext) return null;
+  // A suggestion picked after typing (variable-detection.js): one element for the suggestions of
+  // a field, in every test, whatever its variable is named there. Its text is a value of the test.
+  if (step.variable?.suggestionOf) return step.variable.field ? `suggestion of ${step.variable.field}` : null;
   if (step.command === 'assert' && !(ELEMENT_ASSERTIONS.has(dataOf(step).type) && dataOf(step).selector)) return null;
   const selector = dataOf(step).selector;
   if (typeof selector === 'string' && /\{\{|\{\d+\}/.test(selector)) return null;
@@ -73,7 +76,8 @@ function targetOf(step) {
   }
   const testid = locators.find((l) => l.type === 'testid' && l.value)?.value;
   if (testid) return `testid ${quoted(testid)}`;
-  const name = locators.find((l) => NAME_LOCATORS.includes(l.type) && l.value)?.value;
+  // A name that is a variable ({{country}}) is no element's: another test names it otherwise.
+  const name = locators.find((l) => NAME_LOCATORS.includes(l.type) && l.value && !/\{\{/.test(l.value))?.value;
   if (name) return `${FIELD_COMMANDS.has(step.command) ? 'field' : lastTag(selector) ?? 'element'} ${quoted(name)}`;
   if (typeof selector === 'string' && selector && !isFragileSelector(selector) && !isPositionalSelector(selector)) return `css ${selector}`;
   return null;
@@ -91,6 +95,7 @@ export function elementKey(step) {
 
 /** What a person reads on the element: its name, its label, its placeholder, its test ID. */
 export function baseName(step) {
+  if (step.variable?.suggestionOf && step.variable.field) return `Suggestion of "${step.variable.fieldName ?? step.variable.field}"`.slice(0, 60);
   const locators = step.locators ?? [];
   const named = locators.find((l) => l.type === 'role' && l.name)?.name
     ?? locators.find((l) => NAME_LOCATORS.includes(l.type) && l.value)?.value

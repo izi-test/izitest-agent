@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyHeuristically } from '../lib/classify.js';
-import { deriveVarNameFromLocators, itemLabel, listVariable, uniqueVarName, variabilizeInput } from '../lib/variable-detection.js';
+import { deriveVarNameFromLocators, itemLabel, listVariable, uniqueVarName, variabilizeInput, isNavigation, typedJustBefore, variabilizeSuggestion } from '../lib/variable-detection.js';
 import { selectParams } from '../lib/recording.js';
 
 const SIGN_IN = { type: 'box', totalItems: 4, selectedIndex: 0, selectedText: 'Sign in', itemTexts: ['Sign in', 'Clear', 'Send message', 'Clear'], itemXpath: "div/form/div/button[contains(@class,'btn')]" };
@@ -104,4 +104,64 @@ test('a select is kept by the value of its option, what the form sends', () => {
 test('names stay unique within a test', () => {
   const used = new Set();
   assert.deepEqual(['email', 'email', 'email'].map((n) => uniqueVarName(n, used)), ['email', 'email_2', 'email_3']);
+});
+
+test('a click in a menu, a tab bar or a side menu is navigation, not a variable', () => {
+  // The dashboard's tabs: "Runs7" carries a count that changes at the next run.
+  const TABS = { type: 'list', totalItems: 6, selectedIndex: 4, selectedText: 'Runs7', itemTexts: ['Steps21', 'Gherkin', 'Code', 'Data6', 'Runs7'], itemXpath: 'button', navigation: 'div[role=tablist]' };
+  assert.equal(isNavigation(TABS), true, 'the page says so');
+  // the portal's side menu, recorded before the page said so: the classifier calls it a menu.
+  const SIDE_MENU = { type: 'list', totalItems: 5, selectedText: 'USER MANAGEMENT', itemTexts: ['Home', 'USER MANAGEMENT', 'MANAGE ENDPOINTS'] };
+  assert.equal(isNavigation(SIDE_MENU, { isList: true, variableName: 'menu_item', selectionMode: 'by_text' }), true);
+  // A choice among items of the app's data stays one.
+  assert.equal(isNavigation(JARDIN, { isList: true, variableName: 'category', selectionMode: 'by_text' }), false);
+  assert.equal(isNavigation(null), false);
+});
+
+test('the suggestions of a search field stay a choice: in the header\'s <nav>, or called a dropdown menu', () => {
+  // A search bar in the header: its suggestions sit in the <nav>, and the page says they are options.
+  const IN_HEADER = { type: 'list', totalItems: 5, selectedText: 'Marseille (13)', itemTexts: ['Marseille (13)', 'Marseillan (34)'], choice: true, navigation: null };
+  assert.equal(isNavigation(IN_HEADER, { isList: true, variableName: 'menu_item' }), false);
+  // Suggestions drawn as plain <div>s, which the classifier calls a dropdown menu: they came right after typing.
+  const steps = [{ command: 'fill', params: { selector: '#city', value: 'Mars' } }, { command: 'wait', params: { selector: '.suggestions' } }, { command: 'click', params: { text: 'Marseille' } }];
+  assert.equal(typedJustBefore(steps, 2), true, 'a wait for them in between');
+  assert.equal(isNavigation({ type: 'list', navigation: null }, { isList: true, variableName: 'menu_item' }, { afterTyping: typedJustBefore(steps, 2) }), false);
+  // Nothing typed just before: a click after a click, or after Enter.
+  assert.equal(typedJustBefore([{ command: 'click', params: {} }, { command: 'click', params: {} }], 1), false);
+  assert.equal(typedJustBefore([{ command: 'keyboard', params: { key: 'Enter' } }, { command: 'click', params: {} }], 1), false, 'Enter sends, it does not type');
+});
+
+// The Test Arena's country field: "Fr" typed, "France" picked among its suggestions.
+const typedFr = () => ({ command: 'fill', params: { selector: '#country-input', value: '{{country_input}}' }, variable: { name: 'country_input', type: 'text', defaultValue: 'Fr' } });
+const pickFrance = () => ({ command: 'click', params: { selector: '#country-list > div:nth-of-type(1)' }, locators: [
+  { type: 'aria', value: 'France' }, { type: 'text', value: 'France' },
+  { type: 'css', value: '#country-list > div:nth-of-type(1)' }, { type: 'xpath', value: '(//*[@id="country-list"]//div)[1]' },
+] });
+
+test('a suggestion picked after typing is a variable of its own, clicked by its text', () => {
+  const steps = [typedFr(), { ...pickFrance(), intent: 'Pick France among the suggestions' }];
+  const used = new Set(['country_input']);
+  assert.equal(variabilizeSuggestion(steps, 1, used), true);
+  assert.deepEqual(steps[1].variable, { name: 'country', type: 'text', defaultValue: 'France', suggestionOf: 'country_input', field: 'css #country-input', fieldName: '#country-input' },
+    'its field, by which its element is known in every test');
+  assert.deepEqual(steps[1].params, { text: '{{country}}' });
+  assert.deepEqual(steps[1].locators, [{ type: 'aria', value: '{{country}}' }, { type: 'text', value: '{{country}}' }],
+    'not the first suggestion by place: on "Ital" it was Italy, picked silently');
+  assert.equal(steps[1].intent, 'Pick {{country}} among the suggestions', 'a run picking Italy reads so');
+});
+
+test('with a wait for the suggestions in between; named after a field with no suffix; words matched by their start', () => {
+  const city = { command: 'fill', params: { selector: '#city', value: '{{city}}' }, variable: { name: 'city', type: 'text', defaultValue: 'saint eti' } };
+  const steps = [city, { command: 'wait', params: { selector: '.suggestions li' } }, { command: 'click', params: { text: 'Saint-Étienne (42)' } }];
+  assert.equal(variabilizeSuggestion(steps, 2, new Set(['city'])), true);
+  assert.equal(steps[2].variable.name, 'city_choice');
+  assert.equal(steps[2].variable.defaultValue, 'Saint-Étienne (42)');
+});
+
+test('a button clicked after typing is no suggestion; nor a click after a click', () => {
+  const name = { command: 'fill', params: { selector: '#name', value: '{{name}}' }, variable: { name: 'name', type: 'text', defaultValue: 'Bob' } };
+  const save = { command: 'click', params: { selector: '#save' }, locators: [{ type: 'text', value: 'Save' }] };
+  assert.equal(variabilizeSuggestion([name, save], 1, new Set()), false);
+  assert.equal(save.variable, undefined);
+  assert.equal(variabilizeSuggestion([pickFrance(), pickFrance()], 1, new Set()), false);
 });

@@ -434,6 +434,27 @@ relais :
   final : `Jardin (44)` devient `Jardin`, qui retrouve `Jardin (62)` ailleurs ;
 - un même bouton ou lien répété (« Add to cart » sur chaque produit) est choisi par position.
 
+Un clic dans un **menu, une barre d'onglets ou un menu latéral** n'est jamais une variable : c'est
+l'endroit où va le test, pas une valeur qu'il fait varier. La page le dit (élément dans un `nav`, un
+`role="tab"`, `tablist`, `menu`, `menubar`, `menuitem`, ou un `data-testid` qui contient « menu » ou
+« nav »), sinon le LLM (qui le classe `menu_item`). Variable, un onglet était rejoué par son libellé,
+« Runs7 » avec son compteur, qui change à la prochaine exécution ; c'est maintenant un clic avec ses
+locators. Une liste de choix n'est jamais prise pour un menu : des options (`role="option"`,
+`listbox`, classes « autocomplete » ou « suggest »), ou une liste cliquée juste après une saisie, même
+dans le `nav` de l'en-tête.
+
+**Une suggestion choisie après une saisie** devient une variable à elle : « Fr » tapé dans le champ
+pays (`{{country_input}}`), « France » choisi parmi ses suggestions (`{{country}}`). Le clic va à la
+suggestion de ce texte : ses locators par position (« la première suggestion ») sont retirés, qui en
+choisissaient une autre, en silence, sur une autre valeur. Une vérification de ce qui a été choisi
+(« France » dans le champ) se relie à `{{country}}`. Pour rejouer avec l'Italie, changez les deux :
+`run_test(…, { variables: { "country_input": "Ital", "country": "Italy" } })`, ou deux colonnes d'un
+jeu de données. Une suggestion qui n'est pas proposée pour ce qui est tapé fait échouer l'étape, qui
+le dit (« Spain » introuvable après « S »). C'est une suggestion quand chaque mot tapé commence un
+mot de l'élément cliqué (« saint eti » → « Saint-Étienne ») : un bouton « Save » cliqué après avoir
+tapé un nom n'en est pas une. La liste étant fermée quand l'enregistrement s'arrête, c'est la seule
+façon de la retrouver.
+
 #### Déclarer une variable : `add_test_variable`
 
 La détection ne couvre que ce qui est saisi (`fill`) ou choisi dans une liste : une ville ou un budget

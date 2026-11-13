@@ -15,6 +15,7 @@ import { readFootprint, saveFootprint, failuresOnLastPass } from './footprint.js
 import { recordRunBug, fixRunBugs, stepsHash } from './bugs.js';
 import { elementTimeoutFor, cleanStartFor } from './projects.js';
 import { mkdir, writeFile } from 'fs/promises';
+import { logoutToPlay } from './closing-logout.js';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -889,9 +890,18 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     }
   }
 
+  // The logout the test ends with, played even so: the session it opened stays open on the app's
+  // side otherwise (lib/closing-logout.js). After the diagnosis, which reads the page it failed on.
+  let loggedOut = null;
+  if (finalStatus === 'failed' && !isDebugMode) {
+    const ranUpTo = failedStepOrder ?? stepResults.findLast((sr) => sr.status === 'success')?.step ?? 0;
+    loggedOut = await playClosingLogout({ steps: hydratedSteps, ranUpTo, sendCommand, tabId: lastTabId, executionId, server, elementTimeoutMs });
+  }
+
   if (finalStatus === 'failed') {
     const error = new Error(globalError || 'Test execution failed');
     error.executionId = executionId;
+    if (loggedOut) error.closingLogout = loggedOut;
     if (triage) error.triage = triage;
     if (bug) error.bug = { id: bug.bug.id, title: bug.bug.title, kind: bug.bug.kind, status: bug.bug.status, occurrences: bug.bug.occurrences, isNew: bug.isNew, reopened: bug.reopened };
     error.status = finalStatus;
@@ -924,6 +934,38 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   }
 
   return redact({ ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables, ...(bugsFixed?.fixed.length || bugsFixed?.changed.length ? { bugs: bugsFixed } : {}) });
+}
+
+/** A business step's phrase, by its id: whether it logs out (lib/closing-logout.js). */
+const patternOfDefinition = (id) => db.prepare('SELECT pattern FROM step_definitions WHERE id = ?').get(id)?.pattern ?? null;
+
+/**
+ * Play, in the tab a failed run ended in, the logout its test ends with (those of its steps
+ * after `ranUpTo`). Its steps' results are kept with the run; the verdict stays the run's.
+ * `{ steps, loggedOut }`, or null when the test does not end with one or it was played.
+ */
+async function playClosingLogout({ steps, ranUpTo, sendCommand, tabId, executionId, server, elementTimeoutMs }) {
+  const block = logoutToPlay(steps, ranUpTo, patternOfDefinition);
+  if (!block.length || !tabId) return null;
+  const sequence = block.map((i) => ({ ...steps[i], _originalStepNumber: i + 1 }));
+  let played;
+  try {
+    const live = sequence.map((step) => { try { return server.rehydrate(step); } catch { return step; } });
+    played = await sendCommand(undefined, 'replay_sequence', {
+      steps: live, startIndex: 0, newWindow: false, tabId, ...(elementTimeoutMs ? { elementTimeoutMs } : {}),
+    }, 60000);
+  } catch (err) {
+    played = { results: err.results || [] };
+    log(`Execution #${executionId}: its closing logout could not be played: ${err.message}`);
+  }
+  const results = (played?.results ?? []).map((result) => ({ ...result, step: sequence[(result.step || 1) - 1]?._originalStepNumber ?? result.step }));
+  for (const result of results) {
+    try { persistStepResult(executionId, result); } catch (err) { log(`Failed to persist step ${result.step}: ${err.message}`); }
+  }
+  const numbers = sequence.map((step) => step._originalStepNumber);
+  const done = results.length === sequence.length && results.every((result) => result.status === 'success');
+  log(`Execution #${executionId}: closing logout played after the failure (step${numbers.length > 1 ? 's' : ''} ${numbers.join(', ')}): ${done ? 'logged out' : 'not completed'}`);
+  return { steps: numbers, loggedOut: done };
 }
 
 /** Assertions on what the page does wrong on its own, not on an element's text or state. */

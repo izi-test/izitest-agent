@@ -13,7 +13,7 @@ import {
 } from '../tests.js';
 import { ORACLE_ASSERTIONS } from '../test-execute.js';
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
-import { uniqueVarName, listVariable, variabilizeInput } from '../variable-detection.js';
+import { uniqueVarName, listVariable, variabilizeInput, isNavigation, typedJustBefore, variabilizeSuggestion } from '../variable-detection.js';
 import { linkAssertionToVariables } from '../test-variable.js';
 import { formatTriage } from '../triage.js';
 import { getRequirement, linkRecorded, nonConformityOf } from '../requirements.js';
@@ -307,6 +307,11 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
         // Auto-detect CLICK on list/box items (with deduplication)
         if (step.command === 'click' && !step._skipVariable) {
+          // A suggestion picked right after typing: a variable of its own, found without its list (gone by now).
+          if (variabilizeSuggestion(recording.steps, i, usedVarNames)) {
+            log(`Auto-variabilized click step ${i + 1}: {{${step.variable.name}}} picked among the suggestions of {{${step.variable.suggestionOf ?? '?'}}}`);
+            continue;
+          }
           const cssLocator = (step.locators || []).find(l => l.type === 'css');
           const selector = step.params.selector || (cssLocator && cssLocator.value);
           const clickText = step.params.text;
@@ -314,9 +319,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
           if (selector || clickText) {
             try {
               const listContext = await detectListContext(sendCommand, { selector, text: clickText, tabId: step.params.tabId });
-              if (listContext) {
+              if (listContext && !isNavigation(listContext, null, { afterTyping: typedJustBefore(recording.steps, i) })) {
                 const llmResult = await classifyWithLLM(listContext, step.intent);
-                if (llmResult.isList) {
+                if (llmResult.isList && !isNavigation(listContext, llmResult, { afterTyping: typedJustBefore(recording.steps, i) })) {
                   const varName = uniqueVarName(step._variableNameOverride || llmResult.variableName, usedVarNames);
                   step.variable = listVariable(varName, listContext, llmResult);
                   log(`Auto-variabilized click step ${i + 1}: {{${varName}}} in ${listContext.type}`);

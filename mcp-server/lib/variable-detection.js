@@ -2,6 +2,8 @@
 // recorder (tools/test.js) and the dashboard agent (agent-executor.js), which each had
 // their own copy.
 
+import { isFragileSelector, isPositionalSelector } from './codegen/locators.js';
+
 function slug(text) {
   return String(text)
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')            // displayName → display Name
@@ -133,4 +135,99 @@ export function listVariable(name, listContext, { selectionMode }) {
       selectionMode,
     },
   };
+}
+
+/**
+ * Whether a click found in a list is navigation — a menu, a tab bar, a side menu —: where the
+ * test goes, not a value it varies, so not a variable. Made one, a tab was replayed by its label
+ * ("Runs7", a count in it, changed at the next run) or by its position, without the checks of
+ * a click. The page says so (`listContext.navigation`), else the classifier did (`menu_item`).
+ *
+ * Never a list of choices: the page says it is one (`listContext.choice`: options, the
+ * suggestions of a field), or it came right after the test typed (`afterTyping`) — a search
+ * field's suggestions, which the classifier may call a dropdown menu, and which may sit in the
+ * header's <nav>. Which suggestion is picked is a value of the test.
+ */
+export function isNavigation(listContext, classified = null, { afterTyping = false } = {}) {
+  if (listContext?.choice || afterTyping) return false;
+  return !!listContext?.navigation || classified?.variableName === 'menu_item';
+}
+
+/**
+ * Whether the action before step `i` of a recording typed in a field — a wait for its
+ * suggestions in between does not count —: what the click picks may be one of them.
+ */
+export function typedJustBefore(steps, i) {
+  let j = i - 1;
+  while (j >= 0 && steps[j].command === 'wait') j--;
+  const before = steps[j];
+  return !!before && (before.command === 'fill' || (before.command === 'keyboard' && /^.$/u.test(before.params?.key ?? '')));
+}
+
+// What a field's variable name ends with when it holds what is typed to search for the value
+// picked: country_input → country.
+const TYPED_SUFFIX = /_(?:input|search|query|field|text|box|typed)$/;
+
+/** Accents and case dropped, words apart: what a typed text and a suggestion are compared by. */
+const words = (text) => String(text ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+/**
+ * A suggestion picked right after typing — "Fr" typed, "France" clicked —: a variable of its own
+ * ({{country}}, next to the typed {{country_input}}), the click going to the suggestion of that
+ * text. Found at stop_recording, the list was gone (it closes once a suggestion is picked): the
+ * click stayed a click on "France", or on the first suggestion, whatever was typed on a replay.
+ * Only when a word of the clicked text starts with what was typed: "Save" clicked after typing
+ * a name is not a suggestion. Only the locators by its text are kept: one by its place, or by a
+ * class all the suggestions share, picked another suggestion on another value, silently. True
+ * when the step was made one.
+ */
+export function variabilizeSuggestion(steps, i, usedNames) {
+  const step = steps[i];
+  if (step.command !== 'click' || step.variable || step._skipVariable || !typedJustBefore(steps, i)) return false;
+  let j = i - 1;
+  while (j >= 0 && steps[j].command === 'wait') j--;
+  const typedStep = steps[j];
+  const typed = typedStep.variable?.defaultValue ?? typedStep.params?.value ?? '';
+  const label = String(step.params?.text ?? (step.locators ?? []).find((l) => l.type === 'text' || l.type === 'aria')?.value ?? '').replace(/\s+/g, ' ').trim();
+  const typedWords = words(typed);
+  if (!label || typedWords.join(' ').length < 2 || label.length > 80) return false;
+  const labelWords = words(label);
+  // Each typed word starts a word of the suggestion, in order: "saint eti" → "Saint-Étienne".
+  let at = 0;
+  for (const w of typedWords) {
+    const found = labelWords.findIndex((lw, k) => k >= at && lw.startsWith(w));
+    if (found < 0) return false;
+    at = found + 1;
+  }
+  const field = typedStep.variable?.name ?? null;
+  const base = field ? (TYPED_SUFFIX.test(field) ? field.replace(TYPED_SUFFIX, '') : `${field}_choice`) : 'suggestion';
+  const name = uniqueVarName(step._variableNameOverride || base, usedNames);
+  const placeholder = `{{${name}}}`;
+  step.params = { ...Object.fromEntries(Object.entries(step.params ?? {}).filter(([key]) => key !== 'selector')), text: placeholder };
+  const byText = (step.locators ?? [])
+    .filter((l) => String(l.value ?? '').replace(/\s+/g, ' ').trim() === label)
+    .map((l) => ({ ...l, value: placeholder }));
+  step.locators = byText.length ? byText : [{ type: 'text', value: placeholder }];
+  // "Pick France among the suggestions" read so on a run that picked Italy.
+  if (step.intent) step.intent = step.intent.split(label).join(placeholder);
+  step.variable = { name, type: 'text', defaultValue: label, ...(field ? { suggestionOf: field } : {}), ...suggestionsOfField(typedStep) };
+  return true;
+}
+
+/**
+ * The field whose suggestions these are, as the element of the project they make (elements.js):
+ * `{ field, fieldName }` — its test ID or its stable selector, and what a person reads on it.
+ * One element for the suggestions of a field, in every test that types in it, whatever its
+ * variable is named there ({{country}} in one, {{country_choice}} in another). Empty when the
+ * field has nothing stable to be known by.
+ */
+export function suggestionsOfField(typedStep) {
+  const locators = typedStep?.locators ?? [];
+  const testid = locators.find((l) => l.type === 'testid' && l.value)?.value;
+  const selector = typedStep?.params?.selector;
+  const field = testid ? `testid ${JSON.stringify(testid)}`
+    : typeof selector === 'string' && selector && !/\{\{/.test(selector) && !isFragileSelector(selector) && !isPositionalSelector(selector) ? `css ${selector}` : null;
+  if (!field) return {};
+  const fieldName = ['label', 'aria', 'placeholder'].map((type) => locators.find((l) => l.type === type && l.value)?.value).find(Boolean) ?? selector ?? testid;
+  return { field, fieldName: String(fieldName).replace(/\s+/g, ' ').trim().slice(0, 40) };
 }
