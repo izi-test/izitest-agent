@@ -1,12 +1,19 @@
 import { useState } from 'react';
 import { Stethoscope, Wrench, Check, X, RefreshCw, AlertTriangle, Loader2 } from 'lucide-react';
 import { useRepairActionMutation } from '../store/services/executionsApi';
+import { testsApi } from '../store/services/testsApi';
+import { projectsApi } from '../store/services/projectsApi';
+import { useAppDispatch } from '../store/hooks';
+import { showToast } from '../store/slices/uiSlice';
 import { Button } from './Button';
+import { SharedUses } from './SharedUses';
+import { usesCount } from '../uses';
 import type { Repair, Triage } from '../types';
 import { CAUSE_LABELS } from '../triage-labels';
 
 // Why a run failed, worked out on the page it failed on, and the repairs proposed for it:
 // verified by replaying the test with them, saved into the test only when the user applies one.
+// A repair that finds an element another way is offered to the other steps acting on it.
 
 const REPAIR_STATUS: Record<Repair['status'], string> = {
   proposed: 'Proposed',
@@ -57,17 +64,28 @@ export function TriagePanel({ triage, repairs, onChanged, onApplied }: TriagePan
 }
 
 function RepairCard({ repair, onChanged, onApplied }: { repair: Repair; onChanged: () => void; onApplied?: () => void }) {
+  const dispatch = useAppDispatch();
   const [runAction, { isLoading }] = useRepairActionMutation();
   const [pending, setPending] = useState<'verify' | 'apply' | 'reject' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // The same element, found another way: fixed in every step acting on it unless unchecked.
+  const [allUses, setAllUses] = useState(true);
 
-  const act = async (action: 'verify' | 'apply' | 'reject') => {
+  const act = async (action: 'verify' | 'apply' | 'reject', everyUse = false) => {
     setPending(action);
     setMessage(null);
     try {
-      const result = await runAction({ id: repair.id, action }).unwrap();
+      const result = await runAction({ id: repair.id, action, allUses: everyUse }).unwrap();
       if (action === 'verify' && !result.passed) setMessage('The test still fails with this repair.');
-      if (action === 'apply') onApplied?.();
+      if (action === 'apply') {
+        const relocated = result.relocated ?? [];
+        if (relocated.length) {
+          dispatch(showToast({ message: `Repair applied, and to ${usesCount(relocated)} acting on the same element` }));
+          dispatch(testsApi.util.invalidateTags([...new Set(relocated.map((r) => r.test))].map((test) => ({ type: 'Test' as const, id: test }))));
+        }
+        dispatch(projectsApi.util.invalidateTags(['Elements']));
+        onApplied?.();
+      }
     } catch (err) {
       setMessage((err as { data?: { error?: string } })?.data?.error ?? 'The request failed');
     } finally {
@@ -96,6 +114,22 @@ function RepairCard({ repair, onChanged, onApplied }: { repair: Repair; onChange
         </ul>
       )}
       {repair.verify_error && repair.status === 'failed' && <div className="repair-error">{repair.verify_error.split('\n')[0]}</div>}
+      {repair.shared && repair.status !== 'applied' && repair.status !== 'failed' && (
+        <SharedUses
+          shared={repair.shared}
+          check={{ label: 'Apply the repair to them too', checked: allUses, onChange: setAllUses, disabled: isLoading }}
+        />
+      )}
+      {repair.shared && repair.status === 'applied' && (
+        <SharedUses shared={repair.shared}>
+          <div className="repair-actions">
+            <span className="shared-uses__note">They still find it the old way.</span>
+            <Button size="sm" variant="action" icon={pending === 'apply' ? Loader2 : Check} disabled={isLoading} onClick={() => act('apply', true)}>
+              Apply the repair to them too
+            </Button>
+          </div>
+        </SharedUses>
+      )}
       {message && <div className="repair-error">{message}</div>}
       {OPEN.has(repair.status) && (
         <div className="repair-actions">
@@ -103,7 +137,9 @@ function RepairCard({ repair, onChanged, onApplied }: { repair: Repair; onChange
             {pending === 'verify' ? 'Replaying…' : 'Verify'}
           </Button>
           {repair.status !== 'failed' && (
-            <Button size="sm" variant="save" icon={Check} disabled={isLoading} onClick={() => act('apply')}>Apply</Button>
+            <Button size="sm" variant="save" icon={Check} disabled={isLoading} onClick={() => act('apply', !!repair.shared && allUses)}>
+              {repair.shared && allUses ? `Apply to ${repair.shared.uses.length + 1} steps` : 'Apply'}
+            </Button>
           )}
           <Button size="sm" variant="cancel" icon={X} disabled={isLoading} onClick={() => act('reject')}>Reject</Button>
         </div>

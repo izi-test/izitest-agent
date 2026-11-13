@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Execution, ExecutionStep, Repair } from '../../types';
+import type { Execution, ExecutionStep, Repair, StepRef } from '../../types';
 
 interface ExecutionsResponse {
   executions: Execution[];
@@ -29,8 +29,16 @@ export const executionsApi = createApi({
     }),
 
     // Verify (replays the test with it, unsaved), apply or reject a repair the triage proposed.
-    repairAction: builder.mutation<{ repair: Repair; passed?: boolean; error?: string | null }, { id: number; action: 'verify' | 'apply' | 'reject' }>({
-      query: ({ id, action }) => ({ url: `api/repairs/${id}/${action}`, method: 'POST' }),
+    // Applied with `allUses`, the other steps acting on its element are given the new locators too.
+    repairAction: builder.mutation<
+      { repair: Repair; passed?: boolean; error?: string | null; relocated?: StepRef[] },
+      { id: number; action: 'verify' | 'apply' | 'reject'; allUses?: boolean }
+    >({
+      query: ({ id, action, allUses }) => ({
+        url: `api/repairs/${id}/${action}`,
+        method: 'POST',
+        ...(action === 'apply' && { body: { all_uses: !!allUses } }),
+      }),
       invalidatesTags: ['ExecutionList', 'ExecutionDetail'],
     }),
   }),

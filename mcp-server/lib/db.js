@@ -443,6 +443,40 @@ export function initDatabase() {
     log(`Migration warning (elements): ${err.message}`);
   }
 
+  // Every key and mark an element is known by (lib/element-store.js): the same field recorded
+  // by its label in one test and by its selector in another is one element. `renamed`: its
+  // name is the user's, kept when it is merged with another.
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS element_keys (
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        element_id INTEGER NOT NULL REFERENCES elements(id) ON DELETE CASCADE,
+        PRIMARY KEY (project_id, key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_element_keys_element ON element_keys(element_id);
+      INSERT OR IGNORE INTO element_keys (project_id, key, element_id) SELECT project_id, key, id FROM elements;
+    `);
+    const elementCols = db.prepare('PRAGMA table_info(elements)').all().map(c => c.name);
+    if (!elementCols.includes('renamed')) {
+      db.exec('ALTER TABLE elements ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0');
+      // Named before this was kept: a name that is not what its key reads was the user's.
+      const generated = (row) => {
+        const target = row.key.slice(row.page.length + 1);
+        const quoted = /^\S+ ("(?:[^"\\]|\\.)*")/.exec(target)?.[1];
+        let base = target.startsWith('css ') ? target.slice(4) : null;
+        try { base ??= quoted ? JSON.parse(quoted) : target; } catch { base = target; }
+        // As elements.js's baseName made it: spaces folded, 60 characters at most.
+        base = String(base).replace(/\s+/g, ' ').trim().slice(0, 60);
+        return row.name === base || row.name.startsWith(`${base} (`) || row.name.startsWith('Suggestion of "');
+      };
+      const mark = db.prepare('UPDATE elements SET renamed = 1 WHERE id = ?');
+      for (const row of db.prepare('SELECT id, key, name, page FROM elements').all()) if (!generated(row)) mark.run(row.id);
+    }
+  } catch (err) {
+    log(`Migration warning (element keys): ${err.message}`);
+  }
+
   // The language a project's tests are written in (lib/gherkin/language.js), and that of each
   // built-in phrase: the ones seeded so far are English.
   try {

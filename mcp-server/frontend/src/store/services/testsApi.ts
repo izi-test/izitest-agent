@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { BusinessProposals, Test, TestCampaign } from '../../types';
+import type { BusinessProposals, StepRef, Test, TestCampaign } from '../../types';
 
 interface TestsResponse {
   tests: Test[];
@@ -18,6 +18,8 @@ interface StepBody {
   assertion?: unknown | null;
   /** Where a new step goes (1-indexed); the steps from there move down. Default: at the end. */
   step_order?: number;
+  /** Edited: the other steps acting on its element are given its new locators too. */
+  apply_to_uses?: boolean;
 }
 
 interface ReorderEntry {
@@ -81,13 +83,17 @@ export const testsApi = createApi({
       invalidatesTags: (_result, _error, { testName }) => [{ type: 'Test', id: testName }],
     }),
 
-    updateStep: builder.mutation<void, { testName: string; stepOrder: number; body: StepBody }>({
+    // `relocated`: the other steps given its new locators (apply_to_uses) — their tests changed too.
+    updateStep: builder.mutation<{ relocated?: StepRef[] }, { testName: string; stepOrder: number; body: StepBody }>({
       query: ({ testName, stepOrder, body }) => ({
         url: `api/tests/${encodeURIComponent(testName)}/steps/${stepOrder}`,
         method: 'PUT',
         body,
       }),
-      invalidatesTags: (_result, _error, { testName }) => [{ type: 'Test', id: testName }],
+      invalidatesTags: (result, _error, { testName }) => [
+        { type: 'Test', id: testName },
+        ...[...new Set((result?.relocated ?? []).map((r) => r.test))].map((test) => ({ type: 'Test' as const, id: test })),
+      ],
     }),
 
     deleteStep: builder.mutation<void, { testName: string; stepOrder: number }>({

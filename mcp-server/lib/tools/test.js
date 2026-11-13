@@ -17,7 +17,8 @@ import { uniqueVarName, listVariable, variabilizeInput } from '../variable-detec
 import { linkAssertionToVariables } from '../test-variable.js';
 import { formatTriage } from '../triage.js';
 import { getRequirement, linkRecorded, nonConformityOf } from '../requirements.js';
-import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair } from '../repairs.js';
+import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair, getRepair, repairUses, stepsText } from '../repairs.js';
+import { usesOfStep, relocateElement } from '../element-store.js';
 import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from '../datasets.js';
 import { redundantTimeWaits } from '../recorded-waits.js';
 import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from '../business-play.js';
@@ -524,6 +525,12 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
           text += repair.needs_review
             ? `It accepts what the page shows now: ask the user whether that change is intended before resolve_repair(repair_id=${repair.id}, decision="apply").\n`
             : `If the test passes, tell the user what it changes, and on their word save it: resolve_repair(repair_id=${repair.id}, decision="apply").\n`;
+          // The element it relocates, acted on by other tests: one fix for all of them.
+          const shared = repairUses(getRepair(repair.id));
+          if (shared) {
+            text += `Its element "${shared.element.name}" is also acted on by ${shared.uses.length} other step(s) in ${shared.tests} test(s) (${stepsText(shared.uses)}): ` +
+              `ask the user whether to fix them too — resolve_repair(repair_id=${repair.id}, decision="apply", all_uses=true).\n`;
+          }
           text += `If it does not fix the test, fix the step by hand:\n`;
         } else if (triage?.cause === 'test_outdated') {
           text += `The app does what its requirement says now; the test still expects the old value. Update the test to what the requirement says, then tell the user which test changed and why.\n`;
@@ -770,14 +777,15 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: fix_test_step ---
   server.tool(
     'fix_test_step',
-    'Update a failed test step with the params and locators from a successful manual action. Call this AFTER you manually performed a browser action to fix a failed step. It replaces the step\'s command, params, and locators in the saved test so future runs will use the fixed version.',
+    'Update a failed test step with the params and locators from a successful manual action. Call this AFTER you manually performed a browser action to fix a failed step. It replaces the step\'s command, params, and locators in the saved test so future runs will use the fixed version. Its answer says how many other steps of the project act on the same element: with all_uses=true (on the user\'s word) they are given the new locators too.',
     {
       test_name: z.string().describe('Name of the test containing the step to fix'),
       step_order: z.number().describe('The step number to update (1-indexed, as reported in the error)'),
       action_id: z.string().describe('The action_id returned by the browser tool you used to fix the step (e.g. "act_5")'),
-      intent: z.string().optional().describe('Updated human-readable description for this step')
+      intent: z.string().optional().describe('Updated human-readable description for this step'),
+      all_uses: z.boolean().optional().describe('Also give the new locators to the other steps of the project acting on the same element — the same element found another way, not another one. Default false.')
     },
-    async ({ test_name, step_order, action_id, intent }) => {
+    async ({ test_name, step_order, action_id, intent, all_uses }) => {
       const action = getAction(action_id);
       if (!action) {
         return { content: [{ type: 'text', text: `Action ID "${action_id}" not found. Make sure you pass the action_id returned by the browser tool you just used.` }] };
@@ -799,12 +807,25 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       });
 
       try {
+        const test = loadTest(test_name);
+        const before = test?.steps?.[step_order - 1];
         const result = await updateTestStep(test_name, step_order, newStepData);
         if (!result) {
           return { content: [{ type: 'text', text: `Test "${test_name}" or step ${step_order} not found.` }] };
         }
         log(`Step ${step_order} of "${test_name}" fixed via ${action_id}: ${action.command}`);
-        return { content: [{ type: 'text', text: `Step ${step_order} of "${test_name}" updated successfully.\n  Command: ${action.command}\n  Locators: ${action.locators ? action.locators.length + ' locator(s)' : 'none'}\nThe test is now permanently fixed for future runs.` }] };
+        let text = `Step ${step_order} of "${test_name}" updated successfully.\n  Command: ${action.command}\n  Locators: ${action.locators ? action.locators.length + ' locator(s)' : 'none'}\nThe test is now permanently fixed for future runs.`;
+        // The other steps acting on the element it found the old way.
+        const after = { ...newStepData, page: newStepData.page ?? before?.page };
+        if (test?.project_id && before && before.command === after.command) {
+          // The fixed step acts on the element it acted on: it keeps its name.
+          const self = { test: test_name, order: step_order };
+          const { element, relocated } = relocateElement(test.project_id, { ...self, before, after, allUses: !!all_uses, join: true });
+          if (relocated.length) text += `\n${relocated.length} other step(s) acting on "${element.name}" were given the new locators too: ${stepsText(relocated)}.`;
+          const { element: same, uses, tests } = usesOfStep(test.project_id, after, self, after);
+          if (uses.length) text += `\nIts element "${same.name}" is also acted on by ${uses.length} other step(s) in ${tests} test(s) (${stepsText(uses)}), which still find it the old way: ask the user whether to fix them too — fix_test_step again with all_uses=true.`;
+        }
+        return { content: [{ type: 'text', text }] };
       } catch (err) {
         return { content: [{ type: 'text', text: `Failed to update step: ${err.message}` }] };
       }
@@ -849,15 +870,17 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: resolve_repair ---
   server.tool(
     'resolve_repair',
-    'Apply a proposed repair to the saved test, or reject it. Apply only on the user\'s word: a repair of kind "expect" makes the test accept what the page shows now, which may be the very regression the test exists to catch.',
+    'Apply a proposed repair to the saved test, or reject it. Apply only on the user\'s word: a repair of kind "expect" makes the test accept what the page shows now, which may be the very regression the test exists to catch. A repair that finds an element another way says how many other steps of the project act on that element (list_repairs, verify_repair, run_test): with all_uses=true they are given the new locators too — ask the user. Called again with all_uses=true on an applied repair, it fixes those other steps.',
     {
       repair_id: z.number().describe('Id of the repair'),
-      decision: z.enum(['apply', 'reject'])
+      decision: z.enum(['apply', 'reject']),
+      all_uses: z.boolean().optional().describe('With "apply": also give the new locators to the other steps of the project that act on the same element, each keeping what it does (its value, what it checks). Default false: only this step.')
     },
-    async ({ repair_id, decision }) => {
+    async ({ repair_id, decision, all_uses }) => {
       try {
-        const repair = decision === 'apply' ? applyRepair(repair_id) : rejectRepair(repair_id);
-        const done = decision === 'apply' ? `Applied: step ${repair.step_order} of "${repair.test_name}" is repaired.` : `Rejected: repair #${repair_id} will not be applied.`;
+        const repair = decision === 'apply' ? applyRepair(repair_id, { allUses: !!all_uses }) : rejectRepair(repair_id);
+        const others = repair.relocated?.length ? ` ${repair.relocated.length} other step(s) acting on the same element were given the new locators too: ${stepsText(repair.relocated)}.` : '';
+        const done = decision === 'apply' ? `Applied: step ${repair.step_order} of "${repair.test_name}" is repaired.${others}` : `Rejected: repair #${repair_id} will not be applied.`;
         return { content: [{ type: 'text', text: `${done}\n\n${describeRepair(repair)}` }] };
       } catch (err) {
         return { isError: true, content: [{ type: 'text', text: err.message }] };

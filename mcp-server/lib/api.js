@@ -20,7 +20,7 @@ import {
 } from './gherkin/step-definition-store.js';
 import { serializeTestToFeature } from './gherkin/serialize.js';
 import { stepsForEditedFeature } from './gherkin/reconcile.js';
-import { withElementNames, elementTargets, listElements, renameElement, deleteElement } from './element-store.js';
+import { withElementNames, elementTargets, listElements, renameElement, deleteElement, usesOfStep, relocateElement } from './element-store.js';
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { languageOf } from './gherkin/language.js';
 import { createProject, elementTimeoutOf } from './projects.js';
@@ -30,7 +30,7 @@ import { listSecrets, saveSecret, deleteSecret, secretLines, secretValue } from 
 import { pendingAsks, answerAsk, cancelAsk, cancelAsksOfRun, followAsks } from './asks.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { stepsOfBusinessPhrase, businessStepsOf } from './business-play.js';
-import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff } from './repairs.js';
+import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff, repairUses } from './repairs.js';
 import { listBugs, getBug, updateBug, reportBug, reproBrief, adoptReproTest, listExplorations, getExploration, runExploration } from './bugs.js';
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
@@ -113,9 +113,29 @@ function parseRows(rows, ...jsonCols) {
   return rows.map(r => parseRow(r, ...jsonCols));
 }
 
-/** A repair with what it changes, line by line, for the dashboard. */
+const SHARED_STATUSES = new Set(['proposed', 'verified', 'failed', 'applied']);
+
+/**
+ * A repair with what it changes, line by line, for the dashboard; and when it finds its element
+ * another way, the other steps acting on that element that would be given the new locators
+ * (`shared`: element, uses, tests).
+ */
 function withDiff(repair) {
-  return repair && { ...repair, diff: repairDiff(repair) };
+  return repair && { ...repair, diff: repairDiff(repair), shared: SHARED_STATUSES.has(repair.status) ? repairUses(repair) : null };
+}
+
+/** Step `order` of test `testId`, as the dashboard and element-store.js read it. */
+function stepRow(testId, order) {
+  const row = db.prepare('SELECT * FROM test_steps WHERE test_id = ? AND step_order = ?').get(testId, order);
+  if (!row) return null;
+  return {
+    command: row.command,
+    params: parseJson(row.params) || {},
+    ...(row.locators && { locators: parseJson(row.locators) }),
+    ...(row.variable && { variable: parseJson(row.variable) }),
+    ...(row.assertion && { assertion: parseJson(row.assertion) }),
+    ...(row.page && { page: row.page }),
+  };
 }
 
 // ─── Router ────────────────────────────────────────────────────────
@@ -1013,8 +1033,10 @@ export async function apiRouter(req, res, url) {
           const { repair, passed, error } = await verifyRepair(id, sendCommand);
           return json(res, 200, { repair: withDiff(repair), passed, error: error ?? null });
         }
-        const repair = params.action === 'apply' ? applyRepair(id) : rejectRepair(id);
-        return json(res, 200, { repair: withDiff(repair) });
+        // { all_uses: true }: the other steps acting on its element are given the new locators too.
+        const body = params.action === 'apply' ? await readBody(req) : {};
+        const repair = params.action === 'apply' ? applyRepair(id, { allUses: body.all_uses === true }) : rejectRepair(id);
+        return json(res, 200, { repair: withDiff(repair), relocated: repair.relocated ?? [] });
       } catch (err) {
         return json(res, 409, { error: err.message, repair: withDiff(getRepair(id)) });
       }
@@ -1064,12 +1086,27 @@ export async function apiRouter(req, res, url) {
       return json(res, 201, result);
     }
 
-    // PUT /api/tests/:name/steps/:stepOrder — update step
+    // GET /api/tests/:name/steps/:stepOrder/uses — the element the step acts on, and the other
+    // steps of the project acting on it: { element, uses: [{ test, step_order, command, intent }], tests }.
+    params = matchRoute(path, '/api/tests/:name/steps/:stepOrder/uses');
+    if (method === 'GET' && params) {
+      const test = db.prepare('SELECT id, project_id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
+      const order = parseInt(params.stepOrder, 10);
+      const step = stepRow(test.id, order);
+      if (!step) return json(res, 404, { error: 'Step not found' });
+      return json(res, 200, usesOfStep(test.project_id, step, { test: params.name, order }));
+    }
+
+    // PUT /api/tests/:name/steps/:stepOrder — update step. `apply_to_uses`: it is the same
+    // element found another way — the other steps acting on it are given its new locators too.
     params = matchRoute(path, '/api/tests/:name/steps/:stepOrder');
     if (method === 'PUT' && params) {
       const body = await readBody(req);
-      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      const test = db.prepare('SELECT id, project_id FROM tests WHERE name = ?').get(params.name);
       if (!test) return json(res, 404, { error: 'Test not found' });
+      const order = parseInt(params.stepOrder, 10);
+      const before = stepRow(test.id, order);
 
       const result = db.prepare(
         `UPDATE test_steps SET
@@ -1094,7 +1131,10 @@ export async function apiRouter(req, res, url) {
 
       if (!result) return json(res, 404, { error: 'Step not found' });
       db.prepare("UPDATE tests SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(test.id);
-      return json(res, 200, parseRow(result, 'params', 'locators', 'variable', 'assertion'));
+      const { relocated } = body.apply_to_uses === true
+        ? relocateElement(test.project_id, { test: params.name, order, before, after: stepRow(test.id, order), allUses: true })
+        : { relocated: [] };
+      return json(res, 200, { ...parseRow(result, 'params', 'locators', 'variable', 'assertion'), relocated });
     }
 
     // DELETE /api/tests/:name/steps/:stepOrder — delete step & renumber

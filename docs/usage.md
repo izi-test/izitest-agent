@@ -67,6 +67,13 @@ When the agent needs something nobody gave it — an account to log in with, its
 **asks you** instead of making it up: the question shows beside its browser, you answer, it goes
 on. A password you give is kept in the project's secrets; the agent gets its name, not its value.
 
+What the tests click, fill and check are the project's **elements**, listed page by page under
+*Elements* with the tests using each. An element has a name the Gherkin uses ("When I fill
+"E-mail"…"); rename it there and every test reads the new name. The same field recorded twice is
+one element, even when one test kept its id and another its label or placeholder: two steps of a
+page sharing its id, test ID, `name` or placeholder are merged, under the name you gave it. Two
+buttons a person reads differently ("Next", "Finish") stay two.
+
 ## 5. Run them
 
 On a test, *Run*. Its options (*Run options*): in a new window of your Chrome or **headless**,
@@ -82,6 +89,12 @@ A failing run is **triaged**: the test drifted from the page, the page was late,
 the application regressed, the requirement is not met, the environment failed. When it can, IziTest
 proposes a **repair** — another locator, a wait — that you verify on a replay before applying it,
 under the test's *Runs* tab.
+
+When the application changes a button or a field that other tests use too, fix it once. A repair
+that finds the element another way says "also used by 3 steps in 2 tests", and applies to all of
+them while *Apply the repair to them too* stays checked. Editing a step by hand (its selector, its
+locators) shows the same list, with a box to give them the new locators as well — unchecked, since
+an edited step may now aim at another element. Each step keeps what it types and what it checks.
 
 ## 6. With data
 

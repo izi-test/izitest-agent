@@ -36,7 +36,7 @@ export function ElementsPage() {
   }
 
   const needle = search.trim().toLowerCase();
-  const shown = elements.filter((e) => !needle || `${e.name} ${e.page} ${e.target}`.toLowerCase().includes(needle));
+  const shown = elements.filter((e) => !needle || `${e.name} ${e.page} ${e.target} ${(e.also ?? []).join(' ')}`.toLowerCase().includes(needle));
   const pages = [...new Set(shown.map((e) => e.page))];
 
   return (
@@ -133,7 +133,10 @@ function ElementRow({ element }: { element: PageElement }) {
           </div>
         )}
       </td>
-      <td className="mono cell-muted">{element.target}</td>
+      <td className="mono cell-muted">
+        {element.target}
+        {element.also && <div className="element-also" title="Recorded so by other steps: the same element">also {element.also.join(' · ')}</div>}
+      </td>
       <td>
         {element.used_by.length ? (
           <div className="cell-chips">
