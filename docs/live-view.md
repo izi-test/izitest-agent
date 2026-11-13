@@ -187,3 +187,33 @@ Un `<img src>` sur le flux MJPEG, qui n'envoie pas d'`Origin`, s'affiche toujour
 - Sur un onglet caché, un changement purement visuel (vidéo, canvas, animation CSS) n'est vu
   qu'à la capture de sécurité, toutes les 5 s.
 - Après un redémarrage de l'extension, le flux reprend de lui-même dans les 5 s.
+
+## La vidéo d'une exécution
+
+Une exécution trop rapide pour être suivie en direct se revoit. L'extension enregistre l'onglet de
+chaque exécution dès qu'il est connu (après l'étape qui l'ouvre) : une image à chaque changement
+d'écran, 5 par seconde au plus. À la fin, la vidéo est **gardée si le test a échoué**, ou si
+**Record video** est coché ; sinon elle est jetée.
+
+- **Où la cocher** : options d'exécution d'un test (*Run* → *Record video*), formulaire d'une
+  campagne (*Record video of every test*), `run_test(…, record_video: true)` et
+  `run_campaign(…, record_video: true)`.
+- **Où la voir** : onglet *Runs* du test, bouton **Video** sur l'exécution. Le lecteur la rejoue à son
+  rythme (×0,25 à ×2, les pauses de plus de 2 s raccourcies), les étapes à côté : l'étape à l'écran
+  est surlignée, un clic sur une étape y amène la vidéo. Espace : lecture ou pause ; flèches : image
+  par image ; Échap : fermer.
+- **Routes** : `GET /api/executions/{id}/video` (les images et leurs instants, avec les étapes et leurs
+  heures) et `GET /api/executions/{id}/video/{n}` (l'image n, JPEG).
+- **Conservation** : `data/videos/{id}/`, 30 jours (`IZITEST_VIDEO_DAYS`), 3000 images au plus par
+  exécution (`IZITEST_VIDEO_MAX_FRAMES`). Les vidéos des exécutions supprimées partent au
+  démarrage du serveur, puis une fois par jour. `IZITEST_RUN_VIDEO=off` n'enregistre aucune
+  exécution.
+- **Ce qu'elle montre** : l'écran tel qu'il était, donc aussi ce qui a été tapé en clair (un e-mail).
+  Un mot de passe reste masqué dans son champ.
+- **Une connexion par un autre site** (Keycloak, un SSO) ou une page qui change pendant une
+  vérification refait la connexion de l'extension à l'onglet : le serveur redemande l'enregistrement
+  toutes les 1,5 s pendant l'exécution, et la vidéo continue sans trou.
+- Le bandeau d'IziTest (« RUNNING — Step 3/5 … ») figure sur la vidéo. Il est caché aux locators et
+  aux snapshots : une étape « Pick Spain among the suggestions » ne trouve plus « Spain » dans le
+  bandeau.
+

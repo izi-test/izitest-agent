@@ -170,7 +170,11 @@ export function showOverlay(state: Parameters<typeof renderOverlayUI>[0]) {
     // Position fixed so shadow root itself sits right but internal is also fixed
     // Actually best to just attach it directly to body
     // and let the internal CSS host absolute/fixed position
-    shadowRoot = overlayHost.attachShadow({ mode: 'open' });
+    // Closed and hidden from assistive tech: the page's own elements are looked for by their text
+    // and name (a replay's locators, an agent's snapshot), and the step name it shows ("Pick Spain
+    // among the suggestions") was found and clicked as the suggestion "Spain".
+    overlayHost.setAttribute('aria-hidden', 'true');
+    shadowRoot = overlayHost.attachShadow({ mode: 'closed' });
     document.documentElement.appendChild(overlayHost);
   }
   renderOverlayUI(state);

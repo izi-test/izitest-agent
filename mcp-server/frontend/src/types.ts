@@ -85,6 +85,8 @@ export interface Step {
   page?: string | null;
   /** The name of the element it acts on, when known (mcp-server/lib/elements.js). */
   element?: string;
+  /** 1 when the step may not be done on a replay: its failure is told, the test goes on. */
+  optional?: number | boolean;
 }
 
 /** What the steps of a project act on, known by its page, role and name (mcp-server/lib/elements.js). */
@@ -243,6 +245,8 @@ export interface Execution {
   repairs?: Repair[];
   /** The campaign it ran in, if it did. */
   campaign_id?: number | null;
+  /** How many images its video kept: 0 when none (kept when it failed, or Record video was ticked). */
+  video_frames?: number;
 }
 
 /** A bug the explorer found (mcp-server/lib/bugs.js), with the test that reproduces it. */

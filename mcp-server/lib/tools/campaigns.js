@@ -73,12 +73,13 @@ export function registerCampaignTools(server, { sendCommand }) {
       objective: z.string().optional().describe('Its test plan, first line: what this campaign is for ("check release 1.4 can ship")'),
       scope_note: z.string().optional().describe('Its test plan: what is in scope and what is left out, in a sentence or two'),
       exit_criteria: exitParam,
+      record_video: z.boolean().optional().describe('Keep the video of every test run, not only of those that fail (the default)'),
     },
-    async ({ project_id, requirement, tests, stages, version, name, concurrency, wait, headless, changed_files, touched, include, commit, objective, scope_note, exit_criteria }) => {
+    async ({ project_id, requirement, tests, stages, version, name, concurrency, wait, headless, changed_files, touched, include, commit, objective, scope_note, exit_criteria, record_video }) => {
       let started;
       const changes = changed_files?.length || touched?.length ? { changed_files: changed_files ?? [], touched: touched ?? [], include: include ?? [] } : null;
       try {
-        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true, stages: stages ?? null, changes, commit: commit ?? null, objective, scopeNote: scope_note, exitCriteria: exit_criteria ?? null }, { sendCommand });
+        started = startCampaign({ name, tests, requirement, projectId: project_id ?? null, version, concurrency, headless: headless === true, stages: stages ?? null, changes, commit: commit ?? null, objective, scopeNote: scope_note, exitCriteria: exit_criteria ?? null, recordVideo: record_video === true }, { sendCommand });
       } catch (err) {
         // A change that touches no test: nothing to run is an answer, not a failure.
         return text(err.message, err.code !== 'NOTHING_TO_RUN');

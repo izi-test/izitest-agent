@@ -28,6 +28,7 @@ import { log } from './logger.js';
 import * as websocket from './websocket.js';
 import { listSessions, sessionsOfRun } from './session.js';
 import { db, parseJson } from './db.js';
+import { addRunFrame } from './run-video.js';
 
 const DATA_DIR = process.env.IZITEST_LIVE_DIR
   || join(fileURLToPath(new URL('.', import.meta.url)), '..', 'data', 'live');
@@ -537,6 +538,11 @@ export function followRun(runId, onTab, { everyMs = 500 } = {}) {
 
 /** A recorded frame pushed by an extension ({ tabId, data: base64 JPEG quality 50, at }). */
 export function deliverRecordFrame(msg) {
+  // A test run's video (lib/run-video.js): its frames carry the run's id.
+  if (msg.runId !== undefined && typeof msg.data === 'string') {
+    addRunFrame(msg.runId, Buffer.from(msg.data, 'base64'), Number(msg.at) || Date.now());
+    return;
+  }
   const rec = recorders.get(msg.tabId);
   if (!rec || !enabled || !continuousRecording || typeof msg.data !== 'string') return;
   keep(Buffer.from(msg.data, 'base64'), {

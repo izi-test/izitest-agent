@@ -229,7 +229,7 @@ export function checkStages(stages) {
  * `sendCommand` is the extension's, unscoped: the campaign runs in a session of its own. The
  * campaign as it starts, and `finished`, settled once its last test ran.
  */
-export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false, stages = null, changes = null, commit = null, objective = null, scopeNote = null, exitCriteria = null }, { sendCommand }) {
+export function startCampaign({ name, tests, requirement, projectId = null, version = null, concurrency = 3, headless = false, stages = null, changes = null, commit = null, objective = null, scopeNote = null, exitCriteria = null, recordVideo = false }, { sendCommand }) {
   const commitInfo = commitOf(commit);
   const criteria = exitCriteriaOf(exitCriteria);
   let selection = null;
@@ -280,7 +280,7 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
   const state = { stop: false };
   running.set(id, state);
   log(`Campaign #${id} started: ${entries.length} run(s) of ${names.length} test(s), ${lanes} at a time${staged ? `, in ${staged.length} stage(s)` : ''}${version ? `, version ${version}` : ''}`);
-  const finished = runCampaign(id, plan, entries.map(entryOf), lanes, state, sendCommand, headless)
+  const finished = runCampaign(id, plan, entries.map(entryOf), lanes, state, sendCommand, headless, recordVideo)
     .catch((err) => log(`Campaign #${id} failed: ${err.message}`))
     .finally(() => running.delete(id));
   return { campaign: getCampaign(id), finished };
@@ -363,7 +363,7 @@ function entryOf(entry) {
 /** How a run of a campaign is told apart: its test, and its row when it plays one. */
 export const labelOf = ({ name, row }) => (row ? `${name} [row ${row}]` : name);
 
-async function runCampaign(id, plan, entries, lanes, state, dispatch, headless) {
+async function runCampaign(id, plan, entries, lanes, state, dispatch, headless, recordVideo = false) {
   const { executeTest } = await import('./test-execute.js');
   // As many lanes as tests to run at once, at most.
   const widest = Math.max(1, ...plan.map((stage, s) => (stage.mode === 'parallel' ? entries.filter((e) => e.stage === s).length : 1)));
@@ -431,7 +431,8 @@ async function runCampaign(id, plan, entries, lanes, state, dispatch, headless) 
         // Side by side, the values kept before the stage; one after the other, those kept so far.
         const variables = givenTo(entry.name, snapshot ?? kept);
         try {
-          const result = await executeTest(entry.name, variables, null, null, true, sendCommand, 'campaign', null, null, { campaignId: id, ...(entry.row ? { row: entry.row } : {}) });
+          // The video of each run: kept when it fails, or for every one (recordVideo).
+          const result = await executeTest(entry.name, variables, null, null, true, sendCommand, 'campaign', null, null, { campaignId: id, ...(entry.row ? { row: entry.row } : {}), ...(recordVideo ? { recordVideo: true } : {}) });
           tabId = result.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
           keep(entry.name, result.values);
         } catch (err) {

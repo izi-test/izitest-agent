@@ -35,6 +35,7 @@ export function loadTest(name) {
       ...(row.assertion && { assertion: parseJson(row.assertion) }),
       ...(row.page && { page: row.page }),
       ...(row.step_definition_id && { step_definition_id: row.step_definition_id }),
+      ...(row.optional ? { optional: true } : {}),
     }))
   };
 }
@@ -104,8 +105,8 @@ export function saveTest(test) {
     db.prepare('DELETE FROM test_steps WHERE test_id = ?').run(testId);
 
     const insertStep = db.prepare(
-      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page, step_definition_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page, step_definition_id, optional)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (let i = 0; i < test.steps.length; i++) {
       const step = test.steps[i];
@@ -131,7 +132,8 @@ export function saveTest(test) {
         step.assertion ? JSON.stringify(step.assertion) : null,
         step.page || null,
         // The business step it starts, when it was played as one (serialize.js reads the link).
-        definitionLink(step)
+        definitionLink(step),
+        step.optional ? 1 : 0
       );
     }
 
@@ -159,7 +161,8 @@ export function updateTestStep(testName, stepOrder, stepData) {
        locators = ?,
        intent = COALESCE(?, intent),
        assertion = ?,
-       page = COALESCE(?, page)
+       page = COALESCE(?, page),
+       optional = COALESCE(?, optional)
      WHERE test_id = ? AND step_order = ?
      RETURNING *`
   ).get(
@@ -169,6 +172,7 @@ export function updateTestStep(testName, stepOrder, stepData) {
     stepData.intent || null,
     stepData.assertion ? JSON.stringify(stepData.assertion) : null,
     stepData.page || null,
+    stepData.optional === undefined ? null : (stepData.optional ? 1 : 0),
     test.id,
     stepOrder
   );
@@ -190,11 +194,11 @@ export function insertTestStep(testId, order, step) {
     db.prepare('UPDATE test_steps SET step_order = -step_order - 1 WHERE test_id = ? AND step_order >= ?').run(testId, order);
     db.prepare('UPDATE test_steps SET step_order = -step_order WHERE test_id = ? AND step_order < 0').run(testId);
     const row = db.prepare(
-      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page, step_definition_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
+      `INSERT INTO test_steps (test_id, step_order, command, params, locators, intent, variable, assertion, page, step_definition_id, optional)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, step_order`
     ).get(testId, order, step.command || '', JSON.stringify(step.params ?? {}), step.locators ? JSON.stringify(step.locators) : null,
       step.intent || null, step.variable ? JSON.stringify(step.variable) : null, step.assertion ? JSON.stringify(step.assertion) : null,
-      step.page || null, definitionLink(step));
+      step.page || null, definitionLink(step), step.optional ? 1 : 0);
     const test = db.prepare('SELECT variables FROM tests WHERE id = ?').get(testId);
     const variables = parseJson(test?.variables) ?? {};
     for (const variable of Object.values(variables)) if (variable?.step >= order) variable.step += 1;
@@ -226,7 +230,7 @@ export function deleteTest(name) {
 
 export function listTests() {
   const rows = db.prepare(
-    `SELECT t.*, s.step_order, s.command, s.params, s.locators, s.intent, s.variable, s.assertion, s.page
+    `SELECT t.*, s.step_order, s.command, s.params, s.locators, s.intent, s.variable, s.assertion, s.page, s.optional
      FROM tests t
      LEFT JOIN test_steps s ON s.test_id = t.id
      ORDER BY t.updated_at DESC, s.step_order ASC`
@@ -255,9 +259,26 @@ export function listTests() {
         ...(row.assertion && { assertion: parseJson(row.assertion) }),
         ...(row.page && { page: row.page }),
         ...(row.step_definition_id && { step_definition_id: row.step_definition_id }),
+        ...(row.optional ? { optional: true } : {}),
       });
     }
   }
 
   return [...testMap.values()];
+}
+
+/**
+ * Makes step `stepOrder` of test `testName` optional — its failure on a replay is told and the
+ * test goes on (an element only shown sometimes: a cookie banner, a popup) —, or required again.
+ * The step `{ command, intent }`, or null when there is no such step.
+ */
+export function setStepOptional(testName, stepOrder, optional) {
+  const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(testName);
+  if (!test) return null;
+  const row = db.prepare('UPDATE test_steps SET optional = ? WHERE test_id = ? AND step_order = ? RETURNING command, intent')
+    .get(optional ? 1 : 0, test.id, stepOrder);
+  if (!row) return null;
+  db.prepare("UPDATE tests SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(test.id);
+  log(`Step ${stepOrder} of test "${testName}" is ${optional ? 'optional' : 'required'}`);
+  return row;
 }

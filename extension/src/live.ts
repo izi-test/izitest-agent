@@ -154,6 +154,9 @@ interface Cast {
   lastRecordedAt: number;
   pendingRecord?: { image: Image; quality: number };
   recordTimer?: ReturnType<typeof setTimeout>;
+  /** A test run's recording (its video): the execution its frames go to, and their pace. */
+  runId?: number;
+  recordIntervalMs?: number;
   // Hidden tab handling
   hidden: boolean;
   checkedAt: number;
@@ -167,7 +170,8 @@ interface Cast {
 const casts = new Map<number, Cast>();
 const VISIBILITY_CHECK_MS = 1000;
 
-const rateOf = (cast: Cast) => Math.max(cast.viewerFps, cast.recording ? 1000 / RECORD_INTERVAL_MS : 0);
+const recordIntervalOf = (cast: Cast) => cast.recordIntervalMs ?? RECORD_INTERVAL_MS;
+const rateOf = (cast: Cast) => Math.max(cast.viewerFps, cast.recording ? 1000 / recordIntervalOf(cast) : 0);
 const qualityOf = (cast: Cast) => (cast.viewerFps ? LIVE_JPEG_QUALITY : RECORD_JPEG_QUALITY);
 
 // Content-script world again: visibility, and a counter of what can change the screen.
@@ -210,7 +214,7 @@ function toRecording(tabId: number, cast: Cast, image: Image, quality: number): 
 
 function flushRecord(tabId: number, cast: Cast): void {
   if (!cast.pendingRecord || cast.recordTimer) return;
-  const wait = RECORD_INTERVAL_MS - (Date.now() - cast.lastRecordedAt);
+  const wait = recordIntervalOf(cast) - (Date.now() - cast.lastRecordedAt);
   if (wait > 0) {
     cast.recordTimer = setTimeout(() => { cast.recordTimer = undefined; flushRecord(tabId, cast); }, wait);
     return;
@@ -223,7 +227,7 @@ function flushRecord(tabId: number, cast: Cast): void {
   // Frames shared with viewers are at their quality: encode the recorded copy at its own.
   const ready = quality === RECORD_JPEG_QUALITY ? Promise.resolve(image) : shrink(image.data, RECORD_JPEG_QUALITY, true);
   ready
-    .then((recorded) => { if (casts.get(tabId) === cast && cast.recording) recordSink(tabId, { ...recorded, at }); })
+    .then((recorded) => { if (casts.get(tabId) === cast && cast.recording) recordSink(tabId, { ...recorded, at, ...(cast.runId !== undefined && { runId: cast.runId }) }); })
     .catch(() => {});
 }
 
@@ -263,7 +267,7 @@ function schedulePoll(tabId: number, cast: Cast): void {
       }
     } catch { /* tab navigating or closing: try again next tick */ }
     if (casts.get(tabId) === cast) schedulePoll(tabId, cast);
-  }, rateOf(cast) ? 1000 / rateOf(cast) : RECORD_INTERVAL_MS);
+  }, rateOf(cast) ? 1000 / rateOf(cast) : recordIntervalOf(cast));
 }
 
 async function startScreencast(cast: Cast): Promise<void> {
@@ -289,6 +293,9 @@ async function ensureCast(tabId: number): Promise<{ cast: Cast; restarted: boole
     // Carried over from a cast lost with its debugger session.
     viewerFps: current?.viewerFps ?? 0,
     recording: current?.recording ?? false,
+    // A run's video goes on with its run: without its id, its frames went nowhere.
+    runId: current?.runId,
+    recordIntervalMs: current?.recordIntervalMs,
     quality: 0,
     lastAckAt: 0,
     lastRecordedAt: 0,
@@ -389,9 +396,32 @@ export async function cmdLiveRecordStop({ tabId }: { tabId: number }): Promise<{
     cast.pendingRecord = undefined;
     clearTimeout(cast.recordTimer);
     cast.recordTimer = undefined;
+    cast.runId = undefined;
+    cast.recordIntervalMs = undefined;
     await reconfigure(tabId, cast);
   }
   return { recording: false };
+}
+
+// A test run's video: as fast as the screen changes, up to 5 images a second.
+const RUN_RECORD_INTERVAL_MS = 200;
+
+/**
+ * Record tab `tabId` for test run `runId` (its video), from now until the bridge stops it
+ * (live_record_stop). Its frames carry the run's id. Asked again for the same run: nothing
+ * changes — a run in segments asks at each one.
+ */
+export async function recordRun(tabId: number, runId: number, intervalMs = RUN_RECORD_INTERVAL_MS): Promise<{ recording: true; restarted: boolean }> {
+  // Its debugger session swapped (the replay connected again to a page that changed): a new
+  // cast, whose screencast is started here — asked again during the run, a lost one comes back.
+  const { cast, restarted } = await ensureCast(tabId);
+  const interval = Math.min(2000, Math.max(100, intervalMs));
+  if (!restarted && cast.recording && cast.runId === runId && cast.recordIntervalMs === interval) return { recording: true, restarted };
+  cast.recording = true;
+  cast.runId = runId;
+  cast.recordIntervalMs = interval;
+  await reconfigure(tabId, cast);
+  return { recording: true, restarted };
 }
 
 /** Stop every stream and recording — the bridge asks for it when live view is switched off. */
@@ -403,7 +433,8 @@ export async function cmdLiveStopAll(): Promise<{ stopped: number }> {
 
 /** Tabs being recorded — so the bridge can tell which recordings it no longer wants. */
 export async function cmdLiveRecordList(): Promise<{ tabIds: number[] }> {
-  return { tabIds: [...casts].filter(([, c]) => c.recording).map(([id]) => id) };
+  // A run's video is the bridge's to stop when the run ends, not a recording it has lost.
+  return { tabIds: [...casts].filter(([, c]) => c.recording && c.runId === undefined).map(([id]) => id) };
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {

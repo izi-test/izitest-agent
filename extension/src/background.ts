@@ -15,7 +15,7 @@ import { cmdConsoleMessages, cmdCheckLinks, cmdRunAxe } from './commands/checks'
 import { restoreOwnedWindows } from './owned-windows';
 import { HEADLESS_PROFILE, isHeadless, profileOfStartPage } from './headless';
 import { actsOnPage, withPageUrl } from './page-url';
-import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecordStart, cmdLiveRecordStop, cmdLiveRecordList, setLiveSink } from './live';
+import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecordStart, cmdLiveRecordStop, cmdLiveRecordList, recordRun, setLiveSink } from './live';
 
 // Importing puppeteer-client to register its lifecycle listeners
 import { detachBrowser } from './puppeteer-client';
@@ -98,6 +98,8 @@ const COMMAND_HANDLERS: Record<string, CommandHandler> = {
   live_record_start:(params) => cmdLiveRecordStart(params as unknown as Parameters<typeof cmdLiveRecordStart>[0]),
   live_record_stop: (params) => cmdLiveRecordStop(params as unknown as Parameters<typeof cmdLiveRecordStop>[0]),
   live_record_list: ()       => cmdLiveRecordList(),
+  // A test run's video: recorded, or recorded again when its capture was lost (lib/run-video.js).
+  live_record_run: (params) => recordRun((params as { tabId: number }).tabId, (params as { runId: number }).runId),
   detect_list_context:(params) => cmdDetectListContext(params as unknown as { selector?: string; text?: string; tabId?: number }),
 };
 
@@ -224,7 +226,7 @@ function connect(): void {
             // Nothing to show for commands that destroy what would be photographed, and
             // resolving a tab for them would fail anyway.
             const NO_DEBUG_SHOT = ['screenshot', 'snapshot', 'get_tabs', 'execute_js', 'close_window', 'close_tab',
-              'live_capture', 'live_start', 'live_stop', 'live_stop_all', 'live_record_start', 'live_record_stop', 'live_record_list'];
+              'live_capture', 'live_start', 'live_stop', 'live_stop_all', 'live_record_start', 'live_record_stop', 'live_record_list', 'live_record_run'];
             if (!NO_DEBUG_SHOT.includes(message.command)) {
               const debugTabId = message.params?.tabId as number | undefined;
               const resolvedDebugTabId = await resolveTabId(debugTabId, message.params?.sessionId as string | undefined);

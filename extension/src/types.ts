@@ -279,6 +279,8 @@ export interface WorkflowStep {
   params: Record<string, any>;
   locators?: Locator[];
   variable?: VariableInfo;
+  /** A step that may not be done (a banner only shown sometimes): its failure is told, and the test goes on. */
+  optional?: boolean;
 }
 
 export interface ReplaySequenceParams {
@@ -292,6 +294,8 @@ export interface ReplaySequenceParams {
   viewportHeight?: number;
   /** How long each step waits for its element, in ms: the test's project setting. */
   elementTimeoutMs?: number;
+  /** Record the run's tab (its video) for this execution, from the moment the tab is known. */
+  record?: { runId: number; intervalMs?: number };
 }
 
 export interface RefNodeInfo {

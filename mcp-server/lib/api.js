@@ -3,6 +3,9 @@
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import { writeFileSync, unlinkSync } from 'fs';
+import { readFile } from 'fs/promises';
+import { writeAgentMcpConfig, dashboardToolName } from './agent/cli-mcp.js';
+import { runVideo, runVideoFrame } from './run-video.js';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
@@ -415,7 +418,7 @@ export async function apiRouter(req, res, url) {
       try {
         if (headless) await ensureHeadless();
         const newWindow = headless || (body.new_window !== undefined ? body.new_window : true);
-        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, run, 'manual', onProgress, debugController, { row: body.row });
+        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, run, 'manual', onProgress, debugController, { row: body.row, recordVideo: body.record_video === true });
         tabId = resObj?.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
         res.write(`data: ${JSON.stringify({ type: 'execution_completed', result: resObj })}\n\n`);
       } catch (err) {
@@ -497,7 +500,7 @@ export async function apiRouter(req, res, url) {
       const rows = db.prepare(
         `SELECT id, status, started_at, finished_at, duration_ms, total_steps, completed_steps,
                 failed_step, error, new_window, trigger, assertions_total, assertions_passed, assertions_failed,
-                json_extract(triage, '$.cause') AS triage_cause, campaign_id
+                json_extract(triage, '$.cause') AS triage_cause, campaign_id, video_frames
          FROM test_executions
          WHERE test_id = ?
          ORDER BY started_at DESC
@@ -524,6 +527,25 @@ export async function apiRouter(req, res, url) {
         ...c, run: runs.find((r) => r.name === params.name) ?? null,
       }));
       return json(res, 200, { campaigns });
+    }
+
+    // GET /api/executions/:id/video — the run's video (lib/run-video.js): { video: { startedAt,
+    // frames: [{ n, at }] }, steps: [{ step_order, command, intent, status, started_at, finished_at }] }.
+    params = matchRoute(path, '/api/executions/:id/video');
+    if (method === 'GET' && params) {
+      const video = runVideo(params.id);
+      if (!video) return json(res, 404, { error: 'This run has no video: kept only when it failed, or when Record video was ticked' });
+      const steps = db.prepare('SELECT step_order, command, intent, status, started_at, finished_at FROM execution_steps WHERE execution_id = ? ORDER BY step_order').all(Number(params.id));
+      return json(res, 200, { video, steps });
+    }
+    // GET /api/executions/:id/video/:n — image n of the run's video (JPEG).
+    params = matchRoute(path, '/api/executions/:id/video/:n');
+    if (method === 'GET' && params) {
+      const file = runVideoFrame(params.id, params.n);
+      if (!file) return json(res, 404, { error: 'No such image' });
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' });
+      res.end(await readFile(file));
+      return;
     }
 
     // ── GET /api/executions/:id ──
@@ -848,6 +870,8 @@ export async function apiRouter(req, res, url) {
           changes, commit: body.commit && typeof body.commit === 'object' ? body.commit : null,
           // Its test plan: what it is for, what is in and out, what says it can stop.
           objective: body.objective ?? null, scopeNote: body.scope_note ?? null, exitCriteria: body.exit_criteria ?? null,
+          // The video of every test run, not only of those that fail.
+          recordVideo: body.record_video === true,
         }, { sendCommand });
         return json(res, 201, { campaign });
       } catch (err) {
@@ -1115,7 +1139,8 @@ export async function apiRouter(req, res, url) {
            locators = COALESCE(?, locators),
            intent = COALESCE(?, intent),
            variable = COALESCE(?, variable),
-           assertion = COALESCE(?, assertion)
+           assertion = COALESCE(?, assertion),
+           optional = COALESCE(?, optional)
          WHERE test_id = ? AND step_order = ?
          RETURNING *`
       ).get(
@@ -1125,6 +1150,8 @@ export async function apiRouter(req, res, url) {
         body.intent !== undefined ? body.intent : null,
         body.variable ? JSON.stringify(body.variable) : null,
         body.assertion ? JSON.stringify(body.assertion) : null,
+        // A step that may not be done: its failure does not fail the test (true / false; left as it is when not given).
+        typeof body.optional === 'boolean' ? (body.optional ? 1 : 0) : null,
         test.id,
         parseInt(params.stepOrder)
       );
@@ -1728,8 +1755,10 @@ export async function apiRouter(req, res, url) {
           // The project's context (its datasets, its secrets), and a value nobody gave, asked.
           'get_project_context', 'ask_user',
           // A business step of the project played as one: the test reads as its phrase.
-          'play_business_step'
-        ].map(t => `mcp__izitest-agent__${t}`).join(',');
+          'play_business_step',
+          // A step only needed sometimes (a cookie banner): its failure does not fail the test.
+          'set_step_optional'
+        ].map(dashboardToolName).join(',');
         args.push('-p', body.prompt, '--allowedTools', mcpToolNames, '--allow-dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose');
       } else if (agentConfig.cli?.provider === 'copilot') {
         args.push('-p', body.prompt, '--allow-all', '--allow-all-tools');
@@ -1744,19 +1773,8 @@ export async function apiRouter(req, res, url) {
       // Create a temp MCP config that connects to the ALREADY-RUNNING server via SSE
       let tmpMcpConfig = null;
       if (agentConfig.cli?.provider === 'claude') {
-        tmpMcpConfig = join(tmpdir(), `bp-mcp-${Date.now()}.json`);
-        writeFileSync(tmpMcpConfig, JSON.stringify({
-          mcpServers: {
-            'izitest-agent': {
-              type: 'sse',
-              url: `http://127.0.0.1:${MCP_PORT}/sse?run=${runId}`,
-              // The server refuses unauthenticated clients when a token is set.
-              ...(process.env.IZITEST_TOKEN
-                ? { headers: { Authorization: `Bearer ${process.env.IZITEST_TOKEN}` } }
-                : {})
-            }
-          }
-        }), { mode: 0o600 }); // it may hold the token: readable by this user only
+        // Its own server name, with the token (lib/agent/cli-mcp.js).
+        tmpMcpConfig = writeAgentMcpConfig({ port: MCP_PORT, runId });
         args.push('--mcp-config', tmpMcpConfig, '--strict-mcp-config');
       }
 

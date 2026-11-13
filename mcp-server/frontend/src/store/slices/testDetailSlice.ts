@@ -12,6 +12,8 @@ interface TestDetailState {
   executeNewWindow: boolean;
   useAgent: boolean;
   useDebug: boolean;
+  /** Keep the run's video even when it passes (a failed run keeps it anyway). */
+  recordVideo: boolean;
 
   isStepModalOpen: boolean;
   editingStep: Step | null;
@@ -37,6 +39,7 @@ const initialState: TestDetailState = {
   executeNewWindow: true,
   useAgent: false,
   useDebug: false,
+  recordVideo: false,
 
   isStepModalOpen: false,
   editingStep: null,
@@ -87,6 +90,9 @@ const testDetailSlice = createSlice({
     setUseDebug(state, action: PayloadAction<boolean>) {
       state.useDebug = action.payload;
     },
+    setRecordVideo(state, action: PayloadAction<boolean>) {
+      state.recordVideo = action.payload;
+    },
 
     openStepModal(state, action: PayloadAction<Step | null>) {
       state.editingStep = action.payload;
@@ -131,6 +137,7 @@ export const {
   setExecuteNewWindow,
   setUseAgent,
   setUseDebug,
+  setRecordVideo,
   openStepModal,
   closeStepModal,
   openAssertionModal,

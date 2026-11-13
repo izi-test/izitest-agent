@@ -171,6 +171,7 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
   const [ordering, setOrdering] = useState<Ordering>('together');
   const [stages, setStages] = useState<CampaignStage[] | null>(null);
   const headless = useRunHeadless();
+  const [recordVideo, setRecordVideo] = useState(false);
   // A change: its files, the routes it touches, the tests to run anyway, and what they come to.
   const [files, setFiles] = useState('');
   const [touched, setTouched] = useState('');
@@ -222,7 +223,7 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
     setError(null);
     if (change) {
       try {
-        const answer = await startChange({ ...change, version: version.trim() || undefined, name: name.trim() || undefined, concurrency, headless, ...(hasPlan(testPlan) ? planOf(testPlan) : {}) }).unwrap();
+        const answer = await startChange({ ...change, version: version.trim() || undefined, name: name.trim() || undefined, concurrency, headless, ...(recordVideo ? { record_video: true } : {}), ...(hasPlan(testPlan) ? planOf(testPlan) : {}) }).unwrap();
         if (answer.nothing_to_run) setError(answer.message.split('\n')[0]);
         else onStarted(answer.campaign.id);
       } catch (err) {
@@ -235,7 +236,7 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
     try {
       const { campaign } = await start({
         ...(staged ? { stages: stages! } : scope), version: version.trim() || undefined,
-        name: name.trim() || (staged ? defaultName : undefined) || undefined, concurrency, headless, ...(hasPlan(testPlan) ? planOf(testPlan) : {}),
+        name: name.trim() || (staged ? defaultName : undefined) || undefined, concurrency, headless, ...(recordVideo ? { record_video: true } : {}), ...(hasPlan(testPlan) ? planOf(testPlan) : {}),
       }).unwrap();
       onStarted(campaign.id);
     } catch (err) {
@@ -339,6 +340,10 @@ function CampaignForm({ projectId, onStarted, onCancel }: { projectId: number | 
         <PlanFields draft={testPlan} onChange={setTestPlan} />
       </details>
       <HeadlessSwitch />
+      <label className="switch">
+        <input type="checkbox" checked={recordVideo} onChange={(e) => setRecordVideo(e.target.checked)} />
+        <span className="switch__text">Record video of every test<span className="switch__hint">A test that fails keeps its video anyway; ticked, those that pass keep theirs too.</span></span>
+      </label>
       {error && <div className="alert alert--error">{error}</div>}
       <div className="form__actions">
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>

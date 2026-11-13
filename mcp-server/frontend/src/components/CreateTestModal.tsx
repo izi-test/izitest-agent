@@ -369,11 +369,12 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   const watching = mode === 'ai' && (isRunning || agentStatus === 'done');
 
   return (
-    <div className="modal" onClick={handleClose}>
+    // Closed by its buttons only (✕, Cancel / Close): a click beside it closed it, losing what was
+    // typed — and stopping the agent recording the test.
+    <div className="modal">
       <div className="modal-overlay" />
       <div
         className={`modal-content create-wf-modal ${showOutput ? 'create-wf-modal--expanded' : ''} ${mode === 'ai' && showOutput ? 'create-wf-modal--live' : ''}`}
-        onClick={e => e.stopPropagation()}
       >
         <div className="modal-header">
           <h3>{mode === 'gherkin' ? 'Create test from Gherkin' : 'Create test with AI'}</h3>
@@ -580,20 +581,20 @@ TEST DESCRIPTION: "${description}"
 
 INSTRUCTIONS:
 1. First, call the "start_recording" tool with the name "${name}" and description "${description}"${vrtParam}${vpParam}.
-2. Then, execute the browser actions described above step by step using the appropriate browser tools (navigate, click, fill, snapshot, etc.). Steps are automatically recorded — do NOT call record_step.
-3. After all steps are done, call "stop_recording" to save the test (variable detection runs automatically).
-4. After the test is saved, add assertions using "add_assertion" to verify the expected outcomes. Consider adding assertions for:
+2. Then, execute the browser actions described above step by step using the appropriate browser tools (navigate, click, fill, snapshot, etc.). Steps are automatically recorded — do NOT call record_step except to make a step optional (record_step(action_id, optional: true): a cookie banner or a popup only shown sometimes).
+3. Check each outcome as you go: right after an action whose result matters (a page or a tab opened, a form sent, a list or search results loaded), call "add_assertion" with test_name "${name}", before the next action. The check is recorded as the next step, and a replay waits there for what it checks. Check for instance:
    - Page URL or title after navigation
    - Presence of expected elements
    - Text content of key elements
    - Visibility of success/error messages
+4. When all steps are done and checked, call "stop_recording" to save the test (variable detection runs automatically).
 
 IMPORTANT:
 - Use "snapshot" to scan the page and identify elements before interacting with them.
 - Use the element references (@e1, @e2, etc.) from snapshot results for precise interactions.
 - Be methodical: navigate first, then snapshot, then interact with elements.
 - If a step fails, try an alternative approach (different selector, etc.).
-- Always add at least one assertion to verify the test outcome.
+- Always add at least one assertion to verify the test outcome — while recording, never all of them at the end.
 
 Begin now.`;
 }

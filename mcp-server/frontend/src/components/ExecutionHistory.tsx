@@ -11,8 +11,10 @@ import {
   Clock,
   Play,
   RotateCcw,
-  ShieldCheck
+  ShieldCheck,
+  Video
 } from 'lucide-react';
+import { RunVideo } from './RunVideo';
 
 const STATUS_LABELS: Record<string, { label: string; className: string }> = {
   success: { label: 'Passed', className: 'exec-status-success' },
@@ -60,6 +62,8 @@ interface ExecutionHistoryProps {
 
 export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: ExecutionHistoryProps) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // The run whose video is shown (lib/run-video.js): kept when it failed, or Record video was ticked.
+  const [videoOf, setVideoOf] = useState<number | null>(null);
   const [expandedSteps, setExpandedSteps] = useState<ExecutionStep[]>([]);
   const [expanded, setExpanded] = useState<Execution | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -99,6 +103,7 @@ export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: Ex
 
   return (
     <div className="exec-history">
+      {videoOf !== null && <RunVideo executionId={videoOf} onClose={() => setVideoOf(null)} />}
       {executions.map(exec => (
         <div key={exec.id} className={`exec-card ${expandedId === exec.id ? 'expanded' : ''}`}>
           <div className="exec-row" onClick={() => toggleExpand(exec.id)}>
@@ -119,6 +124,12 @@ export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: Ex
               {exec.triage_cause && <span className={`exec-trigger triage-badge triage-${exec.triage_cause}`}>{CAUSE_LABELS[exec.triage_cause].split(' — ')[0]}</span>}
               {exec.trigger !== 'manual' && <span className="exec-trigger">{exec.trigger}</span>}
               {exec.new_window && <span className="exec-trigger">new window</span>}
+              {(exec.video_frames ?? 0) > 0 && (
+                <button type="button" className="exec-video-btn" title="Watch the run again, its steps beside it"
+                  onClick={(e) => { e.stopPropagation(); setVideoOf(exec.id); }}>
+                  <Video size={13} /> Video
+                </button>
+              )}
               <span className="exec-expand-icon">
                 {expandedId === exec.id ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
               </span>
@@ -151,9 +162,12 @@ export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: Ex
                   {step.intent && <span className="exec-step-intent">{step.intent}</span>}
                   <span className="exec-step-duration">{formatDuration(step.duration_ms)}</span>
                   {step.locator_used && <span className="exec-step-locator">via {step.locator_used}</span>}
-                  {step.error && !step.assertion_result?.message && <div className="exec-step-error">{step.error}</div>}
+                  {step.error && (step.status === 'skipped' || !step.assertion_result?.message) && (
+                    // An optional step not done is told, not a failure: the test went on.
+                    <div className={`exec-step-error ${step.status === 'skipped' ? 'exec-step-error--skipped' : ''}`}>{step.error}</div>
+                  )}
                   {step.assertion_result && (
-                    <div className={`exec-step-assertion ${step.assertion_result.passed ? 'passed' : 'failed'}`}>
+                    <div className={`exec-step-assertion ${step.assertion_result.passed ? 'passed' : step.status === 'skipped' ? 'skipped' : 'failed'}`}>
                       {step.assertion_result.message && (
                         <div className="exec-step-assertion-message">{step.assertion_result.message}</div>
                       )}

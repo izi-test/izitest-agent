@@ -427,6 +427,11 @@ export function initDatabase() {
   try {
     const stepCols = db.prepare('PRAGMA table_info(test_steps)').all().map(c => c.name);
     if (!stepCols.includes('page')) db.exec('ALTER TABLE test_steps ADD COLUMN page TEXT DEFAULT NULL');
+    // A step that may not be done (a banner only shown sometimes): its failure does not fail the test.
+    if (!stepCols.includes('optional')) db.exec('ALTER TABLE test_steps ADD COLUMN optional INTEGER NOT NULL DEFAULT 0');
+    // A run's video (lib/run-video.js): how many images were kept, 0 when none.
+    const runCols = db.prepare('PRAGMA table_info(test_executions)').all().map(c => c.name);
+    if (!runCols.includes('video_frames')) db.exec('ALTER TABLE test_executions ADD COLUMN video_frames INTEGER NOT NULL DEFAULT 0');
     db.exec(`
       CREATE TABLE IF NOT EXISTS elements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -11,6 +11,7 @@ import {
   loadTest, saveTest, deleteTest as deleteTestDb, listTests as listTestsDb, executeTest,
   updateTestStep, evaluateAssertion
 } from '../tests.js';
+import { setStepOptional } from '../test-store.js';
 import { ORACLE_ASSERTIONS } from '../test-execute.js';
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
 import { uniqueVarName, listVariable, variabilizeInput, isNavigation, typedJustBefore, variabilizeSuggestion } from '../variable-detection.js';
@@ -179,14 +180,15 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: record_step (deprecated — steps are now auto-recorded) ---
   server.tool(
     'record_step',
-    'Steps are recorded on their own while a recording is active: no need to call this to record one. Call it to name the variable of a step (what a fill typed becomes {{variable_name}} at stop_recording, instead of a name taken from its field), to keep its value fixed (skip_variable), or to change its intent.',
+    'Steps are recorded on their own while a recording is active: no need to call this to record one. Call it to name the variable of a step (what a fill typed becomes {{variable_name}} at stop_recording, instead of a name taken from its field), to keep its value fixed (skip_variable), to change its intent, or to make it optional: a step the app may not need (a cookie banner, a popup only shown sometimes) — when it fails on a replay, the test goes on and passes.',
     {
       action_id: z.string().describe('The action_id a browser tool answered (e.g. "act_12"): the step it recorded'),
       intent: z.string().optional().describe('Human-readable description of what this step does'),
       variable_name: z.string().optional().describe('The name of the variable of this step (letters, digits, _), e.g. "email"'),
-      skip_variable: z.boolean().optional().describe('Set to true to keep this step\'s value fixed: no variable')
+      skip_variable: z.boolean().optional().describe('Set to true to keep this step\'s value fixed: no variable'),
+      optional: z.boolean().optional().describe('True: the step may not be done on a replay (an element only shown sometimes) — its failure is told, and the test goes on'),
     },
-    async ({ action_id, intent, variable_name, skip_variable }) => {
+    async ({ action_id, intent, variable_name, skip_variable, optional }) => {
       const recording = getRecording();
       if (!recording) {
         return { content: [{ type: 'text', text: 'No recording in progress. Call start_recording first.' }] };
@@ -204,6 +206,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       if (intent) lastStep.intent = intent;
       if (name) lastStep._variableNameOverride = name;
       if (skip_variable) lastStep._skipVariable = true;
+      if (typeof optional === 'boolean') lastStep.optional = optional;
 
       log(`record_step — applied overrides to step ${at + 1}`);
       
@@ -216,7 +219,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }, sess().lastTabId ?? null);
       }).catch(() => {});
 
-      const told = [name && `its variable will be {{${name}}}`, skip_variable && 'its value stays fixed', intent && 'its intent changed'].filter(Boolean).join(', ');
+      const told = [name && `its variable will be {{${name}}}`, skip_variable && 'its value stays fixed', intent && 'its intent changed',
+        optional === true && 'it is optional: on a replay, its failure does not fail the test', optional === false && 'it is required again'].filter(Boolean).join(', ');
       return { content: [{ type: 'text', text: `Step ${at + 1} (${lastStep.command})${told ? `: ${told}` : ' unchanged'}. Steps are recorded on their own: call stop_recording when done.` }] };
     }
   );
@@ -415,9 +419,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       new_window: z.boolean().optional().default(true).describe('Runs the test in a new browser window. Defaults to true. Set to false to reuse the current tab.'),
       debug: z.boolean().optional().describe('Enable debug mode: execution pauses before each step (or at breakpoints). Use debug_action tool to resume/step/continue.'),
       breakpoints: z.array(z.number()).optional().describe('Step numbers (1-indexed) to pause at. Only used when debug=true. If empty, pauses at every step.'),
-      row: z.number().optional().describe('For a test bound to a dataset: the row to play, numbered from 1 (default 1). run_campaign plays every row.')
+      row: z.number().optional().describe('For a test bound to a dataset: the row to play, numbered from 1 (default 1). run_campaign plays every row.'),
+      record_video: z.boolean().optional().describe('Keep the video of the run even if it passes (a failed run keeps its video anyway): watched in the dashboard, the run\'s steps beside it'),
     },
-    async ({ name, variables, substitutions, start_step, new_window, debug, breakpoints, row }) => {
+    async ({ name, variables, substitutions, start_step, new_window, debug, breakpoints, row, record_video }) => {
       // Debug mode: run asynchronously and return immediately with execution ID
       if (debug) {
         const debugController = new DebugController(breakpoints || [], 'step');
@@ -467,7 +472,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       // Normal (non-debug) execution
       try {
-        const res = await executeTest(name, variables, substitutions, start_step, new_window, sendCommand, 'mcp', null, null, { row });
+        const res = await executeTest(name, variables, substitutions, start_step, new_window, sendCommand, 'mcp', null, null, { row, recordVideo: record_video === true });
         rememberReplay(name, res.values, res.results?.findLast?.((r) => r.tabId != null)?.tabId);
         let resultText = `Test "${name}" executed successfully (execution #${res.executionId}).`;
         if (res.assertionsTotal > 0) {
@@ -476,6 +481,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
             resultText += ` (${res.assertionsFailed} failed)`;
           }
         }
+        if (res.video) resultText += `\n\nVideo kept (${res.video.frames} images): in the dashboard, the run's Video button.`;
+        if (res.optionalNotDone?.length) resultText += `\n\nOptional step(s) not done, the test went on: ${res.optionalNotDone.map((o) => `step ${o.step} (${o.error})`).join('; ')}.`;
         // The bugs this test met, fixed now that it passes (lib/bugs.js).
         if (res.bugs?.fixed?.length) resultText += `\n\nBug(s) ${res.bugs.fixed.map((id) => `#${id}`).join(', ')} marked fixed in the Bugs page: this test met them, and passes again.`;
         if (res.bugs?.changed?.length) resultText += `\n\nBug(s) ${res.bugs.changed.map((id) => `#${id}`).join(', ')} left open: this test passes, but was changed since it met them — it may no longer check what failed. Tell the user.`;
@@ -506,6 +513,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }
 
         let text = `TEST EXECUTION FAILED${execId}\n\n`;
+        if (err.video) text += `Video of the run kept (${err.video.frames} images): in the dashboard, the run's Video button.\n\n`;
         text += `=== STEP STATUS REPORT ===\n`;
         text += stepsReport;
         text += `\n=== FAILED STEP DETAILS ===\n`;
@@ -854,6 +862,27 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       } catch (err) {
         return { content: [{ type: 'text', text: `Failed to update step: ${err.message}` }] };
       }
+    }
+  );
+
+  // --- Tool: set_step_optional ---
+  server.tool(
+    'set_step_optional',
+    [
+      'Make a step of a saved test optional — a step the app may not need on every run: a cookie banner or a popup only shown',
+      'sometimes, a tour to dismiss. On a replay, when it fails, its failure is told (the step reads "skipped") and the test goes',
+      'on; the test passes if the rest does. It still waits for its element as any step does. Never for a step the test is',
+      'about: a check that fails there must fail the test. optional: false makes it required again.',
+    ].join(' '),
+    {
+      test_name: z.string(),
+      step_order: z.number().int().describe('The step (1-indexed)'),
+      optional: z.boolean().optional().describe('Default true'),
+    },
+    async ({ test_name, step_order, optional = true }) => {
+      const step = setStepOptional(test_name, step_order, optional);
+      if (!step) return { isError: true, content: [{ type: 'text', text: `No step ${step_order} in test "${test_name}".` }] };
+      return { content: [{ type: 'text', text: `Step ${step_order} of "${test_name}" (${step.command}${step.intent ? `: ${step.intent}` : ''}) is ${optional ? 'optional: on a replay, its failure is told and the test goes on' : 'required again'}.` }] };
     }
   );
 

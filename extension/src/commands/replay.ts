@@ -10,6 +10,7 @@ import { dragElements } from './drag';
 import { cmdExecuteJs, cmdWait } from './queries';
 import { setPickedValue } from '../dom/picked-input';
 import { actsOnPage } from '../page-url';
+import { recordRun } from '../live';
 import { missedWait } from '../wait-outcome';
 import { fileInputOf, putFiles } from '../dom/file-input';
 import type { ReplaySequenceParams, Locator } from '../types';
@@ -69,7 +70,7 @@ export function abortSequence() {
 }
 
 export async function cmdReplaySequence(
-  { steps, startIndex, newWindow, tabId, sessionId, viewportWidth, viewportHeight, elementTimeoutMs }: ReplaySequenceParams,
+  { steps, startIndex, newWindow, tabId, sessionId, viewportWidth, viewportHeight, elementTimeoutMs, record }: ReplaySequenceParams,
   onProgress?: (data: any) => void
 ) {
   isAbortRequested = false;
@@ -115,6 +116,8 @@ export async function cmdReplaySequence(
       executionError = 'Sequence aborted artificially by user via Stop button.';
       break;
     }
+    // The run's video: its tab recorded from the moment it is known (after the step that opens it).
+    if (record && currentTabId) await recordRun(currentTabId, record.runId, record.intervalMs).catch(() => {});
 
     console.log(`\n▶ Step ${i + 1}/${totalSteps}: [${step.command}] ${step.intent || step.command}`);
     // An upload's files, in base64, would fill the console.
@@ -397,6 +400,16 @@ export async function cmdReplaySequence(
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
+      // A step that may not be done (a banner only shown sometimes): told, and the test goes on.
+      if (step.optional) {
+        console.warn(`  ⤼ Optional step ${i + 1} not done, the test goes on: ${errorMessage}`);
+        const notDone = makeStepResult(i + 1, step.command, step.intent, 'skipped', stepStartedAt,
+          { error: `Optional step not done: ${errorMessage}`, optional: true, tabId: currentTabId });
+        results.push(notDone);
+        onProgress?.({ type: 'step_complete', stepResult: notDone });
+        await delay(DEFAULT_STEP_DELAY_MS);
+        continue;
+      }
       console.error(`  🚨 Step ${i + 1} FAILED: ${errorMessage}`);
 
       const failedResult = makeStepResult(i + 1, step.command, step.intent, 'failed', stepStartedAt,

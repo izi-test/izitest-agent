@@ -28,7 +28,8 @@ import { instrumentTools, registerBenchTools } from './lib/bench.js';
 import { registerAgentTools } from './lib/agent/mcp-adapter.js';
 import { redactToolResults } from './lib/secrets.js';
 import { registerAskTools } from './lib/tools/ask.js';
-import { initDatabase } from './lib/db.js';
+import { initDatabase, db } from './lib/db.js';
+import { purgeRunVideos } from './lib/run-video.js';
 import { trustSystemCertificates } from './lib/system-ca.js';
 import { seedAllProjectsStepDefinitions } from './lib/gherkin/step-definition-store.js';
 import { registerAllElements } from './lib/element-store.js';
@@ -123,6 +124,18 @@ try {
 }
 startWebSocketServer(WS_PORT);
 initLive();
+// Runs' videos (lib/run-video.js): those older than their days, of runs deleted, or left half
+// made by a server stopped during a run, thrown away — now, then once a day.
+const purgeVideos = () => {
+  try {
+    const runs = new Set(db.prepare('SELECT id FROM test_executions WHERE video_frames > 0').all().map((row) => row.id));
+    purgeRunVideos((id) => runs.has(id));
+  } catch (err) {
+    log(`Videos not cleaned up: ${err.message}`);
+  }
+};
+purgeVideos();
+setInterval(purgeVideos, 24 * 60 * 60 * 1000).unref();
 
 // An extension that just restarted (a rebuild reload, or Chrome waking the service worker)
 // has lost chrome.storage.session, so it no longer knows which windows belong to which
@@ -231,6 +244,17 @@ if (USE_STDIO) {
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // No OAuth here: the server's token is sent as `Authorization: Bearer`. MCP clients look for
+    // OAuth metadata (/.well-known/oauth-protected-resource, …) before they connect; answered 403,
+    // or 200 with the dashboard's page, Claude Code 2.1 took the server for one that wants an OAuth
+    // login ("needs-auth") and the dashboard's agent could no longer record a test. A 404 tells it
+    // there is none: it connects with the headers it was given.
+    if (url.pathname.startsWith('/.well-known/oauth')) {
+      res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ error: 'No OAuth: send the server token as Authorization: Bearer <IZITEST_TOKEN>' }));
       return;
     }
 

@@ -136,6 +136,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `get_campaign` / `list_campaigns` / `stop_campaign` | A campaign's report; the campaigns, newest first; stop one that runs. |
 | `send_results` | Sends a campaign's results to a tool (a connector: Xray, a Test Execution, each test linked to the stories it covers); a dry run first (see below). |
 | `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a test. While the test is recorded, the check is recorded as the next step, right after the action whose result it checks (see below); on a saved test, it goes at the end or at `step_order`. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
+| `set_step_optional` | Makes a step of a saved test optional (a cookie banner, a popup only shown sometimes): when it fails on a replay, its failure is told and the test goes on. `optional: false` makes it required again (see below). |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
@@ -161,6 +162,30 @@ donc de vérifier chaque résultat juste après son action.
   variable à `stop_recording` (« Welcome {{first_name}} »), comme sur un test enregistré.
 - **Sur un test déjà enregistré**, `add_assertion` contrôle la page telle qu'elle est maintenant :
   ne donnez un `step_order` que si la page affichée est celle que voit cette étape.
+
+### Vidéo d'une exécution
+
+Chaque exécution est enregistrée en vidéo ; elle est gardée si le test échoue, ou avec
+`run_test(…, record_video: true)` / `run_campaign(…, record_video: true)`. `run_test` dit quand une
+vidéo a été gardée ; elle se regarde dans le tableau de bord (onglet *Runs* du test, bouton *Video*),
+les étapes à côté. Voir [la vue en direct](live-view.md#la-vidéo-dune-exécution).
+
+### Étapes facultatives
+
+Une étape **facultative** peut ne pas se faire à chaque exécution : un bandeau de cookies ou une
+fenêtre qui ne s'affiche que parfois, une visite guidée à fermer. Quand elle échoue au rejeu, son
+échec est dit (l'étape est marquée *skipped*, avec son erreur) et le test continue : il passe si le
+reste passe. Elle attend son élément comme toute étape (le délai du projet, 10 s par défaut).
+
+- **Dans le tableau de bord** : bouton ◌ sur la ligne de l'étape (onglet *Steps*), qui affiche alors
+  l'étiquette *optional*. Il marche aussi pour une vérification.
+- **Pendant un enregistrement** : `record_step(action_id, optional: true)` sur l'action qui vient
+  d'être faite.
+- **Sur un test enregistré** : `set_step_optional(test_name, step_order)`.
+- `run_test` et le rapport d'exécution disent quelles étapes facultatives n'ont pas été faites.
+- **Une vérification facultative** qui ne tient pas n'est pas comptée en échec. Ne rendez jamais
+  facultative une étape que le test vérifie : un échec là doit faire échouer le test.
+- **En Playwright exporté**, l'étape est dans un `try { … } catch {}`.
 
 ### Export Playwright : `get_test_as_code`
 

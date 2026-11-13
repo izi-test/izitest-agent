@@ -11,6 +11,7 @@ import {
   setExecuteNewWindow,
   setUseAgent,
   setUseDebug,
+  setRecordVideo,
   openStepModal,
   closeStepModal,
   openAssertionModal,
@@ -19,7 +20,7 @@ import {
 import { executeTest, executeAgent, closeLiveModal, stopExecution, sendDebugAction, toggleBreakpoint } from '../store/slices/executionSlice';
 import {
   useGetTestQuery, useUpdateTestMutation, useDeleteTestMutation, useDeleteStepMutation, useReorderStepsMutation, useGetTestCampaignsQuery,
-  useBindDatasetMutation,
+  useBindDatasetMutation, useSetStepOptionalMutation,
 } from '../store/services/testsApi';
 import { useGetExecutionsQuery } from '../store/services/executionsApi';
 import { useGetProjectsQuery, useGetDatasetsQuery } from '../store/services/projectsApi';
@@ -45,7 +46,7 @@ import { Card, EmptyState, KeyChip, Menu, ProjectChip, ResultBar, StatusPill } f
 import { dateTime, formatDuration, relativeTime } from '../format';
 import {
   ArrowLeft, Play, Save, Trash2, List, History, ChevronUp, ChevronDown, Pencil, Plus, Database, ShieldCheck, Monitor, FileCode, Code,
-  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight, MousePointerClick, Table,
+  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight, MousePointerClick, Table, CircleDashed,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -95,6 +96,7 @@ export function TestDetail({ testName }: TestDetailProps) {
     executeNewWindow,
     useAgent,
     useDebug,
+    recordVideo,
     isStepModalOpen,
     editingStep,
     isAssertionModalOpen,
@@ -220,6 +222,17 @@ export function TestDetail({ testName }: TestDetailProps) {
     });
   };
 
+  const [setStepOptional] = useSetStepOptionalMutation();
+  // A step only needed sometimes (a cookie banner): its failure on a replay does not fail the test.
+  const handleStepOptional = async (order: number, optional: boolean) => {
+    try {
+      await setStepOptional({ testName, stepOrder: order, optional }).unwrap();
+      dispatch(showToast({ message: optional ? `Step ${order} is optional: if it fails, the test goes on` : `Step ${order} is required again`, type: 'success' }));
+    } catch {
+      dispatch(showToast({ message: 'The step could not be changed', type: 'error' }));
+    }
+  };
+
   const handleStepMove = async (order: number, direction: number) => {
     if (!test || !test.steps) return;
     const steps = test.steps;
@@ -277,6 +290,7 @@ export function TestDetail({ testName }: TestDetailProps) {
       breakpoints: [],
       // Debug is watched step by step: it keeps a window.
       headless: runHeadless && !useDebug,
+      recordVideo,
     }));
   };
 
@@ -367,7 +381,7 @@ CRITICAL RULES:
   const project = projects.find((p) => p.id === projectId) ?? null;
   const lastRun = runs[0];
   const headlessRun = runHeadless && !useDebug && !useAgent;
-  const optionsChanged = headlessRun || !executeNewWindow || useAgent || useDebug || !!viewport;
+  const optionsChanged = headlessRun || !executeNewWindow || useAgent || useDebug || recordVideo || !!viewport;
   const withSide = activeTab === 'steps' || activeTab === 'data';
 
   const tabs: Array<{ id: typeof activeTab; label: string; icon: typeof List; count?: number }> = [
@@ -430,6 +444,10 @@ CRITICAL RULES:
                     <input type="checkbox" checked={useDebug} onChange={e => dispatch(setUseDebug(e.target.checked))} />
                     <span className="switch__text">Debug step by step<span className="switch__hint">Pauses at each step, with breakpoints.</span></span>
                   </label>
+                  <label className="switch">
+                    <input type="checkbox" checked={recordVideo} onChange={e => dispatch(setRecordVideo(e.target.checked))} />
+                    <span className="switch__text">Record video<span className="switch__hint">Keep the run's video even if it passes. A failed run keeps its video anyway.</span></span>
+                  </label>
                   <label className="field">
                     <span className="field__label"><Monitor size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Viewport</span>
                     <select
@@ -483,6 +501,7 @@ CRITICAL RULES:
               {!executeNewWindow && !headlessRun && <span className="tag">same window</span>}
               {useAgent && <span className="tag tag--blue">agent</span>}
               {useDebug && <span className="tag tag--amber">debug</span>}
+              {recordVideo && <span className="tag">video</span>}
               {viewport && <span className="tag">{viewportToString(viewport)}</span>}
             </span>
           )}
@@ -620,6 +639,7 @@ CRITICAL RULES:
                             </span>
                             {step.intent && <span className="step__intent">{step.intent}</span>}
                             {variable && variable.name && <span className="var-badge">{'{{' + variable.name + '}}'}</span>}
+                            {!!step.optional && <span className="optional-badge" title="If it fails on a replay, the test goes on">optional</span>}
                             {step.element && (
                               <button className="element-chip" title={`The element it acts on, on ${step.page}`} onClick={() => go(`/elements?q=${encodeURIComponent(step.element ?? '')}`, { from: testName })}>
                                 <MousePointerClick size={11} />{step.element}
@@ -640,6 +660,12 @@ CRITICAL RULES:
                           </button>
                           <button className="icon-button" title="Move down" aria-label="Move down" disabled={i === steps.length - 1} onClick={() => handleStepMove(step.step_order, 1)}>
                             <ChevronDown size={15} />
+                          </button>
+                          <button className={`icon-button ${step.optional ? 'icon-button--on' : ''}`}
+                            title={step.optional ? 'Optional: if it fails, the test goes on. Click to make it required' : 'Make optional: if it fails on a replay, the test goes on'}
+                            aria-label={step.optional ? 'Make required' : 'Make optional'} aria-pressed={!!step.optional}
+                            onClick={() => handleStepOptional(step.step_order, !step.optional)}>
+                            <CircleDashed size={15} />
                           </button>
                           <button className="icon-button" title="Edit" aria-label="Edit" onClick={() => {
                             if (isAssertion) {

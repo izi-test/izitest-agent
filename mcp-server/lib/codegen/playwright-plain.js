@@ -126,8 +126,10 @@ export function generatePlaywrightPlain(test) {
   if (needsCollectors(steps)) for (const line of collectorLines()) push(`  ${line}`);
 
   for (const step of steps) {
-    const rendered = renderStep(step);
+    let rendered = renderStep(step);
     if (!rendered) continue;
+    // A step that may not be done (a banner only shown sometimes): its failure does not fail the test.
+    if (step.optional) rendered = ['// Optional: if this step fails, the test goes on.', 'try {', ...rendered.split('\n').map((line) => `  ${line}`), '} catch {}'].join('\n');
     for (const body of rendered.split('\n')) {
       push(`  ${body}`);
     }

@@ -879,6 +879,11 @@ textarea { resize: vertical; line-height: 1.5; }
 .step:hover .step__actions, .step:focus-within .step__actions { opacity: 1; }
 .var-badge, .step-var-badge { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 12px; padding: 1px 6px; border-radius: 5px; background: var(--amber-bg); color: #92400E; border: 1px solid var(--amber-border); white-space: nowrap; }
 .vrt-preview img { border: 1px solid var(--border) !important; }
+/* A step that may not be done on a replay: its failure does not fail the test. */
+.exec-step-error.exec-step-error--skipped { color: var(--text-muted); background: var(--bg-tertiary); border-color: var(--border); }
+.exec-step-assertion.skipped { opacity: 0.75; }
+.optional-badge { display: inline-flex; align-items: center; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px dashed var(--border-hover); color: var(--text-muted); white-space: nowrap; }
+.icon-button--on { color: var(--accent, var(--text)); background: var(--bg-tertiary); }
 
 .side-list { display: flex; flex-direction: column; }
 .side-list__row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
@@ -3431,3 +3436,26 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 .checkbox-row { display: flex; align-items: center; gap: 8px; }
 .checkbox-row input[type="checkbox"] { width: auto; margin: 0; }
 .checkbox-row .field__label { margin: 0; }
+
+/* A run's video (RunVideo.tsx): its images played at their pace, its steps beside it. */
+.exec-video-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-secondary, var(--bg-tertiary)); color: var(--text); cursor: pointer; }
+.exec-video-btn:hover { border-color: var(--border-hover); }
+.run-video__backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+.run-video { background: var(--bg, #fff); color: var(--text); border-radius: 12px; width: min(1200px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); }
+.run-video__head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.run-video__body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; min-height: 0; flex: 1; }
+.run-video__screen { display: flex; flex-direction: column; min-width: 0; background: #0f172a; }
+.run-video__screen img { width: 100%; height: auto; max-height: calc(100vh - 160px); object-fit: contain; flex: 1; min-height: 0; }
+.run-video__controls { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--bg, #fff); border-top: 1px solid var(--border); }
+.run-video__controls input[type="range"] { flex: 1; }
+.run-video__time { font-family: var(--mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.run-video__steps { list-style: none; margin: 0; padding: 6px; overflow-y: auto; border-left: 1px solid var(--border); }
+.run-video__step { display: grid; grid-template-columns: 24px 1fr auto; gap: 6px; align-items: baseline; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 12px; cursor: pointer; }
+.run-video__step:hover:not(:disabled) { background: var(--bg-tertiary); }
+.run-video__step:disabled { opacity: 0.5; cursor: default; }
+.run-video__step--now { background: var(--accent-bg, #e0e7ff); outline: 1px solid var(--accent, #6366f1); }
+.run-video__order { color: var(--text-muted); font-family: var(--mono); }
+.run-video__what { overflow: hidden; text-overflow: ellipsis; }
+.run-video__status { font-size: 11px; color: var(--text-muted); }
+.run-video__step--failed .run-video__status { color: var(--red, #dc2626); font-weight: 600; }
+@media (max-width: 760px) { .run-video__body { grid-template-columns: 1fr; } .run-video__steps { border-left: 0; border-top: 1px solid var(--border); max-height: 30vh; } }

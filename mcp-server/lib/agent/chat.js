@@ -16,6 +16,7 @@ import { keywordsOf } from '../gherkin/language.js';
 import { elementLines } from '../element-store.js';
 import { datasetLines } from '../datasets.js';
 import { secretLines } from '../secrets.js';
+import { writeAgentMcpConfig, dashboardToolName } from './cli-mcp.js';
 
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 
@@ -298,7 +299,7 @@ async function handleAgentChatCli(project, convId, message, cliConfig, isNewConv
 
   if (provider === 'claude') {
     const agentToolNames = AGENT_TOOLS
-      .map(t => `mcp__izitest-agent__${t.name}`)
+      .map(t => dashboardToolName(t.name))
       .join(',');
 
     args.push('-p', prompt, '--output-format', 'json',
@@ -310,12 +311,8 @@ async function handleAgentChatCli(project, convId, message, cliConfig, isNewConv
     }
 
     // Create temp MCP config pointing to the already-running server
-    tmpMcpConfig = join(tmpdir(), `bp-chat-mcp-${Date.now()}.json`);
-    writeFileSync(tmpMcpConfig, JSON.stringify({
-      mcpServers: {
-        'izitest-agent': { type: 'sse', url: `http://127.0.0.1:${MCP_PORT}/sse` }
-      }
-    }));
+    // Its own server name, with the token: without it, the chat's agent was refused (lib/agent/cli-mcp.js).
+    tmpMcpConfig = writeAgentMcpConfig({ port: MCP_PORT, prefix: 'bp-chat-mcp' });
     args.push('--mcp-config', tmpMcpConfig, '--strict-mcp-config');
 
   } else if (provider === 'copilot') {

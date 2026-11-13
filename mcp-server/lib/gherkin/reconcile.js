@@ -112,6 +112,8 @@ function carryOver(oldSteps, newSteps) {
       ...(old.page && { page: old.page }),
       ...(old.intent && { intent: old.intent }),
       ...(keepsVariable && { variable: structuredClone(old.variable) }),
+      // A step made optional stays so when its phrase is reworded.
+      ...(old.optional && { optional: true }),
     };
   });
 }

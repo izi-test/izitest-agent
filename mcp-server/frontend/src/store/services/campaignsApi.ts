@@ -11,6 +11,8 @@ export interface CampaignInput {
   concurrency?: number;
   /** In the Chrome without windows. */
   headless?: boolean;
+  /** Keep the video of every test run, not only of those that fail. */
+  record_video?: boolean;
   /** Instead of a project, a requirement or tests: the tests in stages. */
   stages?: CampaignStage[];
   /** With project_id: only the tests a change needs (mcp-server/lib/regression.js). */

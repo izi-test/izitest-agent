@@ -84,6 +84,15 @@ export const testsApi = createApi({
     }),
 
     // `relocated`: the other steps given its new locators (apply_to_uses) — their tests changed too.
+    // A step only needed sometimes (a cookie banner): its failure on a replay does not fail the test.
+    setStepOptional: builder.mutation<void, { testName: string; stepOrder: number; optional: boolean }>({
+      query: ({ testName, stepOrder, optional }) => ({
+        url: `api/tests/${encodeURIComponent(testName)}/steps/${stepOrder}`,
+        method: 'PUT',
+        body: { optional },
+      }),
+      invalidatesTags: (_result, _error, { testName }) => [{ type: 'Test', id: testName }],
+    }),
     updateStep: builder.mutation<{ relocated?: StepRef[] }, { testName: string; stepOrder: number; body: StepBody }>({
       query: ({ testName, stepOrder, body }) => ({
         url: `api/tests/${encodeURIComponent(testName)}/steps/${stepOrder}`,
@@ -198,6 +207,7 @@ export const {
   useDeleteTestMutation,
   useAddStepMutation,
   useUpdateStepMutation,
+  useSetStepOptionalMutation,
   useDeleteStepMutation,
   useReorderStepsMutation,
   useAssignToProjectMutation,

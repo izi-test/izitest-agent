@@ -16,6 +16,10 @@ import { recordRunBug, fixRunBugs, stepsHash } from './bugs.js';
 import { elementTimeoutFor, cleanStartFor } from './projects.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { logoutToPlay } from './closing-logout.js';
+import { startRunVideo, finishRunVideo } from './run-video.js';
+// After a run, before its video stops: the extension sends what the screen showed last.
+const VIDEO_SETTLE_MS = Number(process.env.IZITEST_VIDEO_SETTLE_MS ?? 600);
+const videoKeepAliveMs = () => Number(process.env.IZITEST_VIDEO_KEEPALIVE_MS ?? 1500);
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -287,6 +291,8 @@ async function playServerStep(step, stepNumber, { sendCommand, tabId, server }) 
     log(`Server step ${stepNumber} (${step.command}): ${detail}`);
     return done('success', { detail });
   } catch (err) {
+    // An optional one (an API that may not answer): told, and the test goes on.
+    if (step.optional) return done('skipped', { error: `Optional step not done: ${err.message}`, optional: true });
     return done('failed', { error: err.message });
   }
 }
@@ -621,7 +627,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
         assertionResult = { ...assertionResult, screenshotUrl, refScreenshotUrl: '/' + step.assertion.expected };
       }
     } else {
-      assertionsFailed++;
+      // An optional check that does not hold is told, and the test goes on (its verdict unchanged).
+      if (!step.optional) assertionsFailed++;
       const failureMessage = buildAssertionFailureMessage(step.assertion, assertionResult);
       let screenshotUrl;
       if (assertionResult.isVrt && assertionResult.actualDataUrl) {
@@ -631,19 +638,22 @@ export async function executeTest(name, variables, substitutions, start_step, ne
         screenshotUrl = await captureAssertionFailureScreenshot(sendCommand, executionId, stepOrder, assertionTabId);
         assertionResult = { ...assertionResult, message: failureMessage, screenshotUrl };
       }
-      if (!firstFailedAssertion) {
+      if (!firstFailedAssertion && !step.optional) {
         firstFailedAssertion = { stepOrder, message: failureMessage };
       }
     }
 
     const finishedAt = Date.now();
-    const stepError = assertionResult.passed ? null : assertionResult.message;
+    const missedOptional = !assertionResult.passed && !!step.optional;
+    const stepStatus = assertionResult.passed ? 'success' : missedOptional ? 'skipped' : 'failed';
+    const stepError = assertionResult.passed ? null : missedOptional ? `Optional check not met: ${assertionResult.message}` : assertionResult.message;
     assertionStepResults.push({
       step: stepOrder,
       command: 'assert',
       intent: step.intent || `Assert: ${step.assertion.type}`,
-      status: assertionResult.passed ? 'success' : 'failed',
+      status: stepStatus,
       error: stepError,
+      ...(missedOptional && { optional: true }),
       assertionResult
     });
 
@@ -658,7 +668,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
         assertion_result = ?
        WHERE execution_id = ? AND step_order = ?`
     ).run(
-      assertionResult.passed ? 'success' : 'failed',
+      stepStatus,
       new Date(startedAt).toISOString(),
       new Date(finishedAt).toISOString(),
       finishedAt - startedAt,
@@ -678,9 +688,37 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       });
     }
 
-    return assertionResult.passed;
+    return assertionResult.passed || missedOptional;
   };
   const checkInPlace = (step, tabId) => checkAssertion(step._originalStepNumber - 1, tabId ?? undefined);
+
+  // The run's video (lib/run-video.js): its tab recorded from the moment it is known, the frames
+  // sent with the run's id; kept at the end when the run failed or it was asked (recordVideo).
+  const videoOn = trigger !== 'explore' && startRunVideo(executionId);
+  // The run's tab, as its steps tell it: the one the video films.
+  let videoTab = null;
+  let videoKeepAlive = null;
+  if (videoOn) {
+    const send = sendCommand;
+    const noteTab = (result) => { if (result?.tabId != null) videoTab = result.tabId; };
+    sendCommand = async (profile, command, params, timeout, onMessage, ...rest) => {
+      if (command !== 'replay_sequence') return send(profile, command, params, timeout, onMessage, ...rest);
+      const told = onMessage ? (msg) => { noteTab(msg?.stepResult); return onMessage(msg); } : (msg) => noteTab(msg?.stepResult);
+      const answer = await send(profile, command, { ...params, record: { runId: executionId } }, timeout, told, ...rest);
+      for (const result of answer?.results ?? []) noteTab(result);
+      return answer;
+    };
+    // Asked again while the run goes: a capture lost with its debugger session (the replay
+    // connected again to a page that changed — a login through another site) comes back, also
+    // while the server checks an assertion between two runs of steps.
+    const keepingSince = Date.now();
+    videoKeepAlive = setInterval(() => {
+      // A run that never ended (its replay crashed past every catch) is not filmed for ever.
+      if (Date.now() - keepingSince > 2 * 60 * 60 * 1000) return clearInterval(videoKeepAlive);
+      if (videoTab != null) send(undefined, 'live_record_run', { tabId: videoTab, runId: executionId }, 5000).catch(() => {});
+    }, videoKeepAliveMs());
+    videoKeepAlive.unref?.();
+  }
 
   // ─── Send to extension and process results ────────────────────
   // Filter out assertion steps — the extension only handles browser actions
@@ -898,9 +936,22 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     loggedOut = await playClosingLogout({ steps: hydratedSteps, ranUpTo, sendCommand, tabId: lastTabId, executionId, server, elementTimeoutMs });
   }
 
+  // The video: its last images in (what the screen showed when it stopped), its tab no longer
+  // recorded, kept or thrown away.
+  let videoFrames = 0;
+  if (videoOn) {
+    clearInterval(videoKeepAlive);
+    videoTab = lastTabId ?? stepResults.findLast((sr) => sr?.tabId != null)?.tabId ?? videoTab;
+    await new Promise((resolve) => setTimeout(resolve, VIDEO_SETTLE_MS));
+    if (videoTab != null) await sendCommand(undefined, 'live_record_stop', { tabId: videoTab }, 5000).catch(() => {});
+    videoFrames = finishRunVideo(executionId, { keep: finalStatus === 'failed' || options.recordVideo === true });
+    if (videoFrames) db.prepare('UPDATE test_executions SET video_frames = ? WHERE id = ?').run(videoFrames, executionId);
+  }
+
   if (finalStatus === 'failed') {
     const error = new Error(globalError || 'Test execution failed');
     error.executionId = executionId;
+    if (videoFrames) error.video = { frames: videoFrames };
     if (loggedOut) error.closingLogout = loggedOut;
     if (triage) error.triage = triage;
     if (bug) error.bug = { id: bug.bug.id, title: bug.bug.title, kind: bug.bug.kind, status: bug.bug.status, occurrences: bug.bug.occurrences, isNew: bug.isNew, reopened: bug.reopened };
@@ -933,7 +984,10 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     throw error;
   }
 
-  return redact({ ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables, ...(bugsFixed?.fixed.length || bugsFixed?.changed.length ? { bugs: bugsFixed } : {}) });
+  // The optional steps not done on the way: told, the run passing anyway.
+  const optionalNotDone = [...stepResults, ...assertionStepResults].filter((r) => r?.optional).map((r) => ({ step: r.step, error: r.error }))
+    .sort((a, b) => a.step - b.step);
+  return redact({ ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables, ...(optionalNotDone.length ? { optionalNotDone } : {}), ...(videoFrames ? { video: { frames: videoFrames } } : {}), ...(bugsFixed?.fixed.length || bugsFixed?.changed.length ? { bugs: bugsFixed } : {}) });
 }
 
 /** A business step's phrase, by its id: whether it logs out (lib/closing-logout.js). */
