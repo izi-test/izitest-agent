@@ -5,10 +5,17 @@
 // A repair changes one step: `replace` it (its selector and locators, an assertion's
 // selector or expected value) or `insert` a step before it (a wait). `before` is that step
 // as it was when the repair was proposed: a test edited since is not repaired blindly.
+//
+// A repair that changes how a step finds its element is one for every step of the project
+// acting on that element (element-store.js): they are listed with it (repairUses), and applied
+// with `allUses`, they are given the new locators too. Without, the element keeps its name
+// under its new key, and the others still find it the old way.
 
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 import { loadTest, updateTestStep, insertTestStep } from './test-store.js';
+import { usesOfStep, relocateElement } from './element-store.js';
+import { findsDifferently } from './elements.js';
 
 // What a repair can still become: verified, applied, rejected.
 const OPEN = new Set(['proposed', 'verified', 'failed']);
@@ -132,16 +139,51 @@ export async function verifyRepair(id, sendCommand) {
   }
 }
 
-/** Save the repair into the test. Other open repairs of that step are superseded. */
-export function applyRepair(id) {
+/** The project of a repair's test, or null. */
+const projectOf = (repair) => db.prepare('SELECT project_id FROM tests WHERE id = ?').get(repair.test_id)?.project_id ?? null;
+
+/** Whether a repair changes how its step finds its element (not what it expects, not a wait). */
+const relocates = (repair) => repair?.change?.op === 'replace' && !!repair.before && findsDifferently(repair.before, repair.change.step);
+
+/**
+ * The other steps of the project acting on the element a repair relocates, that do not find it
+ * yet as the repair would: `{ element: { id, name }, uses: [{ test, step_order, command, intent }],
+ * tests }`. Null for a repair that changes no locator, or whose element no other step acts on.
+ */
+export function repairUses(repair) {
+  if (!relocates(repair)) return null;
+  const projectId = projectOf(repair);
+  if (!projectId) return null;
+  const shared = usesOfStep(projectId, repair.before, { test: repair.test_name, order: repair.step_order }, repair.change.step);
+  return shared.uses.length ? shared : null;
+}
+
+/**
+ * Save the repair into the test. Other open repairs of that step are superseded. A repair that
+ * relocates the element: it keeps its name under its new key, and with `allUses`, the other
+ * steps acting on it find it the new way too (`relocated`: those changed). Called again with
+ * `allUses` once applied, it gives them the new locators, if the step is still as it left it.
+ */
+export function applyRepair(id, { allUses = false } = {}) {
   const repair = getRepair(id);
   const test = repair && loadTest(repair.test_name);
+  const { op, step_order: order, step } = repair?.change ?? {};
+  const relocateOthers = () => relocateElement(test.project_id, {
+    test: repair.test_name, order, before: repair.before, after: { ...step, page: step.page ?? repair.before?.page }, allUses, join: true,
+  }).relocated;
+
+  if (allUses && repair?.status === 'applied' && test) {
+    if (stepKey(test.steps[order - 1]) !== stepKey(step)) throw new Error(`Step ${order} of "${repair.test_name}" has changed since repair #${id} was applied`);
+    const relocated = relocates(repair) ? relocateOthers() : [];
+    return { ...repair, relocated };
+  }
+
   const why = refusal(repair, test, APPLICABLE);
   if (why) {
     if (repair && test && /has changed since/.test(why)) setStatus(id, 'stale');
     throw new Error(why);
   }
-  const { op, step_order: order, step } = repair.change;
+  let relocated = [];
   const apply = db.transaction(() => {
     if (op === 'insert') insertTestStep(repair.test_id, order, step);
     else if (!updateTestStep(repair.test_name, order, step)) throw new Error(`Step ${order} of "${repair.test_name}" not found`);
@@ -149,10 +191,11 @@ export function applyRepair(id) {
     db.prepare(`UPDATE test_repairs SET status = 'superseded', decided_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 WHERE test_id = ? AND step_order = ? AND id != ? AND status IN ('proposed', 'verified', 'failed')`)
       .run(repair.test_id, order, id);
+    if (relocates(repair) && test.project_id) relocated = relocateOthers();
   });
   apply();
-  log(`Repair #${id} applied to step ${order} of "${repair.test_name}" (${repair.kind})`);
-  return getRepair(id);
+  log(`Repair #${id} applied to step ${order} of "${repair.test_name}" (${repair.kind})${relocated.length ? `, and to ${relocated.length} other step(s) acting on its element` : ''}`);
+  return { ...getRepair(id), relocated };
 }
 
 export function rejectRepair(id) {
@@ -180,7 +223,14 @@ export function repairDiff(repair) {
   return lines;
 }
 
-/** A repair as the agent reads it: where it stands, what it changes, why. */
+/** Steps, test by test: `"Country picked" steps 2, 4; "Checkout" step 3`. */
+export function stepsText(uses) {
+  const byTest = new Map();
+  for (const use of uses) byTest.set(use.test, [...(byTest.get(use.test) ?? []), use.step_order]);
+  return [...byTest].map(([test, orders]) => `"${test}" step${orders.length === 1 ? '' : 's'} ${orders.join(', ')}`).join('; ');
+}
+
+/** A repair as the agent reads it: where it stands, what it changes, why, and which other steps act on its element. */
 export function describeRepair(repair) {
   const verified = repair.verify_execution_id ? ` (execution #${repair.verify_execution_id})` : '';
   const lines = [
@@ -188,5 +238,14 @@ export function describeRepair(repair) {
     ...repairDiff(repair).map((line) => `  ${line}`),
   ];
   if (repair.verify_error) lines.push(`  replayed with it, the test still fails: ${repair.verify_error.split('\n')[0]}`);
+  if (repair.relocated?.length) lines.push(`  given the new locators too: ${stepsText(repair.relocated)}`);
+  const shared = OPEN.has(repair.status) || repair.status === 'applied' ? repairUses(repair) : null;
+  if (shared) {
+    const { element, uses, tests } = shared;
+    const count = `${uses.length} other step${uses.length === 1 ? '' : 's'} in ${tests} test${tests === 1 ? '' : 's'}`;
+    lines.push(repair.status === 'applied'
+      ? `  ${count} still find its element "${element.name}" the old way (${stepsText(uses)}): resolve_repair(repair_id=${repair.id}, decision="apply", all_uses=true) gives them the new locators — ask the user`
+      : `  its element "${element.name}" is also acted on by ${count} (${stepsText(uses)}): with all_uses=true, resolve_repair gives them the new locators too — ask the user`);
+  }
   return lines.join('\n');
 }

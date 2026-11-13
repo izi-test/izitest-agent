@@ -37,7 +37,7 @@ function isDynamicClass(cls) {
 const ID_ATTRIBUTES = new Set(['id', 'for', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-owns']);
 
 /** CSS escapes undone: `\39 2595267` is "92595267". */
-function unescapeCss(value) {
+export function unescapeCss(value) {
   return value
     .replace(/\\([0-9a-f]{1,6})\s?/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
     .replace(/\\(.)/g, '$1');

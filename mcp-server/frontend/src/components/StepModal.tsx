@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Step } from '../types';
+import type { SharedElement, Step } from '../types';
 import { useAppDispatch } from '../store/hooks';
 import { showToast } from '../store/slices/uiSlice';
 import { useAddStepMutation, useUpdateStepMutation } from '../store/services/testsApi';
+import { projectsApi } from '../store/services/projectsApi';
 import { Button } from './Button';
+import { SharedUses } from './SharedUses';
+import { usesCount } from '../uses';
 import { Segmented } from './ui';
 import { X, Save } from 'lucide-react';
 
@@ -77,6 +80,9 @@ export function StepModal({ isOpen, testName, projectId, step, onClose, onSaved 
   const [businessValues, setBusinessValues] = useState<string[]>([]);
   const [position, setPosition] = useState('');
   const [saving, setSaving] = useState(false);
+  // The other steps acting on the element this one acts on, and whether its new locators go to them.
+  const [shared, setShared] = useState<SharedElement | null>(null);
+  const [applyToUses, setApplyToUses] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -96,8 +102,19 @@ export function StepModal({ isOpen, testName, projectId, step, onClose, onSaved 
       setBusinessId('');
       setBusinessValues([]);
       setPosition('');
+      setApplyToUses(false);
     }
   }, [isOpen, step]);
+
+  // A step edited: which other steps act on its element (mcp-server/lib/element-store.js).
+  useEffect(() => {
+    setShared(null);
+    if (!isOpen || !step) return;
+    let gone = false;
+    fetch(`/api/tests/${encodeURIComponent(testName)}/steps/${step.step_order}/uses`).then((r) => (r.ok ? r.json() : null))
+      .then((d: SharedElement | null) => { if (!gone && d?.element && d.uses.length) setShared(d); }).catch(() => {});
+    return () => { gone = true; };
+  }, [isOpen, step, testName]);
 
   // The project's elements and business steps, read when the editor opens.
   useEffect(() => {
@@ -178,12 +195,14 @@ export function StepModal({ isOpen, testName, projectId, step, onClose, onSaved 
     const body = {
       command, intent: intent || null, params: parsedParams, locators: parsedLocators, variable: parsedVariable,
       ...(!step && position.trim() ? { step_order: Number(position) } : {}),
+      ...(step && shared && applyToUses ? { apply_to_uses: true } : {}),
     };
 
     try {
       if (step) {
-        await updateStep({ testName, stepOrder: step.step_order, body }).unwrap();
-        dispatch(showToast({ message: 'Step updated' }));
+        const { relocated = [] } = await updateStep({ testName, stepOrder: step.step_order, body }).unwrap() ?? {};
+        dispatch(showToast({ message: relocated.length ? `Step updated, and ${usesCount(relocated)} acting on the same element` : 'Step updated' }));
+        if (relocated.length) dispatch(projectsApi.util.invalidateTags(['Elements']));
       } else {
         await addStep({ testName, body }).unwrap();
         dispatch(showToast({ message: 'Step added' }));
@@ -307,6 +326,16 @@ export function StepModal({ isOpen, testName, projectId, step, onClose, onSaved 
                 <label>Locators (JSON, optional)</label>
                 <textarea rows={3} value={locators} onChange={e => setLocators(e.target.value)} placeholder='[{"type": "css", "value": "#btn"}]'></textarea>
               </div>
+              {step && shared && (
+                <SharedUses
+                  shared={shared}
+                  check={{
+                    label: 'Give them this step\'s selector and locators too — the same element, found another way',
+                    checked: applyToUses,
+                    onChange: setApplyToUses,
+                  }}
+                />
+              )}
               <div className="field-group">
                 <label>Variable (JSON, optional)</label>
                 <textarea rows={3} value={variable} onChange={e => setVariable(e.target.value)} placeholder='{"name": "query", "type": "text", "defaultValue": ""}'></textarea>

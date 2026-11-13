@@ -130,7 +130,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `get_requirement` / `list_requirements` | A requirement with its criteria, cases, tests and coverage; or all of them with their coverage. |
 | `list_repairs` | Lists the repairs proposed for failed runs, and where each stands. |
 | `verify_repair` | Replays the test with a proposed repair made, without saving it. |
-| `resolve_repair` | Applies a repair to the saved test, or rejects it — on the user's word. |
+| `resolve_repair` | Applies a repair to the saved test, or rejects it — on the user's word. With `all_uses: true`, the other steps acting on the same element get the new locators too. |
 | `run_campaign` | Replays a project's tests, a requirement's, a list, or those a change needs (`changed_files`), together, for a version of the app, and answers with the report (see below). |
 | `plan_regression` | The tests of a project a change needs — its changed files, the routes it touches, the requirements its commit names —, each with why, and those left out with why; nothing is run (see below). |
 | `get_campaign` / `list_campaigns` / `stop_campaign` | A campaign's report; the campaigns, newest first; stop one that runs. |
@@ -265,6 +265,48 @@ page du profil sont deux éléments, même avec le même sélecteur ; le même �
 tests n'en est qu'un. Une étape qui n'a que sa position pour se distinguer, ou dont un élément de liste
 est choisi par une variable, n'a pas d'élément.
 
+**Un élément enregistré de plusieurs façons n'en fait qu'un.** Le champ pays de Test Arena était trois
+éléments : un test l'avait par son sélecteur (`css #country-input`), un autre par son nom accessible
+(`field "Start typing..."`), une vérification par son placeholder (`css input[placeholder="Start
+typing..."]`). Deux étapes d'une même page qui partagent ce qui distingue l'élément à coup sûr agissent
+sur le même élément : son `id` (le sélecteur `#country-input`, un locator CSS ou XPath par id), son
+`data-testid`, et pour un champ saisi ou choisi — ou lu par un sélecteur qui le nomme ainsi — son attribut
+`name` ou son placeholder. Leurs éléments sont fusionnés sous le nom que l'utilisateur a donné à l'un
+d'eux ; sinon sous celui qu'une personne lit (rôle, libellé) plutôt qu'un sélecteur. Un élément connu
+jusque-là par un sélecteur seul prend ce nom dès qu'une étape le donne. Ne fusionnent jamais :
+- deux éléments qu'une personne lit sous deux noms : le « Next » et le « Finish » d'un assistant peuvent
+  partager un id ;
+- les cases ou les boutons radio d'un groupe : leur `name` est celui du groupe, et un clic n'en donne pas ;
+- un élément distingué par son conteneur ou sa position (un bouton « Delete » par ligne) ;
+- un `id` généré à chaque chargement.
+
+Toutes les clés et marques d'un élément sont gardées (table `element_keys`) : une étape enregistrée plus
+tard le retrouve par n'importe laquelle. Au démarrage, le serveur enregistre les éléments de toutes les
+étapes, ce qui fusionne ceux enregistrés avant.
+
+**Une correction, toutes les utilisations.** Chaque étape garde sa propre copie de la façon de trouver
+son élément (sélecteur, locators) : le rejeu, sans IA, et l'export Playwright lisent l'étape seule. Quand
+l'une change, les autres étapes du projet qui agissent sur le même élément reçoivent la même chose, sur
+confirmation :
+- une réparation qui trouve l'élément autrement (`relocate`) dit quelles autres étapes agissent sur lui,
+  test par test (`run_test`, `list_repairs`, `verify_repair`) ;
+  `resolve_repair(repair_id, decision="apply", all_uses=true)` leur donne aussi les nouveaux locators.
+  Rappelée avec `all_uses=true` sur une réparation déjà appliquée, elle corrige celles qui le trouvent
+  encore à l'ancienne ;
+- `fix_test_step(…, all_uses=true)` fait de même pour une étape que l'agent a corrigée à la main ;
+- dans le tableau de bord, la réparation (onglet *Runs* du test) affiche « “Start typing...” is also used
+  by 3 steps in 2 tests », la liste de ces étapes, et la case **Apply the repair to them too**, cochée :
+  le bouton devient **Apply to 4 steps**. L'éditeur d'étape affiche la même liste avec la case **Give
+  them this step's selector and locators too**, décochée : une étape modifiée à la main peut viser un
+  autre élément.
+
+Chaque étape garde ce qu'elle fait : sa commande, sa valeur, ce que vérifie son assertion. Une assertion
+reçoit le sélecteur ; une action reçoit le sélecteur et les locators — ou, venant d'une assertion qui n'a
+pas de locators, le sélecteur seul. Les réparations `relocate` encore ouvertes de ces étapes sont
+remplacées (`superseded`). Appliquée à son étape seule, une réparation garde quand même l'élément : sa
+nouvelle clé s'ajoute aux siennes, son nom ne change pas. Une étape sans page (enregistrée avant que les
+étapes gardent la leur) n'est pas comptée : elle la reçoit à sa prochaine exécution réussie.
+
 Chaque élément a un nom, unique dans son projet, pris de ce qu'une personne lit dessus (« Save
 profile », « E-mail ») ; déjà pris, il reçoit sa page (« Save (profile) »). L'onglet Gherkin dit ce nom
 à la place du sélecteur :
@@ -285,8 +327,10 @@ phrases, et le chat du tableau de bord aussi. Un scénario conçu pour une exige
 éléments déjà enregistrés au lieu de deviner un sélecteur.
 
 La page **Elements** du tableau de bord liste les éléments du projet, page par page, avec les tests qui
-les utilisent. Un élément s'y renomme (son nouveau nom se lit dans le Gherkin de tous ses tests) ; un
-élément qu'aucune étape n'utilise plus s'y supprime. Les étapes d'un test montrent le nom de leur
+les utilisent, et sous chacun les autres clés sous lesquelles il a été enregistré (« also css
+#country-input · … » ; la recherche les lit aussi). Un élément s'y renomme (son nouveau nom se lit dans
+le Gherkin de tous ses tests, et il le garde s'il est fusionné) ; un élément qu'aucune étape n'utilise
+plus s'y supprime. Les étapes d'un test montrent le nom de leur
 élément.
 
 | Route | Rôle |
@@ -1638,7 +1682,8 @@ Une réparation n'est jamais appliquée toute seule. `verify_repair` (ou **Verif
 rejoue le test avec elle, sans l'enregistrer, avec les variables et substitutions de l'exécution qui
 a échoué : vérifiée si tout le test passe, assertions comprises. `resolve_repair` (**Apply** /
 **Reject**) l'enregistre ou l'écarte ; une autre réparation encore ouverte pour la même étape est
-alors remplacée (`superseded`). Une étape modifiée depuis la proposition n'est pas réparée à
+alors remplacée (`superseded`). Une réparation qui trouve son élément autrement peut s'appliquer à toutes
+les étapes qui agissent sur lui (`all_uses`, voir « Les éléments d'un projet »). Une étape modifiée depuis la proposition n'est pas réparée à
 l'aveugle (`stale`). Le même échec revu propose la même réparation : elle est réutilisée, pas
 dupliquée. Les rejeux de vérification apparaissent dans l'historique avec le déclencheur `repair`.
 

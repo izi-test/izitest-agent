@@ -94,8 +94,30 @@ export interface PageElement {
   page: string;
   /** What it is on its page: button "Save" in testid "note-3", field "E-mail"… */
   target: string;
+  /** The other keys it was recorded under, merged into it: css #country-input… */
+  also?: string[];
   created_at: string;
   used_by: { test: string; steps: number[] }[];
+}
+
+/** A step of a test, by its order. */
+export interface StepRef {
+  test: string;
+  step_order: number;
+}
+
+/** A step of the project acting on an element (mcp-server/lib/element-store.js). */
+export interface StepUse extends StepRef {
+  command: string;
+  intent?: string;
+}
+
+/** An element, and the other steps of the project acting on it. */
+export interface SharedElement {
+  element: { id: number; name: string };
+  uses: StepUse[];
+  /** How many tests those steps are in. */
+  tests: number;
 }
 
 export interface Test {
@@ -193,6 +215,10 @@ export interface Repair {
   verify_execution_id: number | null;
   verify_error: string | null;
   diff: string[];
+  /** It finds its element another way: the other steps acting on it that would be given the new locators too. */
+  shared?: SharedElement | null;
+  /** Applied to every use: the other steps given the new locators. */
+  relocated?: StepRef[];
 }
 
 export interface Execution {

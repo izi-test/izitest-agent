@@ -31,6 +31,7 @@ import { registerAskTools } from './lib/tools/ask.js';
 import { initDatabase } from './lib/db.js';
 import { trustSystemCertificates } from './lib/system-ca.js';
 import { seedAllProjectsStepDefinitions } from './lib/gherkin/step-definition-store.js';
+import { registerAllElements } from './lib/element-store.js';
 import { apiRouter } from './lib/api.js';
 import { parseAllowedOrigins, refuseBrowserRequest } from './lib/origin-guard.js';
 import { cookieAuthorized, wantsSignIn, signInPage, signInCookie, signOutCookie, safeNext, fromOwnOrigin, overHttps } from './lib/dashboard-auth.js';
@@ -115,6 +116,11 @@ closeInterruptedCampaigns();
 // Built-in step definitions are seeded when a project is created: give older projects the
 // ones added since ("I check {string}"…).
 seedAllProjectsStepDefinitions();
+try {
+  registerAllElements();
+} catch (err) {
+  log(`Elements not registered at start: ${err.message}`);
+}
 startWebSocketServer(WS_PORT);
 initLive();
 

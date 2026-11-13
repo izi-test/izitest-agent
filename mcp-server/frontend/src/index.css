@@ -2798,6 +2798,25 @@ textarea { resize: vertical; line-height: 1.5; }
 .repair-diff { margin: 0; padding: 6px 10px; list-style: none; font-family: var(--mono); font-size: 10px; color: var(--accent-bright); background: var(--bg-void); border-radius: var(--radius-sm); word-break: break-all; }
 .repair-error { font-family: var(--mono); font-size: 10px; color: var(--red); white-space: pre-wrap; word-break: break-word; }
 .repair-actions { display: flex; gap: 8px; }
+
+/* ─── The other steps acting on an element (SharedUses): in a repair, in the step editor ─── */
+.shared-uses {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  font-size: 12px;
+  color: var(--text);
+}
+.shared-uses__head { display: flex; align-items: center; gap: 6px; }
+.shared-uses__list { margin: 0; padding: 0 0 0 18px; color: var(--text-muted); font-size: 11px; }
+.shared-uses__test { color: var(--text); }
+.shared-uses__check { font-size: 12px; }
+.shared-uses__note { font-size: 11px; color: var(--text-muted); align-self: center; }
+.element-also { margin-top: 2px; font-size: 10px; color: var(--text-muted); white-space: normal; overflow-wrap: anywhere; }
 .live-summary-triage {
   display: flex;
   flex-direction: column;
