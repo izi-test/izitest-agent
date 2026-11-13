@@ -3,6 +3,16 @@ import react from '@vitejs/plugin-react'
 
 const MCP_BACKEND_PORT = process.env.MCP_PORT || 3467;
 
+// What the server answers, with its token: the proxy adds it on the Node side, it never goes
+// into the browser's bundle.
+const toServer = {
+  target: `http://127.0.0.1:${MCP_BACKEND_PORT}`,
+  changeOrigin: true,
+  headers: process.env.IZITEST_TOKEN
+    ? { Authorization: `Bearer ${process.env.IZITEST_TOKEN}` }
+    : {},
+};
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -15,23 +25,13 @@ export default defineConfig({
     port: 5175,
     strictPort: true,
     proxy: {
-      '/api': {
-        target: `http://127.0.0.1:${MCP_BACKEND_PORT}`,
-        changeOrigin: true,
-        // Le serveur exige le jeton sur /api : le proxy l'ajoute côté Node, il ne
-        // part jamais dans le bundle du navigateur.
-        headers: process.env.IZITEST_TOKEN
-          ? { Authorization: `Bearer ${process.env.IZITEST_TOKEN}` }
-          : {},
-      },
-      // The live view of a tab an agent or a test works in (lib/live.js): the same token.
-      '/live': {
-        target: `http://127.0.0.1:${MCP_BACKEND_PORT}`,
-        changeOrigin: true,
-        headers: process.env.IZITEST_TOKEN
-          ? { Authorization: `Bearer ${process.env.IZITEST_TOKEN}` }
-          : {},
-      },
+      '/api': toServer,
+      // The live view of a tab an agent or a test works in (lib/live.js).
+      '/live': toServer,
+      // Images the server keeps: the page at a failed check, a visual check's baseline.
+      // Without them here, the dashboard answered its own page for them: a broken image.
+      '/assertion-screenshots': toServer,
+      '/data/baselines': toServer,
     },
   },
 })

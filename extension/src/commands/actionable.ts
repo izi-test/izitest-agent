@@ -47,8 +47,13 @@ export function actionStateOf(el: Element): ActionState {
     || el.getAttribute('aria-disabled') === 'true'
     || !!el.closest('fieldset[disabled]');
   if (disabled) return { state: 'disabled', rect };
-  const x = r.left + r.width / 2;
-  const y = r.top + r.height / 2;
+  // The point the click lands on: the centre of the element's first box, as Puppeteer clicks it.
+  // A link wrapped over two lines has the centre of its frame between them, on the cell around
+  // it: it was "covered" by that cell for ever.
+  const boxes = typeof el.getClientRects === 'function' ? Array.from(el.getClientRects()).filter((b) => b.width * b.height > 1) : [];
+  const box = boxes[0] ?? r;
+  const x = box.left + box.width / 2;
+  const y = box.top + box.height / 2;
   // Out of the viewport: scrolled into view before the click, nothing to hit-test here.
   if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return { state: 'ok', rect };
   // Inside a shadow root, its own elementFromPoint sees past the host.

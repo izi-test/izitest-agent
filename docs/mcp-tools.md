@@ -135,13 +135,32 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `plan_regression` | The tests of a project a change needs — its changed files, the routes it touches, the requirements its commit names —, each with why, and those left out with why; nothing is run (see below). |
 | `get_campaign` / `list_campaigns` / `stop_campaign` | A campaign's report; the campaigns, newest first; stop one that runs. |
 | `send_results` | Sends a campaign's results to a tool (a connector: Xray, a Test Execution, each test linked to the stories it covers); a dry run first (see below). |
-| `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a saved test. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
+| `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a test. While the test is recorded, the check is recorded as the next step, right after the action whose result it checks (see below); on a saved test, it goes at the end or at `step_order`. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
 | `delete_test` | Removes a saved test from the database. |
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
 | `get_test_as_code` | Returns a saved test as Playwright code to commit in the project under test (see below). |
 | `create_business_step` | Groups a run of steps of a recorded test into one business Gherkin step (see below). |
 | `add_test_variable` | Turns a recorded value (e.g. a city inside a URL) into a `{{variable}}` of the test (see below). On a step already holding a variable recording made (`{{input_9}}`), renames it everywhere the test uses it and gives it `default_value`. |
+
+### Vérifier pendant l'enregistrement
+
+Pendant un enregistrement, `add_assertion` avec le nom du test enregistré contrôle la page du moment
+et enregistre la vérification comme **étape suivante**, juste après l'action dont elle vérifie le
+résultat. Au rejeu, une vérification attend à sa place que ce qu'elle vérifie apparaisse (jusqu'au
+délai d'attente du projet) avant l'action suivante.
+
+Vérifiées toutes à la fin, les vérifications étaient faites sur la dernière page, et le rejeu
+enchaînait les actions sans attendre ce que chacune amène : sur une fiche à onglets, un deuxième
+onglet cliqué 0,4 s après le premier empêchait le premier de se charger, et la vérification de son
+contenu, en fin de test, échouait. Les consignes des agents (MCP et tableau de bord) leur demandent
+donc de vérifier chaque résultat juste après son action.
+
+- **`step_order`** ne sert pas pendant l'enregistrement : la vérification va après la dernière action.
+- **Ce que le test a tapé** et que la vérification attend (« Welcome Bernadette ») est relié à sa
+  variable à `stop_recording` (« Welcome {{first_name}} »), comme sur un test enregistré.
+- **Sur un test déjà enregistré**, `add_assertion` contrôle la page telle qu'elle est maintenant :
+  ne donnez un `step_order` que si la page affichée est celle que voit cette étape.
 
 ### Export Playwright : `get_test_as_code`
 

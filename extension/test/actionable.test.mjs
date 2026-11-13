@@ -49,6 +49,22 @@ test('a visible, enabled element on top can be clicked; so through an icon insid
   assert.equal(actionStateOf(button).state, 'ok');
 });
 
+test('a link wrapped over two lines is hit-tested at its first line, where the click lands', () => {
+  // the portal's user list: "$duplicate-1081d8.1" wrapped, its last character alone on a second line.
+  const cell = node('TD', { className: 'sorting_1' });
+  const firstLine = { left: 284, top: 337, width: 108, height: 14 };
+  const link = node('A', {
+    parent: cell, rect: { left: 284, top: 337, width: 108, height: 31 },
+    getClientRects: () => [firstLine, { left: 284, top: 354, width: 5, height: 14 }],
+  });
+  const points = [];
+  page({ hitAt: () => link });
+  globalThis.document.elementFromPoint = (x, y) => { points.push([x, y]); return y < 351 ? link : cell; };
+  assert.equal(actionStateOf(link).state, 'ok');
+  assert.deepEqual(points, [[338, 344]], 'the centre of its first line, not of its frame (352.5, on the cell)');
+  assert.deepEqual(actionStateOf(link).rect, { x: 284, y: 337, w: 108, h: 31 }, 'its frame still tells whether it moves');
+});
+
 test('a loading veil over it: covered, and named', () => {
   const button = node('BUTTON');
   const veil = node('DIV', { id: 'spinner', textContent: 'Loading…' });

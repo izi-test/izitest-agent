@@ -31,6 +31,7 @@ import { uniqueVarName, listVariable, variabilizeInput } from './variable-detect
 import { linkAssertionToVariables } from './test-variable.js';
 import { loadTest, saveTest } from './test-store.js';
 import { linkRecorded, nonConformityOf } from './requirements.js';
+import { checksRecording, recordingRequirements, recordCheck, linkRecordedChecks } from './recorded-checks.js';
 import { evaluateAssertion } from './test-execute.js';
 import { pageOf } from './elements.js';
 import { LIVE_ACTIONS } from './live.js';
@@ -547,7 +548,7 @@ function buildTools(sendCommand) {
     // ─── Recording tools ───────────────────────────────────────────
 
     start_recording: tool({
-      description: 'Start recording a browser test. Actions are auto-recorded. Call stop_recording when done.',
+      description: 'Start recording a browser test. Actions are auto-recorded. Check each outcome right after its action with add_assertion (test_name: this test): it is recorded as the next step. Call stop_recording when done.',
       inputSchema: z.object({
         name: z.string(),
         description: z.string().optional(),
@@ -656,11 +657,13 @@ function buildTools(sendCommand) {
             };
           }
         });
+        // The checks made while recording, linked to what was typed: a replay with other values checks those.
+        const checks = linkRecordedChecks(recording.steps, variables, row);
 
         const test = {
           name: recording.name, description: recording.description,
           createdAt: new Date(recording.startedAt).toISOString(),
-          variables: Object.keys(variables).length > 0 ? variables : undefined,
+          variables: Object.keys(checks.variables).length > 0 ? checks.variables : undefined,
           viewport: recording.viewport || null,
           steps: recording.steps
         };
@@ -672,6 +675,7 @@ function buildTools(sendCommand) {
         setRecording(null);
 
         let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
+        for (const { step, names } of checks.linked) summary += `\nThe check of step ${step} is linked to ${names.map((n) => `{{${n}}}`).join(', ')}.`;
         summary += linkRecorded(recording);
         summary += placeRecorded(recording);
         if (varCount > 0) {
@@ -685,7 +689,7 @@ function buildTools(sendCommand) {
     }),
 
     add_assertion: tool({
-      description: 'Add an assertion to a saved test. Evaluates live first — only passes are saved, except on a test linked to a requirement: the expected result it states, when the element is there but shows something else, with non_conformity: true — the test then reports that non-conformity.',
+      description: 'Add an assertion to a test. While it is recorded (test_name: the test being recorded), call it right after the action whose result it checks: it is recorded as the next step, and a replay waits there for what it checks. On a saved test it goes at the end, or at step_order, checked on the page as it is now. Evaluates live first — only passes are saved, except on a test linked to a requirement: the expected result it states, when the element is there but shows something else, with non_conformity: true — the test then reports that non-conformity.',
       inputSchema: z.object({
         test_name: z.string(),
         assertion_type: z.enum([
@@ -712,20 +716,37 @@ function buildTools(sendCommand) {
         if (needsExpected.includes(assertion_type) && expected === undefined) return `"${assertion_type}" requires an expected value.`;
         if (assertion_type === 'attribute_equals' && !attribute) return '"attribute_equals" requires an attribute name.';
 
-        const test = loadTest(test_name);
-        if (!test) return `Test "${test_name}" not found.`;
+        // While its test is recorded, a check is the recording's next step (lib/recorded-checks.js).
+        const recording = getRecording();
+        const recorded = checksRecording(recording, test_name);
+        const test = recorded ? null : loadTest(test_name);
+        if (!recorded && !test) {
+          return `Test "${test_name}" not found.${recording ? ` The test being recorded is "${recording.name}": pass that name to check the result of its last action.` : ''}`;
+        }
 
         let result;
         try { result = await evaluateAssertion(sendCommand, assertion); }
         catch (err) { return `Assertion evaluation error: ${err.message}. NOT added.`; }
 
         // The requirement's expected result, which the page does not meet, is kept failing (lib/requirements.js).
-        const { requirements, elementFound, nonConformity } = nonConformityOf(test_name, result, non_conformity);
+        const { requirements, elementFound, nonConformity } = nonConformityOf(test_name, result, non_conformity, recorded ? recordingRequirements(recording) : undefined);
         if (!result.passed && !nonConformity) {
           const hint = requirements.length && elementFound
             ? `\nThis test checks ${requirements.map((r) => r.key).join(', ')}: if the expected value is the requirement's and the steps before did what they should, call again with non_conformity: true.`
             : '';
           return `Assertion FAILED — NOT added.\n  Type: ${assertion_type}\n  Expected: ${result.expected}\n  Actual: ${result.actual}\nFix and try again.${hint}`;
+        }
+        const verdict = result.passed ? 'Assertion PASSED and'
+          : `Assertion FAILS now — the app does not meet ${requirements.map((r) => r.key).join(', ')} — and was`;
+
+        if (recorded) {
+          // Kept as written: what it names that was typed is linked to the variables at stop_recording.
+          const page = pageOf(result.pageUrl);
+          const intent = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
+          const { step, after } = recordCheck(sess(), { assertion, intent, page });
+          return `${verdict} recorded as step ${step}${after ? `, right after ${after}` : ''}: a replay waits there until it holds, before the next action.`
+            + `\n  Expected: ${result.expected}\n  Actual: ${result.actual}`
+            + (step_order ? '\n  step_order is not used while recording: a check goes right after the last action.' : '');
         }
 
         // Checked against what the test typed: replayed with other values, it checks those. Bound to
@@ -747,9 +768,7 @@ function buildTools(sendCommand) {
         saveTest(test);
         const link = (linked.length ? `\n  Linked to ${linked.map(n => `{{${n}}}`).join(', ')}: saved as "${saved.expected}".` : '') +
           ambiguous.map(({ name, value, found }) => `\n  Not linked to {{${name}}}: "${value}" is found ${found} times in the expected text.`).join('');
-        const head = result.passed ? 'Assertion PASSED and added'
-          : `Assertion FAILS now — the app does not meet ${requirements.map((r) => r.key).join(', ')} — and was added`;
-        return `${head} at step ${step_order || test.steps.length}.\n  Expected: ${result.expected}\n  Actual: ${result.actual}${link}`;
+        return `${verdict} added at step ${step_order || test.steps.length}.\n  Expected: ${result.expected}\n  Actual: ${result.actual}${link}`;
       },
     }),
   };
@@ -766,7 +785,7 @@ RULES:
 2. ALWAYS call snapshot with purposeFilter ("fill" | "click") and, when you know the label, a searchText. Unfiltered snapshots waste context.
 3. Use @eX refs from the MOST RECENT snapshot only. Every new snapshot invalidates all previous refs — do NOT reuse @eX refs that came from an earlier snapshot in this conversation.
 4. After navigating or after any action that may change the DOM (click that opens a modal, fill that triggers validation, scroll that loads new items), re-snapshot before interacting again.
-5. When recording, pass "intent" on each action to describe the step functionally.
+5. When recording, pass "intent" on each action to describe the step functionally. Check each outcome as you go: right after an action whose result matters (a page or a tab opened, a form sent, a list loaded), call add_assertion with the test being recorded, before the next action — the check becomes the next step, and a replay waits there for what it checks. Never leave all checks for the end.
 6. If a click/fill fails with "Element not found: @eX" or "stale ref", call snapshot() again with purposeFilter+searchText to get fresh refs, then retry.
 7. If element not found, broaden snapshot filters before falling back to screenshot.
 8. Keep responses concise — focus on actions, not explanations.

@@ -22,6 +22,7 @@ import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables
 import { redundantTimeWaits } from '../recorded-waits.js';
 import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from '../business-play.js';
 import { elementTimeoutFor } from '../projects.js';
+import { checksRecording, recordingRequirements, recordCheck, linkRecordedChecks } from '../recorded-checks.js';
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -106,7 +107,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: start_recording ---
   server.tool(
     'start_recording',
-    'Start recording a reusable browser automation test. When the user asks to "record", "save", or "enregistrer" a test/parcours, call this tool FIRST. Every browser action (navigate, click, fill, etc.) is automatically recorded — no need to call record_step. IMPORTANT: Always pass the "intent" parameter on each browser action call (click, fill, navigate, etc.) to describe the FUNCTIONAL purpose of the step (e.g. intent: "Submit the login form"). When done, call stop_recording to save (variable detection runs automatically at save time).',
+    'Start recording a reusable browser automation test. When the user asks to "record", "save", or "enregistrer" a test/parcours, call this tool FIRST. Every browser action (navigate, click, fill, etc.) is automatically recorded — no need to call record_step. IMPORTANT: Always pass the "intent" parameter on each browser action call (click, fill, navigate, etc.) to describe the FUNCTIONAL purpose of the step (e.g. intent: "Submit the login form"). Check each outcome as you go: right after an action whose result matters (a page or a tab opened, a form sent, a list loaded), call add_assertion with this test\'s name, before the next action — the check is recorded as the next step, and on a replay it holds the test there until what it checks shows. Checks left for the end are all made on the last page, and the replay then runs the actions without waiting for what each brings. When done, call stop_recording to save (variable detection runs automatically at save time).',
     {
       name: z.string().describe('Name of the test (used as identifier)'),
       description: z.string().optional().describe('Human-readable description of what the test does'),
@@ -169,7 +170,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       const businessText = business.length
         ? `\n\nThe project's business steps — play one with play_business_step instead of doing its steps again:\n${business.map((b) => `- ${b.keyword} ${b.pattern} (${b.steps} steps)`).join('\n')}`
         : '';
-      return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.${recordingDatasetText(project_id, played.dataset)}${businessText}` }] };
+      const checksText = `\n\nCheck each outcome right after the action that brings it, before the next action: add_assertion(test_name: "${name}", …) records the check as the next step.`;
+      return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.${recordingDatasetText(project_id, played.dataset)}${businessText}${checksText}` }] };
     }
   );
 
@@ -340,12 +342,14 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
           };
         }
       });
+      // The checks made while recording, linked to what was typed: a replay with other values checks those.
+      const checks = linkRecordedChecks(recording.steps, variables, row);
 
       const test = {
         name: recording.name,
         description: recording.description,
         createdAt: new Date(recording.startedAt).toISOString(),
-        variables: Object.keys(variables).length > 0 ? variables : undefined,
+        variables: Object.keys(checks.variables).length > 0 ? checks.variables : undefined,
         viewport: recording.viewport || null,
         steps: recording.steps
       };
@@ -358,6 +362,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
       if (cleanup.removed.length) summary += `\nNot kept: ${cleanup.removed.join('; ')}.`;
+      for (const { step, names } of checks.linked) summary += `\nThe check of step ${step} is linked to ${names.map((n) => `{{${n}}}`).join(', ')}.`;
       summary += linkRecorded(recording);
       summary += placeRecorded(recording);
       if (varCount > 0) {
@@ -649,7 +654,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: add_assertion ---
   server.tool(
     'add_assertion',
-    'Add an assertion step to a saved test. The assertion is first evaluated live against the current browser page to verify it passes. If it fails, the assertion is NOT added and the failure details are returned so you can fix the selector or expected value. Only passing assertions are saved to the test — except the checks of what the page does wrong on its own (no_console_errors, no_failed_requests, link_ok, no_a11y_violations): failing, such a check makes the test reproduce the bug (it passes once the bug is fixed); passing, it guards against it. And except, on a test linked to a requirement, the expected result the requirement states, when the element is there but shows something else and you pass non_conformity: true: the test then reports that non-conformity — give the expected value from the requirement, never what the page shows.',
+    'Add an assertion step to a test. While the test is recorded (test_name: the one being recorded), call it right after the action whose result it checks, before the next action: it is recorded as the next step, and on a replay it holds the test there until what it checks shows (up to the project\'s wait). On a saved test it is appended at the end, or put at step_order — but it is checked on the page as it is now: give a step_order only when the page now is what that step sees. The assertion is first evaluated live against the current browser page to verify it passes. If it fails, the assertion is NOT added and the failure details are returned so you can fix the selector or expected value. Only passing assertions are saved to the test — except the checks of what the page does wrong on its own (no_console_errors, no_failed_requests, link_ok, no_a11y_violations): failing, such a check makes the test reproduce the bug (it passes once the bug is fixed); passing, it guards against it. And except, on a test linked to a requirement, the expected result the requirement states, when the element is there but shows something else and you pass non_conformity: true: the test then reports that non-conformity — give the expected value from the requirement, never what the page shows.',
     {
       test_name: z.string().describe('Name of the test to add the assertion to'),
       assertion_type: z.enum([
@@ -662,7 +667,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       expected: z.string().optional().describe('Expected value for comparison assertions; for no_console_errors, a fragment of the error message; for no_failed_requests, a fragment of the request URL; for no_a11y_violations, the axe rule id (e.g. "image-alt")'),
       attribute: z.string().optional().describe('Attribute name for attribute_equals assertion'),
       description: z.string().optional().describe('Human-readable description of what this assertion verifies'),
-      step_order: z.number().optional().describe('Position to insert (1-indexed). If omitted, appends at the end.'),
+      step_order: z.number().optional().describe('On a saved test: position to insert (1-indexed). If omitted, appends at the end. Not used while recording: the check goes right after the last action.'),
       tabId: z.number().optional().describe('Tab to check the assertion in: e.g. the tabId run_test reports, to assert on the page a replay ended on. Default: this session\'s window.'),
       non_conformity: z.boolean().optional().describe('On a test linked to a requirement: the expected value is the requirement\'s, the page does not show it, and you checked the steps before did what they should. The assertion is saved failing: the test reports the non-conformity.')
     },
@@ -685,9 +690,13 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         return { content: [{ type: 'text', text: 'Assertion type "attribute_equals" requires an attribute name.' }] };
       }
 
-      const test = loadTest(test_name);
-      if (!test) {
-        return { content: [{ type: 'text', text: `Test "${test_name}" not found.` }] };
+      // While its test is recorded, a check is the recording's next step (lib/recorded-checks.js).
+      const recording = getRecording();
+      const recorded = checksRecording(recording, test_name);
+      const test = recorded ? null : loadTest(test_name);
+      if (!recorded && !test) {
+        const hint = recording ? ` The test being recorded is "${recording.name}": pass that name to check the result of its last action.` : '';
+        return { content: [{ type: 'text', text: `Test "${test_name}" not found.${hint}` }] };
       }
 
       // ─── Evaluate assertion live against the current browser page ───
@@ -705,7 +714,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       // So is the expected result of a requirement the test checks, when the page shows something
       // else — once the agent says so (non_conformity), having checked the steps before did what
       // they should. Never when the element is not found: a wrong selector.
-      const { requirements, elementFound, nonConformity } = nonConformityOf(test_name, result, non_conformity);
+      const { requirements, elementFound, nonConformity } = nonConformityOf(test_name, result, non_conformity, recorded ? recordingRequirements(recording) : undefined);
       if (!result.passed && !isOracle && !nonConformity) {
         let msg = `Assertion FAILED — not added to test "${test_name}".\n`;
         msg += `  Type: ${assertion_type}\n`;
@@ -718,6 +727,23 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
             + `check first that the steps before did what they should (snapshot, screenshot) — call again with non_conformity: true: it is saved failing, and the test reports the non-conformity.`;
         }
         return { content: [{ type: 'text', text: msg }] };
+      }
+
+      const verdict = (where) => (result.passed ? `Assertion PASSED and ${where}.\n`
+        : isOracle ? `Assertion FAILS now and was ${where}: the test reproduces this bug, and will pass once it is fixed.\n`
+          : `Assertion FAILS now and was ${where}: the app does not meet ${requirements.map((r) => r.key).join(', ')} — the test reports this non-conformity until the app is fixed. Tell the user.\n`);
+      const shown = () => `  Type: ${assertion_type}\n${selector ? `  Selector: ${selector}\n` : ''}  Expected: ${result.expected}\n  Actual:   ${result.actual}`;
+
+      if (recorded) {
+        // Kept as written: what it names that was typed is linked to the variables at stop_recording.
+        const page = pageOf(result.pageUrl);
+        const intentText = description || `Assert: ${assertion_type}${selector ? ` on ${selector}` : ''}${expected ? ` = "${expected}"` : ''}`;
+        const { step, after } = recordCheck(sess(), { assertion, intent: intentText, page });
+        let summary = verdict(`recorded as step ${step} of "${test_name}"${after ? `, right after ${after}` : ''}`);
+        summary += shown();
+        summary += '\n  On a replay it holds the test there until it holds (up to the project\'s wait), before the next action.';
+        if (step_order) summary += '\n  step_order is not used while recording: a check goes right after the last action.';
+        return { content: [{ type: 'text', text: summary }] };
       }
 
       // ─── Assertion passed — save it to the test ───
@@ -748,13 +774,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       saveTest(test);
       const pos = step_order || test.steps.length;
-      let summary = result.passed ? `Assertion PASSED and added to test "${test_name}" at step ${pos}.\n`
-        : isOracle ? `Assertion FAILS now and was added to test "${test_name}" at step ${pos}: the test reproduces this bug, and will pass once it is fixed.\n`
-          : `Assertion FAILS now and was added to test "${test_name}" at step ${pos}: the app does not meet ${requirements.map((r) => r.key).join(', ')} — the test reports this non-conformity until the app is fixed. Tell the user.\n`;
-      summary += `  Type: ${assertion_type}\n`;
-      if (selector) summary += `  Selector: ${selector}\n`;
-      summary += `  Expected: ${result.expected}\n`;
-      summary += `  Actual:   ${result.actual}`;
+      let summary = verdict(`added to test "${test_name}" at step ${pos}`) + shown();
       if (linked.length) {
         summary += `\n  Linked to ${linked.map(n => `{{${n}}}`).join(', ')}: saved as "${saved.expected}", ` +
           'so a replay with other values checks those values.';

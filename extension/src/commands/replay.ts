@@ -22,13 +22,20 @@ const STEP_DELAY_MS: Record<string, number> = { navigate: 300, click: 150 };
 // was the page's first button, and an accessible name only matched an aria-label.
 const SELECTOR_LOCATORS = new Set(['css', 'testid', 'attribute', 'xpath']);
 
-/** Click the middle of the element found, scrolled into view — inside iframes too. */
+/**
+ * Click the element found, scrolled into view — inside iframes too — at the middle of its first
+ * visible box (Puppeteer's clickable point). The middle of its frame missed a link wrapped over
+ * two lines: it fell between them, on the table cell around it, and the page did not change.
+ */
 async function clickAtHandle(page: Page, handle: ElementHandle<Element>): Promise<void> {
   await handle.scrollIntoView().catch(() => {});
-  const box = await handle.boundingBox();
-  if (!box) throw new Error('The element found has no box to click');
-  console.log(`  🖱️ Clicking the element found at (${Math.round(box.x + box.width / 2)}, ${Math.round(box.y + box.height / 2)})`);
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const point = await handle.clickablePoint().catch(async () => {
+    const box = await handle.boundingBox();
+    return box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : null;
+  });
+  if (!point) throw new Error('The element found has no box to click');
+  console.log(`  🖱️ Clicking the element found at (${Math.round(point.x)}, ${Math.round(point.y)})`);
+  await page.mouse.click(point.x, point.y);
 }
 const DEFAULT_STEP_DELAY_MS = 50;
 // After a click that did nothing, how long before the second one.

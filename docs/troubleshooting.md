@@ -88,6 +88,8 @@ certificat racine de l'entreprise, ou un Chrome for Testing décompressé à la 
 
 L'application affichait le bouton avant de savoir y répondre. Le rejeu attend maintenant qu'il soit
 cliquable (rien par-dessus, immobile, actif) et reclique une fois si le premier clic n'a rien changé.
+Un lien qui tient sur deux lignes (un nom long dans un tableau) est cliqué au milieu de sa première
+ligne : le milieu de son cadre tombait entre les deux, sur la cellule autour.
 Si l'étape échoue encore avec « Not clicked: … covered by … », augmentez le délai d'attente du projet.
 
 ### « Concurrent Sessions Exceeded »
@@ -214,6 +216,17 @@ Si l'étape passe quand même par « variable », le clic a été enregistré co
 élément de liste (variable `list_item`). Ce chemin ne fait pas ces contrôles. Pour un menu, ce
 n'est pas une donnée du test : retirez la variable de l'étape pour qu'elle soit jouée par ses
 locators.
+
+### Une vérification de fin de test échoue alors qu'elle passait à l'enregistrement
+
+Les vérifications sont toutes à la fin du test, après plusieurs actions. À l'enregistrement, l'agent
+laissait à chaque page le temps de se charger ; au rejeu, les actions s'enchaînent, et une action
+peut interrompre le chargement amené par la précédente (un onglet cliqué juste après un autre). La
+capture de l'échec montre la page telle qu'elle était.
+
+Placez chaque vérification juste après l'action dont elle vérifie le résultat (onglet *Steps* du
+test, boutons *Move up* / *Move down*) : au rejeu, elle attend là que ce qu'elle vérifie apparaisse avant l'action
+suivante. Les agents le font désormais pendant l'enregistrement.
 
 ---
 

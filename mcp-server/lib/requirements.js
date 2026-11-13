@@ -328,8 +328,7 @@ export function deleteCase(caseId) {
  * test's mistake. A click that missed its button leaves the page as it was: the agent says
  * so only once it checked the steps before did what they should.
  */
-export function nonConformityOf(testName, result, claimed) {
-  const requirements = requirementsOfTest(testName);
+export function nonConformityOf(testName, result, claimed, requirements = requirementsOfTest(testName)) {
   // Not found, or not evaluated at all ("Error: …"): nothing says what the page shows.
   const elementFound = !/not found|^Error: /i.test(String(result.actual ?? ''));
   return { requirements, elementFound, nonConformity: !result.passed && claimed === true && requirements.length > 0 && elementFound };
