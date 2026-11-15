@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyHeuristically } from '../lib/classify.js';
-import { deriveVarNameFromLocators, itemLabel, listVariable, uniqueVarName, variabilizeInput, isNavigation, typedJustBefore, variabilizeSuggestion } from '../lib/variable-detection.js';
+import { deriveVarNameFromLocators, itemLabel, listVariable, uniqueVarName, variabilizeInput, isNavigation, typedJustBefore, variabilizeSuggestion, suggestionLocators, keepStepVariable, listNote, sameItemStep } from '../lib/variable-detection.js';
 import { selectParams } from '../lib/recording.js';
 
 const SIGN_IN = { type: 'box', totalItems: 4, selectedIndex: 0, selectedText: 'Sign in', itemTexts: ['Sign in', 'Clear', 'Send message', 'Clear'], itemXpath: "div/form/div/button[contains(@class,'btn')]" };
@@ -118,6 +118,22 @@ test('a click in a menu, a tab bar or a side menu is navigation, not a variable'
   assert.equal(isNavigation(null), false);
 });
 
+test("the links of the page's header are navigation: the cart link is never \"the first of them\"", () => {
+  // Auchan: the cart link, among the 4 links of its <header>, was made {{product}} by its place.
+  const CART = { type: 'list', totalItems: 4, selectedIndex: 0, selectedText: '3 €19.26', parentSelector: 'main > div > div:nth-of-type(1) > header > div:nth-of-type(2) > div', itemXpath: "a[contains(@class,'navigation-header__link')]", navigation: null };
+  assert.equal(isNavigation(CART, { isList: true, variableName: 'product', selectionMode: 'by_index' }), true);
+  assert.equal(isNavigation({ ...CART, parentSelector: 'div.top > div' }), true, 'its links named after navigation');
+  assert.equal(isNavigation({ ...CART, itemXpath: 'a', parentSelector: '#header > ul' }), true);
+  assert.equal(isNavigation({ ...CART, itemXpath: 'a', parentSelector: 'div[role="banner"] > ul' }), true);
+  // The results of a search: a card may have a header of its own, the list is not in one.
+  const RESULTS = { type: 'list', totalItems: 20, selectedIndex: 1, parentSelector: 'main > div.list__container', itemXpath: "article[contains(@class,'product-thumbnail')]", navigation: null };
+  assert.equal(isNavigation(RESULTS, { isList: true, variableName: 'product', selectionMode: 'by_index' }), false);
+  assert.equal(isNavigation({ ...RESULTS, parentSelector: 'section.headers-list > div' }), false, 'a word that holds "header" is not one');
+  assert.equal(isNavigation({ ...RESULTS, itemXpath: "div[contains(@class,'canvas-item')]" }), false);
+  // A search field's suggestions in the header stay a choice.
+  assert.equal(isNavigation({ ...CART, choice: true }), false);
+});
+
 test('the suggestions of a search field stay a choice: in the header\'s <nav>, or called a dropdown menu', () => {
   // A search bar in the header: its suggestions sit in the <nav>, and the page says they are options.
   const IN_HEADER = { type: 'list', totalItems: 5, selectedText: 'Marseille (13)', itemTexts: ['Marseille (13)', 'Marseillan (34)'], choice: true, navigation: null };
@@ -164,4 +180,69 @@ test('a button clicked after typing is no suggestion; nor a click after a click'
   assert.equal(variabilizeSuggestion([name, save], 1, new Set()), false);
   assert.equal(save.variable, undefined);
   assert.equal(variabilizeSuggestion([pickFrance(), pickFrance()], 1, new Set()), false);
+});
+
+test('a check between typing and picking does not hide the suggestion; its text is its label, not its accessible name', () => {
+  // Auchan: "choco" typed, the agent checks the suggestion shows, then picks it.
+  const typed = { command: 'fill', params: { selector: 'input[name="text"]', value: '{{text}}' }, variable: { name: 'text', type: 'text', defaultValue: 'choco' } };
+  const shows = { command: 'assert', params: {}, assertion: { type: 'element_visible', selector: 'a[href="/recherche?text=chocolat"]' } };
+  const pick = { command: 'click', params: { selector: 'a[aria-label="Suggestion de mot clé 1/2: chocolat"]' }, locators: [
+    { type: 'aria', value: 'Suggestion de mot clé  1/2: chocolat' }, { type: 'text', value: 'chocolat' }, { type: 'css', value: 'a[aria-label="…"]' },
+  ] };
+  const steps = [typed, shows, pick];
+  assert.equal(typedJustBefore(steps, 2), true);
+  assert.equal(variabilizeSuggestion(steps, 2, new Set(['text'])), true);
+  assert.equal(pick.variable.name, 'text_choice');
+  assert.equal(pick.variable.defaultValue, 'chocolat', 'not "Suggestion de mot clé 1/2: chocolat"');
+  assert.deepEqual(pick.locators, [{ type: 'text', value: '{{text_choice}}' }]);
+});
+
+// Auchan's suggestion link, as a click on it records it.
+const auchanPick = [
+  { type: 'aria', value: 'Suggestion de mot clé  1/2: chocolat' },
+  { type: 'attribute', value: 'a[aria-label="Suggestion\\ de\\ mot\\ clé\\ \\ 1\\/2\\:\\ chocolat"]' },
+  { type: 'text', value: 'chocolat' },
+  { type: 'xpath', value: '//header//a[3]' },
+];
+
+test('a suggestion is found by an attribute ending with its text, then by its text — never by its place', () => {
+  assert.deepEqual(suggestionLocators(auchanPick, 'chocolat', '{{text_choice}}'), [
+    { type: 'css', value: 'a[aria-label$=": {{text_choice}}" i]' },
+  ], 'the position "1/2" changes with the value: only the end is kept, whatever its case; the text alone is not');
+  // Walmart: "Bananas" given, "bananas" suggested under a heading "Bananas Selections".
+  assert.deepEqual(suggestionLocators([{ type: 'css', value: 'a[aria-label="laptop computers"]' }, { type: 'aria', value: 'laptop computers' }, { type: 'text', value: 'laptop computers' }], 'laptop computers', '{{search_choice}}'), [
+    { type: 'css', value: 'a[aria-label$="{{search_choice}}" i]' },
+    { type: 'aria', value: '{{search_choice}}' },
+  ], 'its text alone found the heading, and the click went there');
+  assert.deepEqual(suggestionLocators([{ type: 'css', value: 'a[href="/recherche?text=chocolaterie"]' }], 'chocolat', '{{v}}'), [{ type: 'text', value: '{{v}}' }], 'never a piece of a word');
+});
+
+test('a step redone by hand keeps its variable: the suggestion it picks, what it types', () => {
+  const pick = { command: 'click', variable: { name: 'text_choice', type: 'text', defaultValue: 'chocolat', suggestionOf: 'text' } };
+  assert.deepEqual(keepStepVariable(pick, { command: 'click', params: { selector: 'a[aria-label="…"]' }, locators: auchanPick, intent: 'Choisir chocolat' }), {
+    command: 'click', params: { text: '{{text_choice}}' }, intent: 'Choisir chocolat',
+    locators: [{ type: 'css', value: 'a[aria-label$=": {{text_choice}}" i]' }],
+  });
+  const typed = { command: 'fill', variable: { name: 'text', type: 'text', defaultValue: 'choco' } };
+  assert.equal(keepStepVariable(typed, { command: 'fill', params: { selector: '#q', value: 'choco' } }).params.value, '{{text}}');
+  assert.equal(keepStepVariable(typed, { command: 'fill', params: { selector: '#q', value: 'autre' } }).params.value, 'autre', 'another value typed on purpose stays');
+  assert.equal(keepStepVariable({ command: 'click' }, { command: 'click', params: { selector: '#x' } }).params.selector, '#x');
+});
+
+test('the agent is told of a click found in a list — not of a menu, a suggestion or a value kept fixed', () => {
+  const CARD = { type: 'list', parentSelector: '#results', itemXpath: './article', withinXpath: './footer/button[2]', totalItems: 8, selectedIndex: 1, itemTexts: ['Whole milk 1L 1,15 €', 'Semi-skimmed milk 6x1L 6,42 €'] };
+  const steps = [
+    { command: 'navigate', params: {} },
+    { command: 'click', params: {}, _listContext: CARD },
+    { command: 'click', params: {}, _listContext: { ...CARD, withinXpath: './footer/button[3]' } },
+  ];
+  assert.match(listNote(steps, 1, 'act_2'), /^List: taken as item 2 of 8 of a list \("Whole milk 1L 1,15 €", "Semi-skimmed milk 6x1L 6,42 €", …\) — this element of that item\./);
+  assert.match(listNote(steps, 2, 'act_3'), /the same item as step 2: it shares its variable/);
+  assert.equal(sameItemStep(steps, 2, steps[2]._listContext), 2);
+  assert.match(listNote(steps, 1, 'act_2', { correct: (pick) => `pick_list_item({ pick: "${pick}" })` }), /pick_list_item\(\{ pick: "none" \}\)/);
+  // Not told: a menu, a suggestion picked right after typing, a value kept fixed, a click in no list.
+  assert.equal(listNote([{ command: 'click', _listContext: { ...CARD, navigation: 'nav' } }], 0, 'a'), null);
+  assert.equal(listNote([{ command: 'fill', params: { value: 'Fr' } }, { command: 'click', _listContext: CARD }], 1, 'a'), null);
+  assert.equal(listNote([{ command: 'click', _listContext: CARD, _skipVariable: true }], 0, 'a'), null);
+  assert.equal(listNote([{ command: 'click', _listContext: null }], 0, 'a'), null);
 });

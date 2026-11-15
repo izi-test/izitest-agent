@@ -39,6 +39,16 @@ export function cleanStartFor(projectId) {
 }
 
 /** How long a replayed step of this project waits for its element, in ms. */
+/**
+ * Whether a test of project `projectId` that fails opens a bug by itself, when its diagnosis puts
+ * the failure on the app (lib/bugs.js). Off by default: a person reads the run and reports the bug
+ * from it — a diagnosis can be wrong, and the Bugs page filled with what was the test's doing.
+ */
+export function autoBugsFor(projectId) {
+  if (projectId == null) return false;
+  return db.prepare('SELECT auto_bugs FROM projects WHERE id = ?').get(projectId)?.auto_bugs === 1;
+}
+
 export function elementTimeoutFor(projectId) {
   if (projectId == null) return DEFAULT_ELEMENT_TIMEOUT_MS;
   const row = db.prepare('SELECT element_timeout_ms FROM projects WHERE id = ?').get(projectId);
@@ -50,7 +60,7 @@ const originOf = (url) => { try { return new URL(url).origin; } catch { return n
 /** The projects, newest first, with how many tests each has; `url`: those whose app it is. */
 export function listProjects({ url } = {}) {
   const rows = db.prepare(`
-    SELECT p.id, p.name, p.description, p.project_type, p.base_url, p.language, p.element_timeout_ms, p.clean_start, p.created_at, p.updated_at,
+    SELECT p.id, p.name, p.description, p.project_type, p.base_url, p.language, p.element_timeout_ms, p.clean_start, p.auto_bugs, p.created_at, p.updated_at,
            (SELECT COUNT(*) FROM tests t WHERE t.project_id = p.id) AS test_count
     FROM projects p ORDER BY p.updated_at DESC
   `).all();
@@ -64,7 +74,7 @@ export function listProjects({ url } = {}) {
  * Create a project, its built-in Gherkin phrases seeded in its language. Throws when the name is
  * missing or taken — telling which project has it.
  */
-export function createProject({ name, description = '', context = '', project_type = null, base_url = null, language, element_timeout_ms = null } = {}) {
+export function createProject({ name, description = '', context = '', project_type = null, base_url = null, language, element_timeout_ms = null, auto_bugs = false } = {}) {
   const trimmed = String(name ?? '').trim();
   if (!trimmed) throw new Error('name is required');
   if (project_type && !PROJECT_TYPES.includes(project_type)) throw new Error(`project_type is one of ${PROJECT_TYPES.join(', ')}`);
@@ -77,9 +87,9 @@ export function createProject({ name, description = '', context = '', project_ty
   }
   const timeout = elementTimeoutOf(element_timeout_ms);
   const project = db.prepare(
-    `INSERT INTO projects (name, description, context, project_type, base_url, language, element_timeout_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`
-  ).get(trimmed, description || '', context || '', project_type || null, base_url || null, languageOf(language), timeout);
+    `INSERT INTO projects (name, description, context, project_type, base_url, language, element_timeout_ms, auto_bugs)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
+  ).get(trimmed, description || '', context || '', project_type || null, base_url || null, languageOf(language), timeout, auto_bugs ? 1 : 0);
   seedProjectStepDefinitions(project.id);
   return project;
 }

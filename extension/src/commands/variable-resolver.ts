@@ -8,26 +8,52 @@ export interface VariableResolve {
   itemXpath: string;
   selectionMode: 'by_index' | 'by_text';
   value: string;
+  /** The element inside the item picked — the "Add" button of the second product's card. */
+  withinXpath?: string;
 }
 
 export interface ReplayStep extends WorkflowStep {
   variableResolve?: VariableResolve;
 }
 
+// How long the item, or the element inside it, is waited for: the "+" of a quantity shows once
+// the "Add" before it has been answered, the results once the search has.
+const RESOLVE_WAIT_MS = 10_000;
+const RESOLVE_POLL_MS = 250;
+
 export async function resolveVariableElement(
   page: Page,
   tabId: number,
-  variableResolve: VariableResolve
+  variableResolve: VariableResolve,
+  { waitMs = RESOLVE_WAIT_MS }: { waitMs?: number } = {}
 ): Promise<{ handle: ElementHandle<Element>; description: string } | null> {
-  const { parentSelector, itemXpath, selectionMode, value } = variableResolve;
+  const { parentSelector, itemXpath, selectionMode, value, withinXpath = '' } = variableResolve;
 
   try {
     await ensureContentScript(tabId);
 
-    const result = await page.evaluate(
-      (parentSel: string, xpath: string, mode: string, val: string) => {
-        function findAndSelect(context: Element | Document, contextLabel: string):
-          { x: number; y: number; text: string; index: number; count: number; via: string } | { error: string } {
+    const until = Date.now() + waitMs;
+    const attempt = () => page.evaluate(
+      (parentSel: string, xpath: string, mode: string, val: string, within: string) => {
+        type Found = { x: number; y: number; text: string; index: number; count: number; via: string };
+        // The item picked, or the element inside it (`within`), brought into view: its centre is clicked.
+        function target(item: Element, index: number, count: number, via: string): Found | { error: string } {
+          let el: Element | null = item;
+          if (within) {
+            const inside = document.evaluate(within, item, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            el = inside.singleNodeValue as Element | null;
+            if (!el) return { error: `Nothing at "${within}" in item ${index} of ${count} (${via})` };
+          }
+          el.scrollIntoView({ block: 'center', inline: 'nearest' });
+          const rect = el.getBoundingClientRect();
+          return {
+            x: rect.x + rect.width / 2, y: rect.y + rect.height / 2,
+            text: item.textContent?.trim().replace(/\s+/g, ' ').substring(0, 100) || '',
+            index, count, via,
+          };
+        }
+
+        function findAndSelect(context: Element | Document, contextLabel: string): Found | { error: string } {
 
           const xpathExpr = xpath.startsWith('.') ? xpath : `.//${xpath}`;
           const xpathResult = document.evaluate(
@@ -45,23 +71,12 @@ export async function resolveVariableElement(
             }
             const item = xpathResult.snapshotItem(index) as Element;
             if (!item) return { error: `Item at index ${index} is null` };
-
-            const rect = item.getBoundingClientRect();
-            return {
-              x: rect.x + rect.width / 2, y: rect.y + rect.height / 2,
-              text: item.textContent?.trim().substring(0, 100) || '',
-              index, count, via: contextLabel
-            };
+            return target(item, index, count, contextLabel);
           } else {
             for (let i = 0; i < count; i++) {
               const item = xpathResult.snapshotItem(i) as Element;
               if (item && item.textContent?.trim().toLowerCase().includes(val.toLowerCase())) {
-                const rect = item.getBoundingClientRect();
-                return {
-                  x: rect.x + rect.width / 2, y: rect.y + rect.height / 2,
-                  text: item.textContent?.trim().substring(0, 100) || '',
-                  index: i, count, via: contextLabel
-                };
+                return target(item, i, count, contextLabel);
               }
             }
             return { error: `No item with text containing "${val}" found (${count} items in ${contextLabel})` };
@@ -95,8 +110,13 @@ export async function resolveVariableElement(
         errors.push(globalRes.error);
         return { error: errors.join('; ') };
       },
-      parentSelector, itemXpath, selectionMode, value
+      parentSelector, itemXpath, selectionMode, value, withinXpath
     );
+    let result = await attempt();
+    while ('error' in result && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, RESOLVE_POLL_MS));
+      result = await attempt();
+    }
 
     if ('error' in result) {
       console.error(`  ❌ Variable resolve failed: ${result.error}`);

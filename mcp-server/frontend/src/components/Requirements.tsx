@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { rowsVerdict } from '../rows';
 import {
   ClipboardList, Plus, Trash2, Save, ArrowLeft, FlaskConical, Link2, X, ExternalLink, Sparkles, AlertTriangle, FileCode, Bot, Loader2, Play, Upload,
   Search, ChevronRight, Layers,
@@ -497,7 +498,7 @@ function RequirementEditor({ requirement }: { requirement: Requirement }) {
                   <div key={c.id} className="side-list__row side-list__row--link" onClick={() => onOpenTest(c.test!)}>
                     <div className="side-list__main">
                       <span className="side-list__title mono">{c.test}</span>
-                      <span className="side-list__sub">{c.last_run ? relativeTime(c.last_run.started_at) : 'never run'}</span>
+                      <span className="side-list__sub">{c.last_run ? `${relativeTime(c.last_run.started_at)}${rowsVerdict(c.last_run.rows) ? ` · ${rowsVerdict(c.last_run.rows)}` : ''}` : 'never run'}</span>
                     </div>
                     <StatusPill status={c.last_run?.status ?? 'never'} />
                   </div>

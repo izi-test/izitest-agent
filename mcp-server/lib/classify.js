@@ -4,7 +4,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { log } from './logger.js';
 import { evaluate, getOpenRouterKey } from './jev.js';
-import { itemLabel } from './variable-detection.js';
+import { itemLabel, isNavigation } from './variable-detection.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -151,16 +151,38 @@ export function classifyHeuristically({ type, itemTexts = [], selectedText = '',
   return { isList: true, variableName, selectionMode: labelled ? 'by_text' : 'by_index' };
 }
 
-export async function detectListContext(sendCommand, { selector, text, tabId }) {
+/**
+ * The list the element `selector` (or of text `text`) is an item of, as the page says: null when
+ * it is in none, undefined when it could not be told (no element, no answer).
+ */
+export async function detectListContext(sendCommand, { selector, text, tabId, profile }) {
   try {
     const params = {};
     if (selector) params.selector = selector;
     if (text) params.text = text;
     if (tabId) params.tabId = tabId;
-    const result = await sendCommand(undefined, 'detect_list_context', params, 10000);
-    return result;
+    const result = await sendCommand(profile, 'detect_list_context', params, 10000);
+    return result ?? null;
   } catch (err) {
     log(`detect_list_context failed: ${err.message}`);
-    return null;
+    return undefined;
   }
+}
+
+/**
+ * Whether a click recorded in a list (`listContext`) becomes a variable, and how: what the agent
+ * said with record_step(pick) — by its place, by its text —, else what the classifier says, a
+ * menu or a tab bar never one. The classification ({ isList, variableName, selectionMode }), or
+ * null when it stays a click on its element. pick "none" never comes here (the step's value is
+ * kept fixed).
+ */
+export async function judgeListClick(listContext, step, { afterTyping = false } = {}) {
+  if (!listContext) return null;
+  const pick = step._pick;
+  if (!pick && isNavigation(listContext, null, { afterTyping })) return null;
+  const classified = await classifyWithLLM(listContext, step.intent);
+  if (pick === 'by_place' || pick === 'by_text') {
+    return { ...classified, isList: true, selectionMode: pick === 'by_text' ? 'by_text' : 'by_index' };
+  }
+  return classified.isList && !isNavigation(listContext, classified, { afterTyping }) ? classified : null;
 }

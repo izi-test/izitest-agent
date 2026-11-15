@@ -307,15 +307,17 @@ export function stepsHash(steps = []) {
  * again; a deferred or dismissed one stays so). A test that reproduces a reported bug shows that
  * bug, whatever the diagnosis. The run is linked to it. { bug, isNew, reopened }, or null.
  */
-export function recordRunBug({ testName, projectId = null, executionId, campaignId = null, dataRow = null, stepOrder, triage, requirements = [] }) {
+export function recordRunBug({ testName, projectId = null, executionId, campaignId = null, dataRow = null, stepOrder, triage, requirements = [], auto = true, manual = false }) {
   if (!stepOrder) return null;
   const reported = seeReportedBug({ testName, executionId, campaignId });
   if (reported) return reported;
-  if (!isAppBug(triage)) return null;
+  // Reported by a person from the run (manual): a bug, whatever the diagnosis said. Otherwise only
+  // when the project opens bugs by itself (auto) and the diagnosis puts the failure on the app.
+  if (!manual && (!auto || !isAppBug(triage))) return null;
   const test = loadTest(testName);
   const step = test?.steps?.[stepOrder - 1];
   const { evidence = {} } = triage;
-  const kind = RUN_BUG_KINDS[triage.cause];
+  const kind = RUN_BUG_KINDS[triage.cause] ?? 'regression';
   // The requests the diagnosis counted against the app: one of another site with no answer — an
   // analytics script a proxy blocks — is not among them, and makes no bug worse.
   const failedRequests = evidence.page?.failedRequests ?? [];

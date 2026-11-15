@@ -1,12 +1,14 @@
+import { useState } from 'react';
 import { Download, MonitorOff, Play, Square, Loader2 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setRunHeadless } from '../store/slices/uiSlice';
-import { useGetHeadlessQuery, useHeadlessActionMutation } from '../store/services/settingsApi';
+import { useGetHeadlessQuery, useHeadlessActionMutation, useSetHeadlessIdleMutation } from '../store/services/settingsApi';
 import { Button } from './Button';
 import { Card, Pill } from './ui';
 
 // The Chrome without windows tests can run in (mcp-server/lib/headless.js): installed here
-// (Chrome for Testing, ~150 MB), started on demand or by hand, stopped with the server.
+// (Chrome for Testing, ~150 MB), started on demand or by hand, stopped after minutes without
+// work (idle_minutes) or with the server.
 
 const megabytes = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
 const errorOf = (err: unknown) => (err as { data?: { error?: string } })?.data?.error ?? 'The request failed';
@@ -16,9 +18,18 @@ export function HeadlessSettings() {
   const runHeadless = useAppSelector((state) => state.ui.runHeadless);
   const { data: status, refetch } = useGetHeadlessQuery(undefined, { pollingInterval: 0 });
   const busy = !!status?.installing || !!status?.starting;
-  // Followed while it installs or starts.
-  useGetHeadlessQuery(undefined, { pollingInterval: busy ? 1500 : 0 });
+  // Followed while it installs or starts; while it runs, now and then: it stops when it has had nothing to do.
+  useGetHeadlessQuery(undefined, { pollingInterval: busy ? 1500 : status?.connected ? 30_000 : 0 });
   const [act, { isLoading, error }] = useHeadlessActionMutation();
+  const [saveIdle, { error: idleError, isLoading: savingIdle }] = useSetHeadlessIdleMutation();
+  // The minutes being typed (null: the server's), kept when the field is left or Enter is pressed.
+  const [draft, setDraft] = useState<string | null>(null);
+  const idle = draft ?? (status ? String(status.idle_minutes) : '');
+  const keepIdle = () => {
+    if (!status || draft === null || draft.trim() === '' || Number(draft) === status.idle_minutes) return setDraft(null);
+    // Shown as typed until the server has it (or refused it: its message below).
+    saveIdle(Number(draft)).finally(() => setDraft(null));
+  };
 
   const state = !status ? null
     : status.installing ? <Pill tone="blue">Installing · {status.installing.total ? `${megabytes(status.installing.downloaded)} of ${megabytes(status.installing.total)}` : 'starting'}</Pill>
@@ -34,7 +45,7 @@ export function HeadlessSettings() {
         <p className="help">
           It is Chrome for Testing{status?.installed && ` ${status.installed.version}`}, with the extension of this repository and a profile of
           its own: its cookies and logins are not your Chrome's — a test of an app behind a login logs in itself. It starts on the first
-          run asked headless, and stops with the server.
+          run asked headless, and stops after the minutes set below without work, or with the server.
         </p>
         <p className="help">
           <strong>Without the extension in your Chrome</strong> — a company computer that blocks extensions —, agents record tests
@@ -51,6 +62,19 @@ export function HeadlessSettings() {
             <span className="switch__hint">Runs of a test and campaigns started from the dashboard; the run options of a test and the campaign form change it too.</span>
           </span>
         </label>
+        <div className="field-group headless-idle">
+          <label htmlFor="headless-idle">Stop after</label>
+          <div className="headless-idle__row">
+            <input id="headless-idle" type="number" min={0} max={1440} step={1} value={idle} disabled={!status || savingIdle}
+              onChange={(e) => setDraft(e.target.value)} onBlur={keepIdle}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+            <span>minutes without work</span>
+          </div>
+          <p className="field__hint">
+            No run, campaign or recording in it for that long: it stops, and the next run that needs it starts it again (a few seconds). 0: it runs until the server stops.
+          </p>
+          {idleError && <div className="alert alert--error">{errorOf(idleError)}</div>}
+        </div>
         <div className="repair-actions">
           {!status?.installed && (
             <Button icon={status?.installing ? Loader2 : Download} disabled={!!status?.installing} onClick={() => act('install').then(() => refetch())}>

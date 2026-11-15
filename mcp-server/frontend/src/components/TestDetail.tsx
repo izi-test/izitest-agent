@@ -22,7 +22,7 @@ import {
   useGetTestQuery, useUpdateTestMutation, useDeleteTestMutation, useDeleteStepMutation, useReorderStepsMutation, useGetTestCampaignsQuery,
   useBindDatasetMutation, useSetStepOptionalMutation,
 } from '../store/services/testsApi';
-import { useGetExecutionsQuery } from '../store/services/executionsApi';
+import { useGetExecutionsQuery, useGetLastRunQuery } from '../store/services/executionsApi';
 import { useGetProjectsQuery, useGetDatasetsQuery } from '../store/services/projectsApi';
 import { useStartCampaignMutation } from '../store/services/campaignsApi';
 import { useGetTestRequirementsQuery } from '../store/services/requirementsApi';
@@ -34,12 +34,14 @@ import { ConfirmModal } from './ConfirmModal';
 import { MoveToProjectDialog } from './ProjectSelector';
 import { Button } from './Button';
 import { ExecutionHistory } from './ExecutionHistory';
+import { rowValuesText, rowsVerdict } from '../rows';
 import { LiveExecutionModal } from './LiveExecutionModal';
 import { GherkinEditor } from './GherkinEditor';
 import { BusinessStepProposals, BusinessStepsNotice } from './BusinessStepProposals';
 import { ComputedHint } from './ComputedValues';
 import { COMPUTED_HELP, useComputedPreview } from '../values';
 import { CodePanel } from './CodePanel';
+import { TestRows } from './TestRows';
 import { HeadlessSwitch } from './HeadlessSwitch';
 import { useRunHeadless } from '../headless';
 import { Card, EmptyState, KeyChip, Menu, ProjectChip, ResultBar, StatusPill } from './ui';
@@ -113,6 +115,8 @@ export function TestDetail({ testName }: TestDetailProps) {
     isAgentMode,
     agentOutput,
     liveTabId,
+    liveRows,
+    liveRowIndex,
     refreshTrigger,
     isDebugMode,
     isPaused,
@@ -125,6 +129,8 @@ export function TestDetail({ testName }: TestDetailProps) {
   const { data: test, isLoading, refetch } = useGetTestQuery(testName);
   const { data: projects = [] } = useGetProjectsQuery();
   const { data: runs = [] } = useGetExecutionsQuery({ testName, limit: 20 }, { refetchOnMountOrArgChange: refreshTrigger });
+  // How it last did, every row it plays counted: its last run alone tells only its last row.
+  const { data: lastOfRows = null } = useGetLastRunQuery(testName, { refetchOnMountOrArgChange: refreshTrigger });
   const { data: campaigns = [] } = useGetTestCampaignsQuery(testName);
   const [updateTestMut] = useUpdateTestMutation();
   const [deleteTestMut] = useDeleteTestMutation();
@@ -133,8 +139,10 @@ export function TestDetail({ testName }: TestDetailProps) {
   // What the variables holding expressions would give now (Data tab).
   const currentValues = Object.fromEntries(Object.entries(test?.variables ?? {}).map(([key, info]) => [key, String(variableOverrides[key] ?? (info as { defaultValue?: string })?.defaultValue ?? '')]));
   const computedPreview = useComputedPreview(currentValues, projects.find((p) => p.id === test?.project_id)?.language, test?.project_id);
-  // Bound to a dataset: the row a run plays, and the datasets it may be bound to.
-  const [dataRow, setDataRow] = useState(1);
+  // With rows (its own, or its dataset's): the row a run plays — 0, every row, a run each —, and
+  // the datasets it may be bound to.
+  const [dataRow, setDataRow] = useState(0);
+  const [rowsDirty, setRowsDirty] = useState(false);
   const { data: datasets = [] } = useGetDatasetsQuery(test?.project_id ?? 0, { skip: !test?.project_id });
   const [bindDataset] = useBindDatasetMutation();
   const [startCampaign, { isLoading: startingCampaign }] = useStartCampaignMutation();
@@ -182,7 +190,8 @@ export function TestDetail({ testName }: TestDetailProps) {
   // The name and description typed, not saved yet: leaving asks first. Compared once the form
   // holds this test's (the store may still hold the one opened before).
   const dirty = !!test && syncedWith === test.updated_at && (editName !== test.name || editDescription !== (test.description || ''));
-  const { blocker, allow } = useLeaveGuard(dirty);
+  // Rows typed in the Data tab, not saved yet: leaving asks first too.
+  const { blocker, allow } = useLeaveGuard(dirty || rowsDirty);
 
   const handleSaveMeta = async () => {
     if (!editName.trim()) return dispatch(showToast({ message: 'Name is required', type: 'error' }));
@@ -281,11 +290,15 @@ export function TestDetail({ testName }: TestDetailProps) {
       return handleAgentExecute();
     }
 
+    // Only the values changed here: a default sent along would win over every row's value.
+    const changed = Object.fromEntries(Object.entries(variableOverrides).filter(([key, value]) => value !== String((test.variables?.[key] as { defaultValue?: string } | undefined)?.defaultValue ?? '')));
+    const rowCount = test.played_rows?.row_count ?? 0;
     dispatch(executeTest({
       testName: test.name,
       newWindow: executeNewWindow,
-      variables: variableOverrides,
-      ...(test.dataset ? { row: Math.min(dataRow, test.dataset.row_count) } : {}),
+      variables: changed,
+      // A row chosen in Run options: that one; otherwise every row, a run each.
+      ...(rowCount && dataRow ? { row: Math.min(dataRow, rowCount) } : {}),
       debug: useDebug,
       breakpoints: [],
       // Debug is watched step by step: it keeps a window.
@@ -415,20 +428,23 @@ CRITICAL RULES:
               {runOptionsOpen && (
                 <div className="popover run-options">
                   <div className="popover__title">Run options</div>
-                  {test.dataset && (
+                  {test.played_rows && (
                     <div className="field">
-                      <span className="field__label"><Table size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Row of {test.dataset.name}</span>
-                      <select value={dataRow} onChange={(e) => setDataRow(Number(e.target.value))}>
-                        {test.dataset.row_labels.map((label, i) => <option key={i} value={i + 1}>{label}</option>)}
+                      <span className="field__label"><Table size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Rows {test.played_rows.source === 'dataset' ? `of ${test.played_rows.name}` : 'of the test'}</span>
+                      <select aria-label="Rows to play" value={dataRow} onChange={(e) => setDataRow(Number(e.target.value))}>
+                        <option value={0}>{test.played_rows.row_count === 1 ? 'Its row' : `Every row (${test.played_rows.row_count}), a run each`}</option>
+                        {test.played_rows.row_count > 1 && test.played_rows.row_labels.map((label, i) => <option key={i} value={i + 1}>Only {label}</option>)}
                       </select>
-                      <Button size="sm" variant="secondary" icon={Layers} disabled={startingCampaign} onClick={async () => {
-                        try {
-                          const { campaign } = await startCampaign({ tests: [test.name], headless: runHeadless }).unwrap();
-                          go(`/campaigns/${campaign.id}`, { from: test.name });
-                        } catch (err) {
-                          dispatch(showToast({ message: (err as { data?: { error?: string } })?.data?.error ?? 'The campaign did not start', type: 'error' }));
-                        }
-                      }}>Run every row ({test.dataset.row_count})</Button>
+                      {test.played_rows.row_count > 1 && (
+                        <Button size="sm" variant="secondary" icon={Layers} disabled={startingCampaign} onClick={async () => {
+                          try {
+                            const { campaign } = await startCampaign({ tests: [test.name], headless: runHeadless }).unwrap();
+                            go(`/campaigns/${campaign.id}`, { from: test.name });
+                          } catch (err) {
+                            dispatch(showToast({ message: (err as { data?: { error?: string } })?.data?.error ?? 'The campaign did not start', type: 'error' }));
+                          }
+                        }}>Run every row as a campaign</Button>
+                      )}
                     </div>
                   )}
                   <HeadlessSwitch disabledReason={useDebug ? 'Debug runs in a window: it is watched step by step.' : useAgent ? 'The agent repairs in your Chrome: it runs there.' : undefined} />
@@ -492,7 +508,8 @@ CRITICAL RULES:
           <span className="meta-item"><List size={14} />{steps.length} step{steps.length === 1 ? '' : 's'}</span>
           {assertionCount > 0 && <span className="meta-item"><ShieldCheck size={14} />{assertionCount} assertion{assertionCount > 1 ? 's' : ''}</span>}
           <span className="meta-item">
-            Last run: {lastRun ? <><StatusPill status={lastRun.status} /> {relativeTime(lastRun.started_at)}</> : <StatusPill status="never" />}
+            Last run: {lastRun ? <><StatusPill status={lastOfRows?.status ?? lastRun.status} /> {relativeTime(lastRun.started_at)}</> : <StatusPill status="never" />}
+            {rowsVerdict(lastOfRows?.rows) && <span className={lastOfRows?.rows?.failed.length ? 'meta-rows meta-rows--failed' : 'meta-rows'}>· {rowsVerdict(lastOfRows?.rows)}</span>}
           </span>
           <span className="meta-item"><Clock size={14} />Updated {dateTime(test.updated_at)}</span>
           {optionsChanged && (
@@ -527,23 +544,24 @@ CRITICAL RULES:
                   <select aria-label="Dataset" value={test.dataset?.id ?? ''} onChange={async (e) => {
                     try {
                       await bindDataset({ testName: test.name, dataset: e.target.value ? Number(e.target.value) : null }).unwrap();
-                      setDataRow(1);
+                      setDataRow(0);
                     } catch (err) {
                       dispatch(showToast({ message: (err as { data?: { error?: string } })?.data?.error ?? 'Not bound', type: 'error' }));
                     }
                   }}>
-                    <option value="">None — one run with the values below</option>
+                    <option value="">None — the rows of the test below, or one run with its defaults</option>
                     {datasets.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.row_count} row{d.row_count === 1 ? '' : 's'}</option>)}
                   </select>
                   <button className="link-btn" onClick={() => go('/datasets', { from: test.name })}>{datasets.length ? 'Datasets' : 'Add a dataset'}</button>
                 </div>
                 {test.dataset && (
                   <p className="field__hint">
-                    Its columns: {test.dataset.columns.map((c) => <span key={c} className="step-var-badge">{`{{${c}}}`}</span>)} — a run plays one row (Run options), a campaign every row.
+                    Its columns: {test.dataset.columns.map((c) => <span key={c} className="step-var-badge">{`{{${c}}}`}</span>)} — a run plays every row, a run each (Run options: one only), a campaign too.
                   </p>
                 )}
               </Card>
             )}
+            <TestRows key={test.name} test={test} onDirtyChange={setRowsDirty} />
             <Card title="Variables" subtitle="The values a run uses; change them for the next run, or save them as the defaults."
               actions={(
                 <Button variant="secondary" size="sm" icon={Save} onClick={async () => {
@@ -751,7 +769,7 @@ CRITICAL RULES:
                     <div key={r.id} className="side-list__row side-list__row--link" onClick={() => dispatch(setActiveTab('history'))}>
                       <StatusPill status={r.status} />
                       <div className="side-list__main">
-                        <span className="side-list__title">{relativeTime(r.started_at)} · {formatDuration(r.duration_ms)}</span>
+                        <span className="side-list__title">{relativeTime(r.started_at)} · {formatDuration(r.duration_ms)}{r.data_row ? <span className="row-chip" style={{ marginLeft: 6 }} title={rowValuesText(r.data_values)}>Row {r.data_row}</span> : null}</span>
                         {r.campaign_id
                           ? <button className="link-btn side-list__sub" onClick={(e) => { e.stopPropagation(); go(`/campaigns/${r.campaign_id}`, { from: test.name }); }}>In campaign #{r.campaign_id}</button>
                           : <span className="side-list__sub">{r.trigger === 'manual' ? 'Run from here' : r.trigger}</span>}
@@ -795,7 +813,7 @@ CRITICAL RULES:
         isOpen={blocker.state === 'blocked'}
         tone="primary"
         title="Leave without saving?"
-        message="The name or description you changed is not saved yet."
+        message={rowsDirty ? 'The rows you typed in the Data tab are not saved yet.' : 'The name or description you changed is not saved yet.'}
         confirmLabel="Leave without saving"
         onConfirm={() => blocker.proceed?.()}
         onCancel={() => blocker.reset?.()}
@@ -824,6 +842,8 @@ CRITICAL RULES:
         agentMode={isAgentMode}
         agentOutput={agentOutput}
         liveTabId={liveTabId}
+        liveRows={liveRows}
+        liveRowIndex={liveRowIndex}
         isDebugMode={isDebugMode}
         isPaused={isPaused}
         breakpoints={breakpoints}

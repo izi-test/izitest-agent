@@ -9,9 +9,9 @@
 
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
-import { ensureHeadless, inHeadless, laneProfile, stopHeadless } from './headless.js';
+import { ensureHeadless, holdHeadless, inHeadless, laneProfile, stopHeadless } from './headless.js';
 import { createAdHocSession, destroySession, runInSession, listSessions } from './session.js';
-import { datasetOfTest } from './datasets.js';
+import { rowsOfTest, shownRow, rowLabel } from './datasets.js';
 import { loadTest } from './test-store.js';
 import { keptNames } from './server-steps.js';
 import { getRequirement, listRequirements, coverageOf, requirementsOfTest, riskRank } from './requirements.js';
@@ -261,9 +261,9 @@ export function startCampaign({ name, tests, requirement, projectId = null, vers
   if (!names.length) throw new Error('No test to run: none in that scope');
   // Without stages, the tests are one stage, side by side.
   const plan = staged ?? [{ mode: 'parallel', tests: names, needs_previous: false }];
-  // A test bound to a dataset (lib/datasets.js) runs once per row.
+  // A test with rows — those of its dataset, or its own (lib/datasets.js) — runs once per row.
   const entries = plan.flatMap((stage, s) => stage.tests.flatMap((name) => {
-    const dataset = datasetOfTest(name);
+    const dataset = rowsOfTest(name);
     const rows = dataset ? dataset.rows.map((_, i) => i + 1) : [null];
     return rows.map((row) => (staged ? { test: name, ...(row ? { row } : {}), stage: s } : row ? { test: name, row } : name));
   }));
@@ -363,11 +363,16 @@ function entryOf(entry) {
 /** How a run of a campaign is told apart: its test, and its row when it plays one. */
 export const labelOf = ({ name, row }) => (row ? `${name} [row ${row}]` : name);
 
+/** The values of a row played, one line: "email = bob@x.dev, password = (hidden)". */
+export const rowValuesText = (values) => Object.entries(values ?? {}).map(([column, value]) => `${column} = ${value}`).join(', ');
+
 async function runCampaign(id, plan, entries, lanes, state, dispatch, headless, recordVideo = false) {
   const { executeTest } = await import('./test-execute.js');
   // As many lanes as tests to run at once, at most.
   const widest = Math.max(1, ...plan.map((stage, s) => (stage.mode === 'parallel' ? entries.filter((e) => e.stage === s).length : 1)));
   lanes = Math.max(1, Math.min(lanes, widest));
+  // Not stopped for being idle while the campaign runs: between two stages, a test waiting.
+  const release = headless ? holdHeadless() : () => {};
   if (headless) {
     headlessCampaigns++;
     // No headless Chrome to run in: every test is told why it did not run.
@@ -469,6 +474,7 @@ async function runCampaign(id, plan, entries, lanes, state, dispatch, headless, 
     });
   } finally {
     destroySession(session.id);
+    release();
     if (headless && --headlessCampaigns === 0) {
       await stopHeadless({ from: 2 }).catch((err) => log(`Campaign #${id}: the headless Chromes of its lanes did not stop: ${err.message}`));
     }
@@ -512,12 +518,13 @@ function testsOf(row) {
   const errors = parseJson(row.errors) ?? {};
   const skips = parseJson(row.skips) ?? {};
   const runs = new Map(db.prepare(
-    `SELECT id, test_name, data_row, status, failed_step, total_steps, error, duration_ms, triage, assertions_total, assertions_failed, bug_id
+    `SELECT id, test_name, data_row, data_values, status, failed_step, total_steps, error, duration_ms, triage, assertions_total, assertions_failed, bug_id
      FROM test_executions WHERE campaign_id = ? ORDER BY id`
   ).all(row.id).map((run) => [labelOf({ name: run.test_name, row: run.data_row }), run]));
   // The bug a failed run met, in the Bugs page (lib/bugs.js recordRunBug).
   const bugOf = db.prepare('SELECT id, title, kind, severity, status, occurrences, first_seen FROM bugs WHERE id = ?');
   const live = running.has(row.id);
+  const rowsNow = new Map();
   return parseJson(row.tests).map((entry) => {
     const { name, row: dataRow, stage } = entryOf(entry);
     const label = labelOf({ name, row: dataRow });
@@ -525,8 +532,12 @@ function testsOf(row) {
     const triage = parseJson(run?.triage);
     const status = run ? ({ success: 'passed', failed: 'failed' }[run.status] ?? 'running')
       : errors[label] ? 'error' : skips[label] ? 'skipped' : live ? 'pending' : 'skipped';
+    // The values of the row it played, as played (a password's hidden); not run yet, as they are now.
+    if (dataRow && !run?.data_values && !rowsNow.has(name)) rowsNow.set(name, rowsOfTest(name)?.rows ?? []);
+    const rowValues = dataRow ? parseJson(run?.data_values) ?? shownRow(rowsNow.get(name)[dataRow - 1]) ?? null : null;
     return {
       name, row: dataRow, label, stage, status, execution_id: run?.id ?? null, duration_ms: run?.duration_ms ?? null,
+      ...(dataRow ? { row_values: rowValues, row_label: rowLabel(rowValues, dataRow) } : {}),
       // Why it did not run: the campaign stopped, or a stage before it did not pass.
       ...(status === 'skipped' ? { skipped_because: skips[label] ?? 'not run: the campaign was stopped' } : {}),
       failed_step: run?.failed_step ?? null, total_steps: run?.total_steps ?? null,
@@ -743,6 +754,7 @@ export function formatCampaign(c) {
     lines.push('Failed:');
     for (const t of failed) {
       lines.push(`  ${t.label ?? t.name}${t.failed_step ? ` — step ${t.failed_step}/${t.total_steps}` : ''}: ${String(t.error ?? '').split('\n')[0].slice(0, 200)}`);
+      if (t.row_values) lines.push(`    row ${t.row}: ${rowValuesText(t.row_values).slice(0, 300)}`);
       if (t.triage) lines.push(`    → ${t.triage.cause} (${t.triage.confidence}): ${t.triage.summary.slice(0, 300)}`);
     }
   }
@@ -781,9 +793,12 @@ export function junitReport(c) {
   const suite = `${c.name}${c.version ? ` (${c.version})` : ''}`;
   const cases = c.runs.map((t) => {
     const requirements = requirementsOfTest(t.name);
-    const properties = requirements.length
-      ? `\n      <properties>${requirements.map((r) => `\n        <property name="requirement" value="${xml(r.key)}"/>`).join('')}\n      </properties>`
-      : '';
+    // The row it played, and its values (a password's hidden).
+    const props = [
+      ...requirements.map((r) => `\n        <property name="requirement" value="${xml(r.key)}"/>`),
+      ...(t.row ? [`\n        <property name="data_row" value="${t.row}"/>`, `\n        <property name="data_values" value="${xml(rowValuesText(t.row_values ?? {}))}"/>`] : []),
+    ];
+    const properties = props.length ? `\n      <properties>${props.join('')}\n      </properties>` : '';
     const message = `${t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}${String(t.error ?? '').split('\n')[0]}`;
     const body = t.status === 'failed'
       ? `\n      <failure message="${xml(message)}" type="${xml(t.triage?.cause ?? 'failed')}">${xml([t.triage && `${t.triage.cause} (${t.triage.confidence}): ${t.triage.summary}`, t.error].filter(Boolean).join('\n\n'))}</failure>`
@@ -826,7 +841,7 @@ export function htmlReport(c) {
        <ol>${r.criteria.map((x) => `<li>${html(x.text)} ${chip(x.status.replace('_', ' '), REQUIREMENT_COLORS[x.status])}</li>`).join('')}</ol></div>`).join('')}</section>`
     : '';
   const rows = c.runs.map((t) => `
-    <tr><td>${html(t.label ?? t.name)}</td><td>${chip(t.status, STATUS_COLORS[t.status])}</td><td>${seconds(t.duration_ms)}</td>
+    <tr><td>${html(t.label ?? t.name)}${t.row_values ? `<div class="why">${html(rowValuesText(t.row_values))}</div>` : ''}</td><td>${chip(t.status, STATUS_COLORS[t.status])}</td><td>${seconds(t.duration_ms)}</td>
     <td>${t.status === 'failed' || t.status === 'error'
       ? `${t.failed_step ? `Step ${t.failed_step}/${t.total_steps}: ` : ''}${html(String(t.error ?? '').split('\n')[0].slice(0, 300))}${t.triage ? `<div class="why"><strong>${html(t.triage.cause.replace('_', ' '))}</strong> — ${html(t.triage.summary)}</div>` : ''}${t.bug ? `<div class="why">Bug #${t.bug.id}</div>` : ''}`
       : ''}</td></tr>`).join('');

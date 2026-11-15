@@ -7,25 +7,38 @@ import { recordAction } from '../recording.js';
 import { settleActions } from './session-scope.js';
 import { pageOf } from '../elements.js';
 import {
-  classifyWithLLM, detectListContext,
-  loadTest, saveTest, deleteTest as deleteTestDb, listTests as listTestsDb, executeTest,
+  detectListContext,
+  loadTest, saveTest, deleteTest as deleteTestDb, listTests as listTestsDb, executeTest, executeRows,
   updateTestStep, evaluateAssertion
 } from '../tests.js';
 import { setStepOptional } from '../test-store.js';
 import { ORACLE_ASSERTIONS } from '../test-execute.js';
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
-import { uniqueVarName, listVariable, variabilizeInput, isNavigation, typedJustBefore, variabilizeSuggestion } from '../variable-detection.js';
+import { uniqueVarName, listVariable, variabilizeInput, typedJustBefore, variabilizeSuggestion, keepStepVariable, sameItemVariable } from '../variable-detection.js';
 import { linkAssertionToVariables } from '../test-variable.js';
+import { judgeListClick } from '../classify.js';
 import { formatTriage } from '../triage.js';
 import { getRequirement, linkRecorded, nonConformityOf } from '../requirements.js';
 import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair, getRepair, repairUses, stepsText } from '../repairs.js';
 import { usesOfStep, relocateElement } from '../element-store.js';
-import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from '../datasets.js';
+import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf, rowsOfTest, rowsSource, rowLabel, shownRow } from '../datasets.js';
 import { redundantTimeWaits } from '../recorded-waits.js';
 import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from '../business-play.js';
 import { elementTimeoutFor } from '../projects.js';
 import { checksRecording, recordingRequirements, recordCheck, linkRecordedChecks } from '../recorded-checks.js';
 
+// What follows a value typed or picked (a search, a suggestion: a variable at save time). "chocolat"
+// led Auchan to its aisle (?redirect_keywords=chocolat, a Kinder bar shown), "banane" to its
+// search: a check of that product failed whatever the variable. "The second result" of "lait" was
+// clicked by its name ("Ajouter AUCHAN Lait demi-écrémé … au panier"), and a total was checked
+// against the line's price instead of 3 × the product's.
+const ANY_VALUE_CHECKS = 'A value typed or picked (a search, a suggestion) becomes a variable, replayed with other values: '
+  + 'after it, act on and check what holds for any value. Check the value itself in the title, a heading or the URL, a list of '
+  + 'results shown (its container, a count) — never one particular result (a product, a row) only this value brings. Act on a '
+  + 'result by its place among the others ("the second result"), not by a name only it has (a product\'s name in an '
+  + 'aria-label); a name the next steps need, keep it first with capture_value and use {{name}} in their selectors. '
+  + 'A computed amount (3 × a price): keep the price with capture_value, then expect "{{price * 3 | 0,00}}" (text_contains; '
+  + '"6,42 €" reads as 6.42). A test that adds to a cart or creates data removes it at the end, so the next run starts the same.';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -38,6 +51,7 @@ import { checksRecording, recordingRequirements, recordCheck, linkRecordedChecks
  *    dropping it lost the last step an agent recorded.
  * What it removed is told: `{ steps, removed }`.
  */
+
 export function cleanRecoverySteps(steps) {
   const cleaned = [...steps];
 
@@ -172,7 +186,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       const businessText = business.length
         ? `\n\nThe project's business steps — play one with play_business_step instead of doing its steps again:\n${business.map((b) => `- ${b.keyword} ${b.pattern} (${b.steps} steps)`).join('\n')}`
         : '';
-      const checksText = `\n\nCheck each outcome right after the action that brings it, before the next action: add_assertion(test_name: "${name}", …) records the check as the next step.`;
+      const checksText = `\n\nCheck each outcome right after the action that brings it, before the next action: add_assertion(test_name: "${name}", …) records the check as the next step.`
+        + ` ${ANY_VALUE_CHECKS}`;
       return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.${recordingDatasetText(project_id, played.dataset)}${businessText}${checksText}` }] };
     }
   );
@@ -180,15 +195,17 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   // --- Tool: record_step (deprecated — steps are now auto-recorded) ---
   server.tool(
     'record_step',
-    'Steps are recorded on their own while a recording is active: no need to call this to record one. Call it to name the variable of a step (what a fill typed becomes {{variable_name}} at stop_recording, instead of a name taken from its field), to keep its value fixed (skip_variable), to change its intent, or to make it optional: a step the app may not need (a cookie banner, a popup only shown sometimes) — when it fails on a replay, the test goes on and passes.',
+    'Steps are recorded on their own while a recording is active: no need to call this to record one. Call it to name the variable of a step (what a fill typed becomes {{variable_name}} at stop_recording, instead of a name taken from its field), to keep its value fixed (skip_variable), to change its intent, to remove it (remove: an execute_js that only looked at the page), to say how a click the page found in a list is meant (pick: none, by_place, by_text — its result says what it was taken as), or to make it optional: a step the app may not need (a cookie banner, a popup only shown sometimes) — when it fails on a replay, the test goes on and passes.',
     {
       action_id: z.string().describe('The action_id a browser tool answered (e.g. "act_12"): the step it recorded'),
       intent: z.string().optional().describe('Human-readable description of what this step does'),
       variable_name: z.string().optional().describe('The name of the variable of this step (letters, digits, _), e.g. "email"'),
       skip_variable: z.boolean().optional().describe('Set to true to keep this step\'s value fixed: no variable'),
       optional: z.boolean().optional().describe('True: the step may not be done on a replay (an element only shown sometimes) — its failure is told, and the test goes on'),
+      remove: z.boolean().optional().describe('True: the step is not part of the test — an execute_js that only looked at the page, an action done by mistake. Removed from the recording.'),
+      pick: z.enum(['none', 'by_place', 'by_text']).optional().describe('A click the page found in a list (its result says "List: taken as item N of M"): "none" — not an item of a list, a click on this element; "by_place" — the item at its place ("the second result"); "by_text" — the item with its label ("the category Garden"). Goes before what is decided at stop_recording.'),
     },
-    async ({ action_id, intent, variable_name, skip_variable, optional }) => {
+    async ({ action_id, intent, variable_name, skip_variable, optional, remove, pick }) => {
       const recording = getRecording();
       if (!recording) {
         return { content: [{ type: 'text', text: 'No recording in progress. Call start_recording first.' }] };
@@ -202,11 +219,24 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       let at = recording.steps.findLastIndex((step) => step._actionId === action_id);
       if (at < 0) at = recording.steps.length - 1;
       const lastStep = recording.steps[at];
+      // Not part of the test: a look at the page through execute_js, which a replay would run
+      // again — kept as optional "technical lookup" steps, they cluttered it.
+      if (remove) {
+        if (!recording.steps.some((step) => step._actionId === action_id)) {
+          return { content: [{ type: 'text', text: `No step recorded for ${action_id}: nothing removed.` }] };
+        }
+        recording.steps.splice(at, 1);
+        log(`record_step — removed step ${at + 1} (${lastStep.command})`);
+        return { content: [{ type: 'text', text: `Step ${at + 1} (${lastStep.command}) removed: the test now has ${recording.steps.length} steps.` }] };
+      }
       const name = variable_name ? variable_name.trim().replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1') : '';
       if (intent) lastStep.intent = intent;
       if (name) lastStep._variableNameOverride = name;
       if (skip_variable) lastStep._skipVariable = true;
       if (typeof optional === 'boolean') lastStep.optional = optional;
+      // The agent's word on a click in a list: it knows what it meant.
+      if (pick === 'none') { lastStep._pick = pick; lastStep._skipVariable = true; }
+      else if (pick) { lastStep._pick = pick; delete lastStep._skipVariable; }
 
       log(`record_step — applied overrides to step ${at + 1}`);
       
@@ -219,7 +249,11 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }, sess().lastTabId ?? null);
       }).catch(() => {});
 
+      const noList = pick && pick !== 'none' && lastStep.command === 'click' && lastStep._listContext === null;
       const told = [name && `its variable will be {{${name}}}`, skip_variable && 'its value stays fixed', intent && 'its intent changed',
+        pick === 'none' && 'not an item of a list: a click on this element',
+        pick === 'by_place' && 'the item at its place in the list', pick === 'by_text' && 'the item with its label in the list',
+        noList && 'but no list was found around it when it was clicked: it stays a click on this element',
         optional === true && 'it is optional: on a replay, its failure does not fail the test', optional === false && 'it is required again'].filter(Boolean).join(', ');
       return { content: [{ type: 'text', text: `Step ${at + 1} (${lastStep.command})${told ? `: ${told}` : ' unchanged'}. Steps are recorded on their own: call stop_recording when done.` }] };
     }
@@ -323,13 +357,22 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
           if (selector || clickText) {
             try {
-              const listContext = await detectListContext(sendCommand, { selector, text: clickText, tabId: step.params.tabId });
-              if (listContext && !isNavigation(listContext, null, { afterTyping: typedJustBefore(recording.steps, i) })) {
-                const llmResult = await classifyWithLLM(listContext, step.intent);
-                if (llmResult.isList && !isNavigation(listContext, llmResult, { afterTyping: typedJustBefore(recording.steps, i) })) {
-                  const varName = uniqueVarName(step._variableNameOverride || llmResult.variableName, usedVarNames);
-                  step.variable = listVariable(varName, listContext, llmResult);
-                  log(`Auto-variabilized click step ${i + 1}: {{${varName}}} in ${listContext.type}`);
+              // Read when it was clicked, on its page (the click tool); else now, on the page left open.
+              const listContext = step._listContext !== undefined ? step._listContext
+                : await detectListContext(sendCommand, { selector, text: clickText, tabId: step.params.tabId });
+              // The item an earlier step picked — the second product's card, its "Add" then its "+" —:
+              // the same variable, its own element in the card.
+              const sameItem = listContext && sameItemVariable(recording.steps, i, listContext);
+              if (sameItem) {
+                step.variable = sameItem;
+                log(`Auto-variabilized click step ${i + 1}: {{${sameItem.name}}}, the item an earlier step picked`);
+              } else {
+                // What the agent said (record_step pick) before what the classifier says.
+                const judged = await judgeListClick(listContext, step, { afterTyping: typedJustBefore(recording.steps, i) });
+                if (judged) {
+                  const varName = uniqueVarName(step._variableNameOverride || judged.variableName, usedVarNames);
+                  step.variable = listVariable(varName, listContext, judged);
+                  log(`Auto-variabilized click step ${i + 1}: {{${varName}}} in ${listContext.type}${listContext.withinXpath ? ' (an element of the item)' : ''}${step._pick ? ` (${step._pick}, as the agent said)` : ''}`);
                 }
               }
             } catch (err) {
@@ -343,7 +386,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       // ─── Build variables summary ──────────────────────────────────
       const variables = {};
       recording.steps.forEach((step, i) => {
-        if (step.variable) {
+        // A variable several steps share (one card picked): told by the first of them.
+        if (step.variable && !variables[step.variable.name]) {
           variables[step.variable.name] = {
             type: step.variable.type,
             defaultValue: step.variable.defaultValue || '',
@@ -402,6 +446,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
           const vars = Object.entries(test.variables).map(([k, v]) => `{{${k}}} (${v.type}, default: "${v.defaultValue}")`);
           line += `\n    Variables: ${vars.join(', ')}`;
         }
+        const played = rowsOfTest(test.name);
+        if (played) line += `\n    Rows: ${played.row_count} of ${rowsSource(played)} — run_test plays every row, a run each`;
         return line;
       });
       return { content: [{ type: 'text', text: `Saved tests:\n${summaries.join('\n')}` }] };
@@ -410,7 +456,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
   server.tool(
     'run_test',
-    'RUN a saved test autonomously inside the browser extension. The extension will execute ALL steps in one incredibly fast sequence without LLM intervention. Supports dynamic variables: pass "variables" to override {{placeholders}} recorded in fill steps and list/box item selections. Use list_tests to see available variables for each test. Use "substitutions" for raw find-and-replace across all params. Each assertion is checked where it is in the test, on the page the steps before it led to (one that fails there stops the run), and reported. Set debug=true to enable step-by-step debug mode with breakpoints — use debug_action to control the paused execution.',
+    'RUN a saved test autonomously inside the browser extension. The extension will execute ALL steps in one incredibly fast sequence without LLM intervention. Supports dynamic variables: pass "variables" to override {{placeholders}} recorded in fill steps and list/box item selections. Use list_tests to see available variables for each test. A test with rows (typed in its Data tab, or those of the dataset it is bound to) plays every row, a run each, its values over the defaults; "row" plays one. Use "substitutions" for raw find-and-replace across all params. Each assertion is checked where it is in the test, on the page the steps before it led to (one that fails there stops the run), and reported. Set debug=true to enable step-by-step debug mode with breakpoints — use debug_action to control the paused execution.',
     {
       name: z.string().describe('Name of the test to run'),
       variables: z.record(z.string()).optional().describe('Template variables: replaces {{key}} placeholders in params. For list/box items, pass the index (e.g. "2") or text content to select.'),
@@ -419,7 +465,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       new_window: z.boolean().optional().default(true).describe('Runs the test in a new browser window. Defaults to true. Set to false to reuse the current tab.'),
       debug: z.boolean().optional().describe('Enable debug mode: execution pauses before each step (or at breakpoints). Use debug_action tool to resume/step/continue.'),
       breakpoints: z.array(z.number()).optional().describe('Step numbers (1-indexed) to pause at. Only used when debug=true. If empty, pauses at every step.'),
-      row: z.number().optional().describe('For a test bound to a dataset: the row to play, numbered from 1 (default 1). run_campaign plays every row.'),
+      row: z.number().optional().describe('For a test with rows (its own, or those of the dataset it is bound to): the one row to play, numbered from 1. Without it, every row is played, a run each — one row only (the first) with debug or start_step.'),
       record_video: z.boolean().optional().describe('Keep the video of the run even if it passes (a failed run keeps its video anyway): watched in the dashboard, the run\'s steps beside it'),
     },
     async ({ name, variables, substitutions, start_step, new_window, debug, breakpoints, row, record_video }) => {
@@ -470,11 +516,12 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         return { content: [{ type: 'text', text }] };
       }
 
-      // Normal (non-debug) execution
-      try {
-        const res = await executeTest(name, variables, substitutions, start_step, new_window, sendCommand, 'mcp', null, null, { row, recordVideo: record_video === true });
-        rememberReplay(name, res.values, res.results?.findLast?.((r) => r.tabId != null)?.tabId);
-        let resultText = `Test "${name}" executed successfully (execution #${res.executionId}).`;
+      // Normal (non-debug) execution. With rows (lib/datasets.js), every row, a run each — or
+      // the one asked, or the first when resumed at a step.
+      const played = rowsOfTest(name);
+      const rowText = (n) => (n && played?.rows[n - 1] ? `${rowLabel(shownRow(played.rows[n - 1]), n)} of ${rowsSource(played)}` : n ? `row ${n}` : '');
+      const succeeded = (res, n) => {
+        let resultText = `Test "${name}" executed successfully (execution #${res.executionId})${n ? `, ${rowText(n)}` : ''}.`;
         if (res.assertionsTotal > 0) {
           resultText += `\n\nAssertions: ${res.assertionsPassed}/${res.assertionsTotal} passed`;
           if (res.assertionsFailed > 0) {
@@ -486,10 +533,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         // The bugs this test met, fixed now that it passes (lib/bugs.js).
         if (res.bugs?.fixed?.length) resultText += `\n\nBug(s) ${res.bugs.fixed.map((id) => `#${id}`).join(', ')} marked fixed in the Bugs page: this test met them, and passes again.`;
         if (res.bugs?.changed?.length) resultText += `\n\nBug(s) ${res.bugs.changed.map((id) => `#${id}`).join(', ')} left open: this test passes, but was changed since it met them — it may no longer check what failed. Tell the user.`;
-        resultText += `\n\n${JSON.stringify(res.results, null, 2)}`;
-        return { content: [{ type: 'text', text: resultText }] };
-      } catch (err) {
-        rememberReplay(name, err.values, err.tabId);
+        return resultText;
+      };
+      // `inPlace`: the page is still where it failed (the last run played), repaired there.
+      const failed = (err, n, { inPlace = true } = {}) => {
         const msg = err.message || String(err);
         const execId = err.executionId ? ` (execution #${err.executionId})` : '';
         const failedStep = err.failedStep || '?';
@@ -512,7 +559,12 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
           stepsReport += `  ❌ Step ${failedStep}: [${failedCmd}] ${failedIntent} — FAILED\n`;
         }
 
-        let text = `TEST EXECUTION FAILED${execId}\n\n`;
+        let text = `TEST EXECUTION FAILED${execId}${n ? `, ${rowText(n)}` : ''}\n\n`;
+        if (!inPlace) {
+          return `${text}Step ${failedStep}/${totalSteps} [${failedCmd}] ${failedIntent || ''}: ${msg}\n${err.triage ? `${formatTriage(err.triage)}\n` : ''}` +
+            `${err.bug ? `Bug #${err.bug.id} in the Bugs page: ${err.bug.title}\n` : ''}` +
+            `The rows after it were played, the page is no longer where it failed: to repair it, run_test(name="${name}", row=${n}) plays that row alone and stops there, with what to do.\n`;
+        }
         if (err.video) text += `Video of the run kept (${err.video.frames} images): in the dashboard, the run's Video button.\n\n`;
         text += `=== STEP STATUS REPORT ===\n`;
         text += stepsReport;
@@ -535,6 +587,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         if (err.bug) {
           const b = err.bug;
           text += `=== BUG ===\nBug #${b.id} ${b.isNew ? 'opened' : b.reopened ? 'open again (it was fixed)' : `seen again (${b.occurrences} times${b.status !== 'open' ? `, ${b.status}` : ''})`} in the Bugs page: ${b.title}. It is marked fixed when this test passes again, unchanged.\n\n`;
+        } else if (err.bugToReport) {
+          text += `=== BUG ===\nNo bug opened: this project's bugs are reported by a person. The diagnosis puts the failure on the app — tell the user; if they agree, it is reported from this run's report in the dashboard (Report a bug).\n\n`;
         }
 
         text += `=== ACTION REQUIRED ===\n`;
@@ -560,15 +614,41 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         text += `1. Use 'snapshot' to see the current page state.\n`;
         text += `2. Perform ONLY the failed step ${failedStep} manually. The failed step was a "${failedCmd}" command${failedIntent ? ' ("' + failedIntent + '")' : ''}. Use the matching browser tool.\n`;
         text += `3. Call fix_test_step(test_name="${name}", step_order=${failedStep}, action_id=<the_action_id>).\n`;
-        text += `4. Call run_test(name="${name}", start_step=${nextStep || failedStep}) to continue remaining steps.\n\n`;
+        text += `4. Call run_test(name="${name}", start_step=${nextStep || failedStep}${n ? `, row=${n}` : ''}) to continue remaining steps.\n\n`;
         text += `CRITICAL RULES:\n`;
         text += `- Steps 1–${completedSteps} already SUCCEEDED. Do NOT re-execute, re-navigate, or modify them.\n`;
         text += `- fix_test_step must target step_order=${failedStep} ONLY. Do NOT modify any other step.\n`;
         text += `- The page is already at the correct state after ${completedSteps} successful steps. Do NOT navigate again.\n`;
         text += `- Your manual fix should match the original command type "${failedCmd}" (e.g., if it was a click, fix it with a click, not a navigate).`;
+        return text;
+      };
 
-        return { content: [{ type: 'text', text }] };
+      const play = (n) => executeTest(name, variables, substitutions, start_step, new_window, sendCommand, 'mcp', null, null, { ...(n ? { row: n } : {}), recordVideo: record_video === true });
+      const { rows, outcomes } = await executeRows(name, { row, one: !!start_step }, play);
+      for (const { result, error } of outcomes) {
+        const done = result ?? error;
+        rememberReplay(name, done.values, result ? result.results?.findLast?.((r) => r.tabId != null)?.tabId : error.tabId);
       }
+      if (rows.length === 1) {
+        const [{ row: n, result, error }] = outcomes;
+        return { content: [{ type: 'text', text: result ? `${succeeded(result, n)}\n\n${JSON.stringify(result.results, null, 2)}` : failed(error, n) }] };
+      }
+      // Every row: each told; a failed one in full — repaired in place when it is the last played.
+      const failures = outcomes.filter((o) => o.error);
+      const lines = [`Test "${name}" played ${rows.length} rows of ${rowsSource(played)}, a run each: ${outcomes.length - failures.length} passed, ${failures.length} failed.`];
+      for (const o of outcomes) {
+        lines.push(o.result
+          ? `- ${rowText(o.row)}: passed (execution #${o.result.executionId}${o.result.assertionsTotal ? `, assertions ${o.result.assertionsPassed}/${o.result.assertionsTotal}` : ''})`
+          : `- ${rowText(o.row)}: FAILED${o.error.executionId ? ` (execution #${o.error.executionId})` : ''} — ${String(o.error.message ?? o.error).split('\n')[0]}`);
+      }
+      // What a passed run has to say besides (a video kept, an optional step not done, a bug fixed).
+      for (const o of outcomes.filter((x) => x.result)) {
+        const notes = succeeded(o.result, o.row).split('\n\n').slice(1).filter((p) => !p.startsWith('Assertions:'));
+        if (notes.length) lines.push('', `Row ${o.row}: ${notes.join(' ')}`);
+      }
+      const lastPlayed = outcomes.at(-1);
+      for (const o of failures) lines.push('', failed(o.error, o.row, { inPlace: o === lastPlayed }));
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
     }
   );
 
@@ -842,6 +922,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       try {
         const test = loadTest(test_name);
         const before = test?.steps?.[step_order - 1];
+        // Redone by hand, the step keeps its variable: what it typed, the suggestion it picks.
+        Object.assign(newStepData, keepStepVariable(before, newStepData));
         const result = await updateTestStep(test_name, step_order, newStepData);
         if (!result) {
           return { content: [{ type: 'text', text: `Test "${test_name}" or step ${step_order} not found.` }] };

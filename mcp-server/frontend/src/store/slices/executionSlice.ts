@@ -33,8 +33,20 @@ interface ExecutionSummary {
   triage?: Triage | null;
 }
 
+/** A row of the test played by the run (its own rows, or its dataset's), a run each. */
+export interface LiveRow {
+  row: number;
+  label: string | null;
+  status: 'pending' | 'running' | 'success' | 'failed';
+  executionId?: number | null;
+  error?: string | null;
+}
+
 interface ExecutionState {
   isExecuting: boolean;
+  /** Playing every row of the test: each row, where it stands, and the one playing (index). */
+  liveRows: LiveRow[];
+  liveRowIndex: number | null;
   isLiveModalOpen: boolean;
   liveSteps: LiveStep[];
   liveStatus: 'starting' | 'running' | 'completed' | 'error' | 'stopped' | 'paused';
@@ -54,6 +66,8 @@ interface ExecutionState {
 
 const initialState: ExecutionState = {
   isExecuting: false,
+  liveRows: [],
+  liveRowIndex: null,
   isLiveModalOpen: false,
   liveSteps: [],
   liveStatus: 'starting',
@@ -271,7 +285,34 @@ const executionSlice = createSlice({
     },
     handleSseEvent(state, action: PayloadAction<any>) {
       const data = action.payload;
+      // Playing every row: a run each, one after the other (rows_started, then per row
+      // row_started … execution_completed or execution_error, then rows_completed).
+      const severalRows = state.liveRows.length > 0;
       switch (data.type) {
+        case 'rows_started':
+          state.liveRows = (data.rows ?? []).map((r: { row: number; label: string | null }) => ({ row: r.row, label: r.label ?? null, status: 'pending' }));
+          state.liveRowIndex = null;
+          break;
+        case 'row_started': {
+          const index = state.liveRows.findIndex((r) => r.row === data.row);
+          if (index >= 0) state.liveRows[index].status = 'running';
+          state.liveRowIndex = index >= 0 ? index : null;
+          // Each row's run shows its own steps.
+          state.liveSteps = [];
+          state.liveSummary = null;
+          state.liveError = null;
+          state.liveStatus = 'running';
+          break;
+        }
+        case 'rows_completed': {
+          const failed = state.liveRows.filter((r) => r.status === 'failed').length;
+          const played = state.liveRows.filter((r) => r.status === 'success' || r.status === 'failed').length;
+          state.isExecuting = false;
+          state.liveStatus = failed ? 'error' : 'completed';
+          state.liveError = failed ? `${failed} of ${state.liveRows.length} rows failed${data.stopped ? `; ${state.liveRows.length - played} not played (stopped)` : ''}.` : null;
+          state.refreshTrigger += 1;
+          break;
+        }
         case 'live':
           state.liveTabId = typeof data.tabId === 'number' ? data.tabId : null;
           break;
@@ -354,8 +395,13 @@ const executionSlice = createSlice({
           break;
         }
         case 'execution_completed':
-          state.liveStatus = 'completed';
-          state.isExecuting = false;
+          if (severalRows) {
+            const done = state.liveRows.find((r) => r.row === data.row);
+            if (done) { done.status = 'success'; done.executionId = data.result?.executionId ?? null; }
+          }
+          // Playing every row, the run goes on with the next one: rows_completed ends it.
+          state.liveStatus = severalRows ? 'running' : 'completed';
+          state.isExecuting = severalRows;
           state.liveSummary = {
             status: 'completed',
             totalSteps: data.result?.results?.length || state.liveSteps.length,
@@ -369,8 +415,12 @@ const executionSlice = createSlice({
           state.refreshTrigger += 1;
           break;
         case 'execution_error':
-          state.liveStatus = 'error';
-          state.isExecuting = false;
+          if (severalRows) {
+            const done = state.liveRows.find((r) => r.row === data.row);
+            if (done) { done.status = 'failed'; done.executionId = data.executionId ?? null; done.error = data.error ?? null; }
+          }
+          state.liveStatus = severalRows ? 'running' : 'error';
+          state.isExecuting = severalRows;
           state.liveError = data.error;
           state.liveSummary = {
             status: 'error',
@@ -405,6 +455,8 @@ const executionSlice = createSlice({
     builder
       .addCase(executeTest.pending, (state, action) => {
         state.isExecuting = true;
+        state.liveRows = [];
+        state.liveRowIndex = null;
         state.isLiveModalOpen = true;
         state.liveSteps = [];
         state.liveStatus = 'starting';
@@ -435,6 +487,8 @@ const executionSlice = createSlice({
       })
       .addCase(executeAgent.pending, (state) => {
         state.isExecuting = true;
+        state.liveRows = [];
+        state.liveRowIndex = null;
         state.isLiveModalOpen = true;
         state.liveSteps = [];
         state.liveStatus = 'starting';

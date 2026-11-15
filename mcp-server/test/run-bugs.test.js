@@ -13,7 +13,15 @@ import { join } from 'node:path';
 process.env.IZITEST_DB_PATH = join(await mkdtemp(join(tmpdir(), 'run-bugs-')), 'test.db');
 const { initDatabase, db } = await import('../lib/db.js');
 initDatabase();
-const { saveTest } = await import('../lib/test-store.js');
+const { saveTest: saveTestOnly } = await import('../lib/test-store.js');
+const { createProject } = await import('../lib/projects.js');
+// The tests here are those of a project that opens bugs by itself (auto_bugs; off by default).
+const shop = createProject({ name: 'Bugs by themselves', auto_bugs: true });
+const saveTest = (test) => {
+  const id = saveTestOnly(test);
+  db.prepare('UPDATE tests SET project_id = ? WHERE name = ?').run(shop.id, test.name);
+  return id;
+};
 const { executeTest } = await import('../lib/test-execute.js');
 const { listBugs, getBug, isAppBug, runBugTitle, formatBug, setBugStatus } = await import('../lib/bugs.js');
 const { saveRequirement, linkTest } = await import('../lib/requirements.js');

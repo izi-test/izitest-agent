@@ -260,19 +260,32 @@ function locatorOf(target) {
   return target.locator ?? `page.locator(${jsLiteral(target.css)})`;
 }
 
+// A title or a URL containing a text: a RegExp of it, whatever its case when the check ignores it.
+// Its variables ({{name}}) are read from VARS when the test runs, then escaped: written into the
+// pattern escaped first, the export checked the title held "{{text_choice}}", word for word.
+const containsPattern = (a) => {
+  const text = String(a.expected ?? '');
+  const flags = a.ignoreCase ? ", 'i'" : '';
+  if (!/\{\{\s*\w+\s*\}\}/.test(text)) return `new RegExp(${jsStringLiteral(escapeRegex(text))}${flags})`;
+  return 'new RegExp(' + jsLiteral(text) + ".replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')" + flags + ')';
+};
+
+// A check compared whatever the case (a picked suggestion, lib/recorded-checks.js): Playwright's option.
+const caseOption = (a) => (a.ignoreCase ? ', { ignoreCase: true }' : '');
+
 function renderAssertion(a) {
   const oracle = oracleCode(a, jsLiteral);
   if (oracle) return oracle;
   switch (a.type) {
     case 'text_contains':
       if (a.selector) {
-        return `await expect(page.locator(${jsLiteral(a.selector)})).toContainText(${jsLiteral(a.expected ?? '')});`;
+        return `await expect(page.locator(${jsLiteral(a.selector)})).toContainText(${jsLiteral(a.expected ?? '')}${caseOption(a)});`;
       }
-      return `await expect(page.locator('body')).toContainText(${jsLiteral(a.expected ?? '')});`;
+      return `await expect(page.locator('body')).toContainText(${jsLiteral(a.expected ?? '')}${caseOption(a)});`;
     case 'text_not_contains':
-      return `await expect(page.locator(${jsLiteral(a.selector ?? 'body')})).not.toContainText(${jsLiteral(a.expected ?? '')});`;
+      return `await expect(page.locator(${jsLiteral(a.selector ?? 'body')})).not.toContainText(${jsLiteral(a.expected ?? '')}${caseOption(a)});`;
     case 'text_equals':
-      return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toHaveText(${jsLiteral(a.expected ?? '')});`;
+      return `await expect(page.locator(${jsLiteral(a.selector ?? '')})).toHaveText(${jsLiteral(a.expected ?? '')}${caseOption(a)});`;
     case 'attribute_equals':
       // "value": what the field holds now, as the replay reads it — not the attribute.
       return a.attribute === 'value'
@@ -292,11 +305,11 @@ function renderAssertion(a) {
     case 'url_equals':
       return `await expect(page).toHaveURL(${jsLiteral(a.expected ?? '')});`;
     case 'url_contains':
-      return `await expect(page).toHaveURL(new RegExp(${jsStringLiteral(escapeRegex(String(a.expected ?? '')))}));`;
+      return `await expect(page).toHaveURL(${containsPattern(a)});`;
     case 'title_equals':
       return `await expect(page).toHaveTitle(${jsLiteral(a.expected ?? '')});`;
     case 'title_contains':
-      return `await expect(page).toHaveTitle(new RegExp(${jsStringLiteral(escapeRegex(String(a.expected ?? '')))}));`;
+      return `await expect(page).toHaveTitle(${containsPattern(a)});`;
     default:
       return `// TODO: unsupported assertion '${a.type}'`;
   }

@@ -632,6 +632,9 @@ textarea { resize: vertical; line-height: 1.5; }
 /* The field groups of the step and assertion modals */
 .field-group { margin-bottom: 14px; }
 .field-group:last-child { margin-bottom: 0; }
+.headless-idle { margin: 14px 0; }
+.headless-idle__row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted); }
+.field-group .headless-idle__row input[type="number"] { width: 90px; }
 .field-group label { display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
 .field-group input[type="text"], .field-group input[type="password"], .field-group input[type="number"], .field-group select, .field-group textarea { width: 100%; }
 .field-hint { display: block; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
@@ -2245,6 +2248,8 @@ textarea { resize: vertical; line-height: 1.5; }
 }
 
 .settings-test-output.error { color: var(--red); }
+.settings-test-model { margin: 6px 0 0; font-size: 13px; }
+.settings-test-model code { font-size: 12px; }
 
 /* ═══════════════════════════════════════════════════════════════
    CREATE TEST MODAL
@@ -3175,6 +3180,38 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 .dataset-binding__row select { min-width: 280px; }
 .run-options .field .btn { margin-top: 6px; }
 
+/* The rows a test plays, typed in its Data tab (TestRows.tsx); the row a run played (runs, live run, campaign). */
+.test-rows { margin-bottom: 16px; }
+.test-rows .card__actions { display: flex; gap: 8px; }
+.test-rows__table th { white-space: nowrap; }
+.test-rows__table td { padding: 4px 6px; }
+.test-rows__cell {
+  width: 100%; min-width: 120px; padding: 6px 8px; font-family: var(--mono); font-size: 12px;
+  background: var(--bg-void); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.test-rows__cell::placeholder { color: var(--text-muted); font-style: italic; opacity: 0.8; }
+.test-rows__cell:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.test-rows__actions { white-space: nowrap; text-align: right; }
+.test-rows__actions .icon-btn:first-child:hover { color: var(--primary-hover); background: var(--primary-tint); }
+.step-var-badge--stale { opacity: 0.55; text-decoration: line-through; }
+.row-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: var(--radius-full);
+  font-size: 11px; font-weight: 600; background: var(--primary-tint); color: var(--primary-hover); border: 1px solid var(--primary-tint-border);
+  white-space: nowrap; align-self: flex-start; width: fit-content;
+}
+.row-values { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--text-muted); padding: 6px 16px 8px; }
+.row-values code { font-family: var(--mono); color: var(--text); }
+.row-values--inline { padding: 2px 0 0; }
+.live-rows { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.live-rows__row { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; border-radius: var(--radius-full); border: 1px solid var(--border); color: var(--text-muted); }
+.live-rows__row--running { border-color: var(--accent); color: var(--text); }
+.live-rows__row--success { border-color: var(--green, #15803d); color: var(--green, #15803d); }
+.live-rows__row--failed { border-color: var(--red); color: var(--red); }
+.live-rows__current { font-size: 13px; margin: 0 0 8px; color: var(--text); }
+/* How the rows of a test did, each by its last run (test list, test page, requirement). */
+.meta-rows { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.meta-rows--failed { color: var(--red); font-weight: 600; }
+
 /* ═══════════════════════════════════════════════════════════════
    LIVE VIEW OF THE BROWSER (LiveScreen): what an agent or a test
    does in its tab, beside its output or its steps
@@ -3459,3 +3496,6 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
 .run-video__status { font-size: 11px; color: var(--text-muted); }
 .run-video__step--failed .run-video__status { color: var(--red, #dc2626); font-weight: 600; }
 @media (max-width: 760px) { .run-video__body { grid-template-columns: 1fr; } .run-video__steps { border-left: 0; border-top: 1px solid var(--border); max-height: 30vh; } }
+
+/* A long text a run told, folded (ExecutionHistory.tsx LongText). */
+.long-text__toggle { border: 0; background: none; padding: 0; color: var(--accent, #4f46e5); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }

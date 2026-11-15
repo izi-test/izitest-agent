@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { Execution, ExecutionStep, Repair, StepRef } from '../../types';
+import type { Execution, ExecutionStep, LastRun, Repair, StepRef } from '../../types';
 
 interface ExecutionsResponse {
   executions: Execution[];
@@ -22,6 +22,13 @@ export const executionsApi = createApi({
       providesTags: (_result, _error, { testName }) => [{ type: 'ExecutionList', id: testName }],
     }),
 
+    // How a test last did, every row it plays counted: row 1 failing, it failed.
+    getLastRun: builder.query<LastRun | null, string>({
+      query: (testName) => `api/tests/${encodeURIComponent(testName)}/last-run`,
+      transformResponse: (response: { last_run: LastRun | null }) => response.last_run ?? null,
+      providesTags: (_result, _error, testName) => [{ type: 'ExecutionList', id: testName }],
+    }),
+
     getExecution: builder.query<ExecutionDetailResponse['execution'], number>({
       query: (executionId) => `api/executions/${executionId}`,
       transformResponse: (response: ExecutionDetailResponse) => response.execution,
@@ -41,12 +48,20 @@ export const executionsApi = createApi({
       }),
       invalidatesTags: ['ExecutionList', 'ExecutionDetail'],
     }),
+
+    // A person reports the bug a failed run met (the project opens none by itself): { bug }.
+    reportRunBug: builder.mutation<{ bug: { id: number; title: string }; isNew?: boolean; existing?: boolean }, number>({
+      query: (executionId) => ({ url: `api/executions/${executionId}/bug`, method: 'POST' }),
+      invalidatesTags: ['ExecutionList', 'ExecutionDetail'],
+    }),
   }),
 });
 
 export const {
   useGetExecutionsQuery,
+  useGetLastRunQuery,
   useGetExecutionQuery,
   useLazyGetExecutionQuery,
   useRepairActionMutation,
+  useReportRunBugMutation,
 } = executionsApi;

@@ -4,7 +4,8 @@
 // It is Chrome for Testing — the Chrome of Google's own builds no longer loads an unpacked
 // extension from the command line —, installed here on request (~/.izitest/browsers), started
 // with the extension of this repository and a profile of its own (~/.izitest/profiles/headless),
-// and stopped with the server. Its extension registers as the "headless" profile
+// and stopped with the server — or before, after minutes without work (idle stop, below): it
+// starts again with what needs it. Its extension registers as the "headless" profile
 // (extension/src/headless.ts), which a command naming no profile never goes to (websocket.js).
 //
 // Its profile is its own: cookies, logins and storage are not the user's Chrome's. A test of
@@ -24,7 +25,9 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { Browser, detectBrowserPlatform, getInstalledBrowsers, install, resolveBuildId } from '@puppeteer/browsers';
-import { getProfiles, waitForProfile, setFallbackBrowser } from './websocket.js';
+import { getProfiles, waitForProfile, setFallbackBrowser, setProfileStarter, profileActivity, hasWindowedProfile } from './websocket.js';
+import { listSessions } from './session.js';
+import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 
 export const HEADLESS_PROFILE = 'headless';
@@ -52,6 +55,9 @@ const children = new Map();
 const startings = new Map();
 let installing = null;   // { promise, downloaded, total }
 let lastError = null;
+// Idle stop (below): the runs and campaigns under way in it, and its stop under way.
+let holds = 0;
+let idleStop = null;
 
 /**
  * The arguments Chrome is started with: no window, this extension only, a profile of its own,
@@ -141,6 +147,8 @@ export async function headlessStatus() {
     connected: isHeadlessConnected(),
     // Lanes 2… run for a campaign, a few tests at a time, and stop after it.
     lanes: connectedLanes().map(laneProfile),
+    // Stopped after that many minutes without work; 0: only with the server.
+    idle_minutes: idleMinutes(),
     extension_built: existsSync(join(EXTENSION_DIR, 'manifest.json')),
     error: lastError,
     browsers_dir: BROWSERS_DIR,
@@ -176,6 +184,8 @@ export function installHeadless() {
 
 /** Starts the headless Chrome of lane `n`, and resolves once its extension has connected. */
 export function startHeadless(n = 1) {
+  // Stopping for having had nothing to do: started again once it has stopped.
+  if (idleStop) return idleStop.then(() => startHeadless(n));
   if (isHeadlessConnected(n)) return Promise.resolve();
   if (startings.has(n)) return startings.get(n);
   const profile = laneProfile(n);
@@ -218,6 +228,7 @@ export function startHeadless(n = 1) {
 
 /** The headless Chromes of lanes 1 to `lanes`, connected: started if they are not. */
 export async function ensureHeadless(lanes = 1) {
+  if (idleStop) await idleStop;
   const count = Math.min(Math.max(1, lanes), HEADLESS_LANES);
   await Promise.all(Array.from({ length: count }, (_, i) => i + 1).filter((n) => !isHeadlessConnected(n)).map((n) => startHeadless(n)));
 }
@@ -230,14 +241,18 @@ async function stopLane(n) {
     proc.kill('SIGTERM');
     const done = await Promise.race([exited.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), 5000))]);
     if (!done) proc.kill('SIGKILL');
-    return;
+  } else {
+    // Left by a server that stopped without closing it: its pid is kept in its profile.
+    const file = pidFile(n);
+    const pid = existsSync(file) ? Number(readFileSync(file, 'utf8')) : null;
+    if (pid) {
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+      rmSync(file, { force: true });
+    }
   }
-  // Left by a server that stopped without closing it: its pid is kept in its profile.
-  const file = pidFile(n);
-  const pid = existsSync(file) ? Number(readFileSync(file, 'utf8')) : null;
-  if (pid) {
-    try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
-    rmSync(file, { force: true });
+  // Until its extension is seen gone: started again right after, it would be taken for running.
+  for (const until = Date.now() + 3000; isHeadlessConnected(n) && Date.now() < until;) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
 
@@ -253,6 +268,7 @@ export async function stopHeadless({ from = 1 } = {}) {
 // The user follows the agent in the dashboard's Live page (/watch).
 let toldFallback = false;
 export async function fallbackBrowser() {
+  if (idleStop) await idleStop;
   if (isHeadlessConnected(1)) return HEADLESS_PROFILE;
   if (!(await installedChrome())) return null;
   if (!toldFallback) {
@@ -263,6 +279,96 @@ export async function fallbackBrowser() {
   return HEADLESS_PROFILE;
 }
 setFallbackBrowser(fallbackBrowser);
+
+// ─── Idle stop ──────────────────────────────────────────────────────
+//
+// Left running between two runs, it is a Chrome of some 750 MB on the user's computer, for
+// nothing. Stopped after `idleMinutes` (Settings → Headless browser; 0: never) without work —
+// no command sent to it or under way, no run or campaign in it (holdHeadless), no test being
+// recorded in it —, every lane. What needs it starts it again: a run asked headless, a
+// campaign, an agent that names it (below) or that has no other browser (fallbackBrowser). The
+// live view's upkeep is no work (websocket.js): it lists every browser's tabs every 3 s.
+
+export const DEFAULT_IDLE_MINUTES = 10;
+export const MAX_IDLE_MINUTES = 24 * 60;
+const IDLE_CHECK_MS = 30_000;
+
+/** The minutes without work after which the headless Chromes stop; 0: never. */
+export function idleMinutes() {
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'headless'").get();
+    const minutes = row ? parseJson(row.value)?.idleMinutes : undefined;
+    return Number.isInteger(minutes) && minutes >= 0 ? minutes : DEFAULT_IDLE_MINUTES;
+  } catch {
+    return DEFAULT_IDLE_MINUTES; // no database (unit tests)
+  }
+}
+
+/** Keeps the minutes of the idle stop (an integer, 0 to MAX_IDLE_MINUTES). */
+export function setIdleMinutes(minutes) {
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_IDLE_MINUTES) {
+    throw new Error(`idle_minutes is a whole number of minutes, 0 (never) to ${MAX_IDLE_MINUTES}`);
+  }
+  db.prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES ('headless', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(JSON.stringify({ idleMinutes: minutes }));
+}
+
+/**
+ * A run or a campaign in the headless Chrome: it is not stopped for being idle — between two
+ * tests, a test waiting — until the function returned is called.
+ */
+export function holdHeadless() {
+  holds++;
+  let released = false;
+  return () => {
+    if (!released) { released = true; holds--; }
+  };
+}
+
+/** The lane `profile` names (headless: 1, headless-2: 2…), or null: no headless Chrome's. */
+export function laneOf(profile) {
+  const n = Array.from({ length: HEADLESS_LANES }, (_, i) => i + 1).find((lane) => laneProfile(lane) === profile);
+  return n ?? null;
+}
+
+/**
+ * A test being recorded in a headless Chrome: in the profile its session names, or — naming
+ * none — where its commands go when no Chrome with windows is there. Between two of its
+ * commands, the agent may wait for the user's answer (ask_user) longer than the idle delay.
+ */
+const recordingInHeadless = () => listSessions().some((s) => s.recording && (s.profile ? laneOf(s.profile) !== null : !hasWindowedProfile()));
+
+/**
+ * Stops the headless Chromes when none has had work for `minutes`, at `now`. Resolves whether it
+ * did.
+ */
+export async function stopWhenIdle({ now = Date.now(), minutes = idleMinutes() } = {}) {
+  if (!minutes || idleStop || startings.size || holds > 0) return false;
+  const lanes = connectedLanes();
+  if (!lanes.length || recordingInHeadless()) return false;
+  const busy = lanes.some((n) => {
+    const work = profileActivity(laneProfile(n));
+    return work && (work.inFlight > 0 || now - work.lastAt < minutes * 60_000);
+  });
+  if (busy) return false;
+  log(`Headless: stopped after ${minutes} min without work — it starts again with the next run that needs it`);
+  idleStop = stopHeadless()
+    .catch((err) => log(`Headless: the idle stop failed: ${err.message}`))
+    .finally(() => { idleStop = null; });
+  await idleStop;
+  return true;
+}
+setInterval(() => { stopWhenIdle().catch(() => {}); }, IDLE_CHECK_MS).unref();
+
+// A command naming a headless profile that is not running starts its Chrome (installed: the
+// go-ahead), as the fallback does: an agent working in "headless" finds it again after an idle stop.
+setProfileStarter((profile) => {
+  const n = laneOf(profile);
+  if (n === null || (!idleStop && isHeadlessConnected(n))) return null;
+  return installedChrome().then((chrome) => (chrome ? startHeadless(n) : undefined));
+});
 
 // It goes with the server.
 process.on('exit', () => { for (const proc of children.values()) proc.kill('SIGTERM'); });

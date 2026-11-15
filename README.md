@@ -96,7 +96,8 @@ it gets 403. The token is a value you make up (`openssl rand -hex 32`): see
 `create_project`. More in [installation](docs/installation.md#4-connect-your-agent).
 
 The dashboard's own agent (*New test → AI Agent*, *Propose scenarios*) is set in *Settings*: a
-CLI (Claude Code, Gemini, GitHub Copilot, OpenCode) or a model through an API key.
+CLI (Claude Code, Gemini, GitHub Copilot, OpenCode) with its model, or the CLI's default, or a model
+through an API key.
 
 **5. Write a first test.** Serve the Test Arena, a page full of what makes UI tests hard:
 

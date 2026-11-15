@@ -116,10 +116,11 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `list_projects` | Lists the projects (id, name, base URL, language of their tests, number of tests). With `url`, only those of that app: its URL starts with their base URL, or shares its origin. The first call for a new app. |
 | `create_project` | Creates a project: `name` (unique), `base_url`, `language` (`en`, `fr`), `description`, `context`, `project_type`. A name taken answers with the project that has it; another project of the same app is pointed out. Its id is the `project_id` of the tools below. |
 | `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Jeux de données). |
-| `record_step` | Optional: steps record themselves. Names the variable of the step an action recorded (`action_id`, `variable_name`: what a fill typed becomes `{{email}}` instead of a name taken from its field), keeps its value fixed (`skip_variable`), or changes its intent. |
+| `record_step` | Optional: steps record themselves. Names the variable of the step an action recorded (`action_id`, `variable_name`: what a fill typed becomes `{{email}}` instead of a name taken from its field), keeps its value fixed (`skip_variable`), changes its intent, makes it optional (`optional`), removes it (`remove`: an `execute_js` that only looked at the page, an action done by mistake), or says how a click found in a list is meant (`pick`: `none`, `by_place`, `by_text` — the click's result says what it was taken as). |
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. It first waits for the actions still under way (up to 30 s), so one sent in the same message is recorded. A last `wait` for an element is kept: it checks what the test did (before, every wait at the end was dropped as an artifact). One of a time only, at the end, is not, and the answer says what was not kept. |
-| `list_tests` | Lists all saved tests and their variables. |
-| `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
+| `list_tests` | Lists all saved tests, their variables, and how many rows each plays. |
+| `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A test with rows (its own, or those of the dataset it is bound to) plays every row, a run each, and says how each did; `row` plays one (see Test data: the rows of a test). A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
+| `save_test_rows` | Saves the rows of a test — the table of its Data tab: a row per run, a value per variable by its name; `rows: []` removes them (see Test data: the rows of a test). |
 | `save_requirement` | Saves a requirement — from a request, written by hand, or an issue of a tool (a Jira story) — with its acceptance criteria (see below). |
 | `import_requirements` | Imports requirements from a file — CSV, TSV, Excel, a Jira CSV export, JSON, Markdown, Word `.docx`, a Postman collection, an OpenAPI document —, a dry run first (see below). Any other document (a PDF, an email, notes): the agent reads it and passes its requirements as Markdown `content`. |
 | `import_from_connector` | Reads requirements from a tool set in the dashboard (a connector: Jira, GitHub Issues) — a query, their keys, or again (`sync`) —, a dry run first (see below). |
@@ -503,10 +504,46 @@ relais :
   final : `Jardin (44)` devient `Jardin`, qui retrouve `Jardin (62)` ailleurs ;
 - un même bouton ou lien répété (« Add to cart » sur chaque produit) est choisi par position.
 
+La liste est lue **au moment du clic**, sur sa page : lue à `stop_recording`, sur la dernière page
+seulement (le panier), les résultats d'une recherche n'y étaient plus, et « le deuxième résultat »
+restait le clic sur le nom de son produit. Un clic qui ne pouvait pas être lu est relu à
+`stop_recording`, comme avant.
+
+**Un élément dans une carte.** Un élément peut ne ressembler à aucun autre, ou se trouver trop
+profond pour que ses semblables soient trouvés. C'est le cas du bouton « Ajouter » d'une carte
+produit, six niveaux sous sa carte chez Auchan, ou du « + » d'une quantité, que seule la carte
+ajoutée au panier affiche. Il est alors rattaché à **sa carte** : son plus proche ancêtre qui a au
+moins 3 semblables, mêmes balise et première classe, construits pareil. Cet ancêtre doit aussi être
+un élément de liste : `article`, `li`, `tr`, un rôle de liste, ou l'enfant d'une grille ou d'une
+rangée qui passe à la ligne. Les sections d'une page, l'une sous l'autre, n'en sont pas.
+
+La variable garde la place de la carte (`itemXpath`, parmi les enfants directs de la liste) et le
+chemin de l'élément dans la carte (`withinXpath`). Les clics suivants sur la même carte partagent la
+variable : « Ajouter » puis « + » deux fois sur le 2ᵉ résultat donnent un seul `{{product}}`, et
+`product=2` les déplace tous les trois sur la 3ᵉ carte. Au rejeu, la carte et l'élément sont attendus
+jusqu'à 10 s : le « + » n'apparaît qu'une fois l'ajout pris en compte. La Test Arena a une section 7
+(recherche et panier) qui reproduit ce cas.
+
+**L'agent valide.** Le code peut se tromper : le bouton « Search » de la Test Arena avait été pris
+pour « la 7ᵉ section de la page ». L'agent qui enregistre sait ce qu'il voulait faire. Juste après
+un clic trouvé dans une liste, le résultat du clic le lui dit : « List: taken as item 2 of 8 of a
+list ("Whole milk 1L 1,15 €", …) — this element of that item, the same item as step 6 ». S'il n'est
+pas d'accord, il répond par `record_step(action_id, pick)` :
+- `none` : ce n'est pas un élément de liste, le clic reste un clic sur cet élément ;
+- `by_place` : l'élément à cette place (« le deuxième résultat ») ;
+- `by_text` : l'élément qui porte ce libellé (« la catégorie Jardin »).
+
+Sa réponse passe avant celle du classifieur à `stop_recording`, et avant la règle des menus. S'il ne
+dit rien, rien ne change. L'agent du tableau de bord en mode API a le même retour, et répond par
+`pick_list_item(pick)`, qui vise le dernier clic.
+
 Un clic dans un **menu, une barre d'onglets ou un menu latéral** n'est jamais une variable : c'est
 l'endroit où va le test, pas une valeur qu'il fait varier. La page le dit (élément dans un `nav`, un
 `role="tab"`, `tablist`, `menu`, `menubar`, `menuitem`, ou un `data-testid` qui contient « menu » ou
-« nav »), sinon le LLM (qui le classe `menu_item`). Variable, un onglet était rejoué par son libellé,
+« nav »), ou la liste est dans l'en-tête de la page (`header`, `role="banner"`) ou ses liens portent
+un nom de navigation (`navigation-header__link`, `navbar`…), sinon le LLM (qui le classe
+`menu_item`). Le lien du panier d'Auchan, parmi les 4 liens de son en-tête, était devenu
+`{{product}}`, « le premier d'entre eux » : au rejeu, son logo, qui ramenait à l'accueil. Variable, un onglet était rejoué par son libellé,
 « Runs7 » avec son compteur, qui change à la prochaine exécution ; c'est maintenant un clic avec ses
 locators. Une liste de choix n'est jamais prise pour un menu : des options (`role="option"`,
 `listbox`, classes « autocomplete » ou « suggest »), ou une liste cliquée juste après une saisie, même
@@ -515,14 +552,53 @@ dans le `nav` de l'en-tête.
 **Une suggestion choisie après une saisie** devient une variable à elle : « Fr » tapé dans le champ
 pays (`{{country_input}}`), « France » choisi parmi ses suggestions (`{{country}}`). Le clic va à la
 suggestion de ce texte : ses locators par position (« la première suggestion ») sont retirés, qui en
-choisissaient une autre, en silence, sur une autre valeur. Une vérification de ce qui a été choisi
+choisissaient une autre, en silence, sur une autre valeur. Un attribut qui se termine par ce texte
+donne un sélecteur ciblé, sans tenir compte des majuscules : `a[aria-label$=": {{text_choice}}" i]`
+pour « Suggestion de mot clé 1/2: chocolat » (la position, qui change avec la valeur, n'est pas
+gardée), et « Bananas » trouve la suggestion « bananas ». Avec un tel sélecteur, le texte seul n'est
+pas gardé : il se trouve n'importe où sur la page (« Bananas » dans le titre « Bananas Selections »
+au-dessus des suggestions de Walmart, cliqué à leur place).
+Réparée à la main (`fix_test_step`), l'étape garde sa variable, comme une saisie garde la sienne. Une vérification de ce qui a été choisi
 (« France » dans le champ) se relie à `{{country}}`. Pour rejouer avec l'Italie, changez les deux :
 `run_test(…, { variables: { "country_input": "Ital", "country": "Italy" } })`, ou deux colonnes d'un
 jeu de données. Une suggestion qui n'est pas proposée pour ce qui est tapé fait échouer l'étape, qui
 le dit (« Spain » introuvable après « S »). C'est une suggestion quand chaque mot tapé commence un
 mot de l'élément cliqué (« saint eti » → « Saint-Étienne ») : un bouton « Save » cliqué après avoir
 tapé un nom n'en est pas une. La liste étant fermée quand l'enregistrement s'arrête, c'est la seule
-façon de la retrouver.
+façon de la retrouver. Une attente ou une vérification placée entre la saisie et le choix (l'agent
+vérifie que la suggestion s'affiche) ne l'empêche pas, et le libellé pris est son texte
+(« chocolat »), pas son nom accessible (« Suggestion de mot clé 1/2: chocolat »).
+
+**Les vérifications autour de la suggestion la suivent** : là où elles la citent dans un sélecteur
+(`a[href="/recherche?text={{text_choice}}"]`) et dans ce qu'elles attendent, sans tenir compte des
+majuscules — un terme de recherche, que la page écrit à sa façon (« Chocolat » dans le titre,
+« Bananes Prix Bas » pour « banane »). Dans une URL, la suggestion est la valeur d'un paramètre, ou
+son début : `/search?q=laptop` pour « laptop computers » devient `/search?q={{search_choice}}`, lue
+sur l'URL décodée (`laptop+computers` → « laptop computers »). Une vérification marquée `ignoreCase` compare ainsi, au rejeu
+comme en Playwright exporté (`{ ignoreCase: true }`, ou une expression `/…/i`).
+
+Son pluriel aussi, dans un texte qui doit la contenir : le titre « Chocolats pas cher » attendu
+après « chocolat » devient `{{text_choice}}`, que « Chocolats » contient, et que « Votre recherche
+banane » contient pour « banane ». Jamais un autre mot qui en est fait (« Chocolaterie »), ni un
+texte qui doit être égal (`title_equals`). Un paramètre seul (`redirect_keywords=chocolat`) devient
+la suggestion seule : son nom dit comment le site a pris cette valeur-là. Auchan envoie un mot qu'il
+connaît vers son rayon (`/…/ca-n0507?redirect_keywords=chocolat`), et tout autre vers sa recherche
+(`/recherche?text=banane`). Un chemin avec elle (`/search?q={{search_choice}}`) reste entier.
+
+Ce qu'aucune variable ne suit, c'est un résultat propre à une valeur : un produit Kinder vérifié
+après « chocolat » n'est pas dans les résultats de « banane ». Les consignes de l'agent qui
+enregistre (`start_recording`, et l'agent du dashboard) lui demandent d'agir et de vérifier, après
+une valeur saisie ou choisie, ce qui tient pour toute valeur :
+- vérifier la valeur elle-même dans le titre, un titre de la page ou l'URL, et une liste de
+  résultats affichée (son conteneur, un compte), jamais un résultat en particulier ;
+- prendre un résultat par sa place (« le deuxième résultat »), pas par un nom que lui seul porte
+  (le nom du produit dans un `aria-label`) ; un nom dont les étapes suivantes ont besoin est gardé
+  d'abord par `capture_value`, puis utilisé en `{{nom}}` ;
+- vérifier un montant calculé par une expression : le prix gardé, puis `{{prix * 3 | 0,00}}` ;
+- retirer à la fin ce que le test a ajouté (un panier, une donnée créée), pour que l'exécution
+  suivante parte du même état ;
+- regarder la page par `snapshot` ou `extract`, pas par un `execute_js` qui serait rejoué ; un
+  `execute_js` qui n'a fait que regarder est retiré par `record_step(action_id, remove: true)`.
 
 #### Déclarer une variable : `add_test_variable`
 
@@ -767,6 +843,13 @@ l'assertion de l'étape 9, et la valeur retenue est enregistrée avec l'exécuti
 | `{{uuid}}`, `{{timestamp}}`, `{{random(1000, 9999)}}` | un UUID, l'heure en ms, un entier entre les bornes |
 | `{{round(price * 1.2, 2)}}`, `{{price * qty \| 0,00}}` | un calcul avec d'autres variables, formaté |
 
+Un nombre se lit comme la page l'écrit : un prix gardé par `capture_value` (« 6,42 € », « €19.26 »,
+« 1 234,56 € », « $1,234.56 », « 12 % ») se calcule. Le séparateur décimal est le dernier de `.` et
+`,` quand il y a les deux ; une virgule seule en est un (« 6,42 »), sauf devant trois chiffres en
+anglais (« 1,234 » vaut 1234). Les espaces ne comptent qu'entre groupes de trois chiffres
+(« 06 12 34 56 78 » n'est pas un nombre). Le total de 3 fois un produit à « 6,42 € » se vérifie par
+`text_contains` `{{prix * 3 | 0,00}}`, soit « 19,26 ».
+
 Une variable peut en utiliser d'autres (`{{price * quantity}}`). Un `{{nom}}` qui n'est pas une variable
 reste tel quel, comme avant ; une expression qui ne se calcule pas (`{{today + 3 dayz}}`) arrête
 l'exécution avant le navigateur, en disant laquelle et pourquoi. Une valeur passée à `run_test` peut
@@ -793,11 +876,13 @@ texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fich
 
 - **Un test lié à un jeu** (onglet Data, ou `bind_dataset`) joue une ligne par exécution : ses colonnes
   sont des variables de l'exécution, par-dessus les valeurs par défaut du test (une valeur passée à
-  l'exécution passe devant). Une exécution joue la première ligne, ou celle choisie (« Row » dans les
-  options de Run, `run_test(row)`) ; l'exécution note laquelle.
+  l'exécution passe devant). Lancé (Run, `run_test`), il joue toutes les lignes l'une après l'autre ;
+  une seule si on la choisit (« Rows » dans les options de Run, `run_test(row)`) ; chaque exécution note
+  laquelle, et ses valeurs. Lié à un jeu, un test joue les lignes du jeu, pas les siennes (voir Test data
+  plus bas) : les siennes restent pour quand il sera délié.
 - **Une campagne** joue toutes les lignes d'un test lié, chacune à part : `login [row 2]` dans les
   résultats, les rapports JUnit et HTML, les régressions. Une exigence voit son test échouer si une
-  ligne échoue. « Run every row » dans les options de Run lance la campagne de ce seul test.
+  ligne échoue. « Run every row as a campaign » dans les options de Run lance la campagne de ce seul test.
 - **Une expression** lit une valeur d'un jeu du projet : `{{users[2].email}}`, lignes numérotées à
   partir de 1, dans n'importe quel test.
 - **L'export** emporte les jeux utilisés : en Playwright, un test par ligne (`for … of
@@ -827,8 +912,62 @@ texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fich
 | `POST /api/projects/:id/datasets` | Dépose un fichier (`filename`, `content` texte ou `content_base64` pour un Excel) ou des lignes (`name`, `rows`) |
 | `GET /api/datasets/:id`, `DELETE /api/datasets/:id` | Un jeu avec ses lignes ; sa suppression (les tests liés jouent alors une seule fois) |
 | `PUT /api/tests/:name/dataset` | Lie un test à un jeu (`{ dataset: id ou nom }`) ou le délie (`null`) |
+| `PUT /api/tests/:name/rows` | The rows of the test's own (`{ rows: [{ variable: value }] }`, `[]` for none) — see Test data below |
 | `save_dataset`, `bind_dataset` | Les mêmes, pour un agent (CSV en texte ou lignes) ; `get_project_context` liste les jeux, avec leur première ligne (un mot de passe masqué) |
 | `start_recording(project_id, dataset)` | Enregistre un test qui joue un jeu : `{{email}}` tape la ligne 1, le test est lié au jeu à `stop_recording` |
+
+### Test data: the rows of a test
+
+A test can keep rows of its own, typed in a table in its **Data** tab (**Test data**): a column per
+variable of the test, a row per run. **Add a row** starts one from the variables' defaults; a row can
+be duplicated or deleted; **Save rows** keeps them with the test (`tests.data_rows`). A cell left
+greyed has no value of its own and plays the variable's default; a cell emptied is typed empty. A cell
+may compute its value (`{{today + 3 days | dd/MM/yyyy}}`, `{{qty * 2}}`, with the row's other values)
+or type a secret of the project (`{{secret.NAME}}`). A column holding a password, a key or a code is
+masked in the table.
+
+Why rows of the test's own rather than a dataset of the project: the columns are the test's variables,
+the rows go with the test (renamed, deleted), they take no name among the project's datasets
+(`{{users[2].email}}`), and editing them changes no other test. They are played exactly as a dataset's
+rows are (`rowsOfTest` in `lib/datasets.js`): a test bound to a dataset plays the dataset's rows, its
+own are kept for when it is unbound.
+
+- **Run** (dashboard, `run_test`) plays every row, one after the other, a run each; the live window
+  shows the row being played and how each one did (« 2 of 2 rows passed »). A failed row does not stop
+  the next. **Rows** in the Run options plays only one; debug or `start_step` play one row (the first
+  unless `row` says). Headless, each row's window is closed after it; in a window, a row that passed
+  leaves its window to the next one, a failed one stays open.
+- **Each run says the row it played**: its number and its values as played (`data_row`,
+  `data_values`) — in the Runs tab (« Row 2 — Bob, Martin », all the values once opened), the Recent
+  runs, `run_test`'s answer. A password's value is kept `(hidden)`, a secret by its reference
+  (`{{secret.PW}}`), never its value.
+- **How the test last did** counts every row it plays now, each by its last run (`lib/test-status.js`):
+  one row failing, the test failed — even when its latest run, on another row, passed. The test list,
+  the test's page (« Failed · row 1 of 2 failed »), the coverage of its requirements and the regression
+  plan read it so. Played again alone and passing, the failed row turns the test green.
+- **A campaign** plays each row as one of its runs (`izi_contact_rows [row 2]`); its report shows each
+  row's values, and the JUnit report has them as `data_row` and `data_values` properties.
+- **Gherkin**: with two rows or more, the test's Gherkin (Gherkin tab, `get_test_as_gherkin`) is a
+  `Scenario Outline` (`Plan du scénario` in French): `<email>` in its steps, an `Examples` line per row
+  — the steps' variables first, then the rows' other columns; a value a row does not give is the
+  default; a password shows `(hidden)`. With one row or none, it stays a `Scenario`. Saved from the
+  Gherkin tab, the `Examples` are the test's rows (a cell left `(hidden)` keeps its value; a new column
+  becomes a variable of the test); an Outline turned back into a `Scenario` removes its rows. Bound to a
+  dataset, the `Examples` are the dataset's rows: changed in Datasets, not there.
+  `create_test_from_gherkin` with a `Scenario Outline` creates the test with its `Examples` as rows.
+- **The export**: `playwright-plain` writes a test per row; `playwright-cucumber` an `Examples` line
+  per row.
+- **An agent**: `save_test_rows(test_name, rows)` saves them (a column is a variable of the test);
+  `add_test_variable` renaming a variable renames its column.
+
+| Route or tool | Role |
+| :--- | :--- |
+| `GET /api/tests/:name` | `rows` (its own), `played_rows` (what a run plays: `source` `test` or `dataset`, `row_count`, `row_labels`) |
+| `PUT /api/tests/:name/rows` | Saves its rows: `{ rows: [{ first_name: "Ann" }, …] }`; a column that is no variable of the test is refused |
+| `POST /api/tests/:name/execute` | Without `row`: every row, streamed as `rows_started`, then `row_started` and `execution_completed` / `execution_error` (with `row`) per row, then `rows_completed` |
+| `GET /api/tests/:name/executions`, `GET /api/executions/:id` | Each run with `data_row` and `data_values` |
+| `GET /api/tests/:name/last-run` | How it last did, every row counted: `{ status, started_at, rows: { total, played, failed } }`; `GET /api/tests` gives `last_status` the same way, with `last_rows` |
+| `save_test_rows` | The same, for an agent |
 
 ### Secrets : ce qu'un test tape sans que personne le lise
 
@@ -970,6 +1109,7 @@ valeurs gardées ne sont pas des colonnes de l'Outline.
 | `substitutions` | object | Remplacement textuel brut dans tous les paramètres (clé → valeur) |
 | `start_step` | number | Reprendre l'exécution à une étape spécifique (1-indexed) |
 | `new_window` | boolean | Si `true`, exécute dans une nouvelle fenêtre au lieu d'un nouvel onglet |
+| `row` | number | Pour un test qui a des lignes (les siennes, ou celles de son jeu de données) : la seule ligne à jouer, numérotée à partir de 1. Sans `row`, toutes les lignes sont jouées, une exécution chacune ; avec `start_step` ou `debug`, la première seulement |
 
 ### Exigences : de quoi un test est la preuve
 
@@ -1448,7 +1588,15 @@ Pour ne plus les voir du tout, un **Chrome sans fenêtre** : Chrome for Testing 
 n'accepte plus d'extension chargée par la ligne de commande), installé une fois depuis le tableau de bord
 (**Settings → Headless browser → Install**, ~150 Mo dans `~/.izitest/browsers`), lancé avec l'extension
 du dépôt et un profil à lui (`~/.izitest/profiles/headless`). Il démarre au premier rejeu demandé
-headless et s'arrête avec le serveur. Une campagne headless de 3 à la fois en lance deux de plus,
+headless et s'arrête avec le serveur, ou avant : après **10 minutes sans travail** (réglable dans
+**Settings → Headless browser → Stop after**, 0 : jamais). Sans travail, c'est-à-dire :
+- aucune commande en cours ni envoyée depuis ;
+- aucun rejeu ni campagne en cours chez lui (même entre deux tests, ou pendant un pas qui attend) ;
+- aucun test en cours d'enregistrement chez lui (l'agent peut attendre la réponse de l'utilisateur).
+
+Ce que fait la vue *Live* pour lui (lister ses onglets toutes les 3 s, les filmer) ne compte pas. Ce qui
+en a besoin le relance : un rejeu ou une campagne headless, une commande qui le nomme
+(`profile: "headless"`), un agent sans autre navigateur. Une campagne headless de 3 à la fois en lance deux de plus,
 `headless-2` et `headless-3`, chacun avec son profil (`~/.izitest/profiles/headless-2`, …), arrêtés à la
 fin de la campagne. Chacun apprend son nom de la page où il démarre
 (`data:text/html,headless-2#izitest-profile=headless-2`). Son extension s'annonce comme le profil **`headless`** : une
@@ -1463,8 +1611,9 @@ ordinaire (sans « HeadlessChrome » dans le user agent).
   headless est fermée après.
 - **MCP** : `run_campaign(…, headless: true)`.
 - **CI** : `node mcp-server/bin/campaign.js --project 3 --headless`.
-- **API** : `GET /api/headless` (installé, en cours d'installation, lancé, connecté, les voies connectées), `POST
-  /api/headless/install|start|stop` ; `headless: true` dans `POST /api/tests/:name/execute` et `POST
+- **API** : `GET /api/headless` (installé, en cours d'installation, lancé, connecté, les voies connectées,
+  `idle_minutes`), `POST /api/headless/install|start|stop`, `PUT /api/headless/settings { idle_minutes }`
+  (minutes entières, 0 à 1440) ; `headless: true` dans `POST /api/tests/:name/execute` et `POST
   /api/campaigns`.
 
 Son profil est le sien : cookies, sessions et stockage ne sont pas ceux du Chrome de l'utilisateur. Un
@@ -1539,8 +1688,18 @@ qu'un. API : `GET /api/bugs?status=&project_id=`, `PUT /api/bugs/:id`, `GET|POST
 
 #### Les bugs que rencontre un test
 
-Un test dont l'échec est mis sur le compte de l'appli ouvre aussi un bug dans cette page. Cela vaut pour
-un échec en campagne, par `run_test` ou depuis le tableau de bord, quand le diagnostic dit :
+**Par défaut, un échec n'ouvre pas de bug tout seul** : une personne lit l'exécution et signale le bug
+depuis son rapport (onglet *Runs* du test, bouton **Report a bug** sur une exécution en échec). Le bug
+est ouvert avec ce que l'exécution sait (son étape en échec, l'attendu et le lu, la page, la campagne),
+quel que soit le diagnostic, et l'exécution y est liée (bouton *Bug #N*). Un diagnostic peut se
+tromper : ouverts tout seuls, des bugs dus au test remplissaient la page Bugs. `run_test` dit quand le
+diagnostic met l'échec sur l'appli, pour que l'agent le signale à l'utilisateur. Route :
+`POST /api/executions/{id}/bug`.
+
+Cochée dans le projet (*Projects → Edit → Open a bug automatically when a test fails*, `auto_bugs`), la
+règle d'avant s'applique : un test dont l'échec est mis sur le compte de l'appli ouvre aussi un bug dans
+cette page. Cela vaut pour un échec en campagne, par `run_test` ou depuis le tableau de bord, quand le
+diagnostic dit :
 - `non_conformity` : l'appli ne fait pas ce que dit l'exigence. Type *Non-conformity*, gravité haute.
 - `app_regression` : l'appli échoue là où le test passait. Type *Regression*, gravité haute si une
   requête de l'appli a répondu 5xx ou rien, moyenne sinon. Les requêtes que le triage met de côté

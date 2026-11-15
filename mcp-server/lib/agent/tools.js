@@ -8,7 +8,8 @@
 
 import { db, parseJson } from '../db.js';
 import { loadTest, saveTest, listTests } from '../test-store.js';
-import { parseFeatureToStepsWith } from '../gherkin/parse.js';
+import { parseFeatureToStepsWith, examplesOf } from '../gherkin/parse.js';
+import { withExamples } from '../gherkin/outline.js';
 import { serializeTestToFeatureWith } from '../gherkin/serialize.js';
 import { withElementNames, elementTargets, listElements } from '../element-store.js';
 import {
@@ -18,7 +19,7 @@ import {
 import { log } from '../logger.js';
 import { CODEGEN_FRAMEWORKS, generateTestCode, formatCodeFiles } from '../codegen/index.js';
 import { addBusinessStep } from '../business-steps.js';
-import { listDatasets, saveDataset, bindDataset, datasetRows, datasetOfTest, shownRow } from '../datasets.js';
+import { listDatasets, saveDataset, bindDataset, datasetRows, datasetOfTest, shownRow, saveTestRows, renameRowColumn, rowsOfTest, codeData } from '../datasets.js';
 import { listSecrets } from '../secrets.js';
 import { addTestVariable } from '../test-variable.js';
 import { linkRecorded, requirementsOfTest } from '../requirements.js';
@@ -169,7 +170,7 @@ export const AGENT_TOOLS = [
 
   {
     name: 'create_test_from_gherkin',
-    description: 'Create a new test by parsing a Gherkin feature document. The Gherkin is resolved against the project step definitions to produce executable test steps. Write it in the language of the project\'s tests (get_project_context: language; in French, the feature starts with "# language: fr" and its keywords are Fonctionnalité, Scénario, Soit, Quand, Alors, Et). Where a phrase takes a CSS selector, the name of an element of the project (get_project_context lists them, e.g. When I click on "Save profile") acts on that element as its tests recorded it.',
+    description: 'Create a new test by parsing a Gherkin feature document. The Gherkin is resolved against the project step definitions to produce executable test steps. Write it in the language of the project\'s tests (get_project_context: language; in French, the feature starts with "# language: fr" and its keywords are Fonctionnalité, Scénario, Soit, Quand, Alors, Et). Where a phrase takes a CSS selector, the name of an element of the project (get_project_context lists them, e.g. When I click on "Save profile") acts on that element as its tests recorded it. A Scenario Outline (Plan du scénario) makes a test with rows: <name> in its steps is the variable {{name}}, each line of its Examples a row of the test, played a run each.',
     parameters: {
       type: 'object',
       properties: {
@@ -193,9 +194,11 @@ export const AGENT_TOOLS = [
       }));
 
       let steps;
+      let examples;
       try {
         // A name of an element of the project, where a selector goes, acts on that element.
         steps = parseFeatureToStepsWith(gherkin, definitions, { targets: elementTargets(project_id) });
+        examples = examplesOf(gherkin);
       } catch (err) {
         if (err.code === 'GHERKIN_UNRESOLVED') {
           return { error: err.message, unresolved: err.errors };
@@ -211,6 +214,8 @@ export const AGENT_TOOLS = [
 
       // Assign test to project
       db.prepare('UPDATE tests SET project_id = ? WHERE id = ?').run(project_id, testId);
+      // A Scenario Outline: its Examples are the test's rows, their columns its variables.
+      const saved = examples ? saveTestRows(test_name, examples.rows, { addVariables: true }) : null;
 
       log(`[Agent Tool] Created test "${test_name}" (${steps.length} steps) in project ${project_id}`);
       // Linked to what it checks, like a recording started for a requirement.
@@ -221,6 +226,8 @@ export const AGENT_TOOLS = [
           test_name,
           step_count: steps.length,
           steps: steps.map(s => ({ command: s.command, intent: s.intent })),
+          ...(saved?.rows ? { rows: saved.rows.length, note: 'its Examples are its rows: run_test plays every row, a run each' } : {}),
+          ...(saved?.error ? { rows_error: saved.error } : {}),
           ...(linked ? { requirement: linked } : {}),
         },
       };
@@ -342,8 +349,9 @@ export const AGENT_TOOLS = [
     description: [
       'Save a dataset of a project: a table of values — the users to log in with, the products to order — given as CSV',
       'text (header row first) or as rows (a list of objects). A dataset of that name is replaced. A test bound to it',
-      '(bind_dataset) runs once per row, each column a variable of the run ({{email}}); run_campaign runs every row,',
-      'run_test one (row). Any test reads a value of it as {{name[2].column}}, rows numbered from 1.',
+      '(bind_dataset) runs once per row, each column a variable of the run ({{email}}); run_test and run_campaign run every row',
+      '(run_test row: one). Any test reads a value of it as {{name[2].column}}, rows numbered from 1. Rows for one test only:',
+      'save_test_rows.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -366,7 +374,7 @@ export const AGENT_TOOLS = [
 
   {
     name: 'bind_dataset',
-    description: 'Bind a test to a dataset of its project, or unbind it (dataset: null): bound, the test runs once per row of it, each column a variable of the run ({{column}}) over its defaults. run_test plays one row (row, default 1); run_campaign plays every row.',
+    description: 'Bind a test to a dataset of its project, or unbind it (dataset: null): bound, the test runs once per row of it, each column a variable of the run ({{column}}) over its defaults — instead of the rows it keeps of its own (save_test_rows), kept for when it is unbound. run_test and run_campaign play every row; run_test row: one.',
     parameters: {
       type: 'object',
       properties: {
@@ -379,6 +387,37 @@ export const AGENT_TOOLS = [
       const result = bindDataset(test_name, dataset);
       if (result.error) return { error: result.error };
       return { data: result.dataset ? { test: test_name, dataset: result.dataset.name, columns: result.dataset.columns, rows: result.dataset.row_count } : { test: test_name, dataset: null } };
+    },
+  },
+
+  {
+    name: 'save_test_rows',
+    description: [
+      'Save the rows of a test — its Data tab\'s table: one row, one run of the test, a value per variable of it by its',
+      'name (each column is one of its variables; a value a row leaves out is the variable\'s default). rows: [] removes them.',
+      'run_test and run_campaign then play every row, a run each, and each run says which row it played. With two rows or',
+      'more its Gherkin is a Scenario Outline, its Examples the rows. A value may be computed ({{today + 3 days | dd/MM/yyyy}},',
+      'user-{{unique}}@example.com) or a secret of the project ({{secret.NAME}}), never a password typed. For a table shared',
+      'by several tests, a dataset of the project instead (save_dataset, bind_dataset).',
+    ].join(' '),
+    parameters: {
+      type: 'object',
+      properties: {
+        test_name: { type: 'string', description: 'Name of the test' },
+        rows: { type: 'array', items: { type: 'object' }, description: 'The rows, as objects: [{ "email": "bob@x.dev", "city": "Paris" }, …]; [] for none' },
+      },
+      required: ['test_name', 'rows'],
+    },
+    handler({ test_name, rows }) {
+      const result = saveTestRows(test_name, rows);
+      if (result.error) return { error: result.error };
+      const bound = datasetOfTest(test_name);
+      return {
+        data: {
+          test: test_name, rows: result.rows.length, columns: [...new Set(result.rows.flatMap((row) => Object.keys(row)))],
+          ...(bound ? { note: `Bound to the dataset "${bound.name}": it plays that one's rows until unbound (bind_dataset null)` } : {}),
+        },
+      };
     },
   },
 
@@ -419,6 +458,8 @@ export const AGENT_TOOLS = [
       if (result.error) return { error: result.error };
 
       saveTest(result.test);
+      // The column of its rows goes with the variable renamed.
+      if (result.renamed) renameRowColumn(test_name, result.renamed, name);
       log(`[Agent Tool] ${result.renamed ? `Renamed {{${result.renamed}}} to` : result.reused ? 'Reused' : 'Added'} variable {{${name}}} in step ${step} of "${test_name}"`);
       const { params, assertion, command } = result.test.steps[step - 1];
       return {
@@ -436,7 +477,7 @@ export const AGENT_TOOLS = [
 
   {
     name: 'get_test_as_gherkin',
-    description: 'Serialize an existing test to Gherkin format.',
+    description: 'Serialize an existing test to Gherkin format. A test with two rows or more reads as a Scenario Outline, its Examples its rows (a password\'s value hidden).',
     parameters: {
       type: 'object',
       properties: {
@@ -449,7 +490,7 @@ export const AGENT_TOOLS = [
       const test = loadTest(test_name);
       if (!test) return { error: `Test "${test_name}" not found` };
 
-      const feature = serializeTestToFeatureWith(withElementNames(test), projectDefinitions(project_id));
+      const feature = withExamples(serializeTestToFeatureWith(withElementNames(test), projectDefinitions(project_id)), { rows: rowsOfTest(test_name)?.rows, variables: test.variables, language: test.language });
       return { data: { feature } };
     },
   },
@@ -478,7 +519,7 @@ export const AGENT_TOOLS = [
       if (!test) return { error: `Test "${test_name}" not found` };
 
       // With the datasets of its project, and the one it runs the rows of.
-      const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name), datasets: datasetRows(test.project_id), dataset: datasetOfTest(test.name)?.name ?? null }, framework, projectDefinitions);
+      const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name), ...codeData(test) }, framework, projectDefinitions);
       if (result.error) return { error: result.error };
 
       const count = result.files.length;

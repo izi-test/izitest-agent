@@ -24,7 +24,35 @@ export function clearClientErrors() {
   clientErrors.length = 0;
   return n;
 }
-const pendingCommands = new Map(); // commandId → { resolve, reject, timeout }
+const pendingCommands = new Map(); // commandId → { resolve, reject, timeout, …, work }
+
+// When each browser last had work, and how much it has under way: what tells IziTest's Chrome
+// without windows it can stop (lib/headless.js). The server's own upkeep is no work: the live
+// view lists the tabs of every browser every few seconds, and films what it shows.
+const activity = new Map(); // profileId → { lastAt, inFlight }
+
+function noteWork(profileId, delta) {
+  if (!profileId) return;
+  const entry = activity.get(profileId) ?? { lastAt: 0, inFlight: 0 };
+  entry.lastAt = Date.now();
+  entry.inFlight = Math.max(0, entry.inFlight + delta);
+  activity.set(profileId, entry);
+}
+
+/** A command answered, timed out, or lost with its browser: no longer under way. */
+function forgetCommand(id) {
+  const pending = pendingCommands.get(id);
+  pendingCommands.delete(id);
+  if (pending?.work) noteWork(pending.work, -1);
+}
+
+/** When the browser of `profileId` last had work, and how many commands it runs: { lastAt, inFlight }, or null. */
+export function profileActivity(profileId) {
+  const entry = activity.get(profileId);
+  return entry ? { ...entry } : null;
+}
+
+const profileOf = (ws) => [...profiles].find(([, socket]) => socket === ws)?.[0] ?? null;
 const profileEvents = new EventEmitter();
 const extensionMessages = new EventEmitter();
 
@@ -85,12 +113,29 @@ export function setFallbackBrowser(provider) {
   fallbackBrowser = provider;
 }
 
+// How to get the browser a command names when it is not running: lib/headless.js starts its
+// Chrome without windows, stopped when it had nothing to do (a function of the profile named,
+// resolving once it is connected; null for a profile that is no Chrome of its own).
+let profileStarter = null;
+
+export function setProfileStarter(starter) {
+  profileStarter = starter;
+}
+
 /**
- * The profile a command naming `profileId` goes to: that one; naming none, the user's Chrome —
- * or, none connected for a while, the fallback browser when there is one (undefined otherwise).
+ * The profile a command naming `profileId` goes to: that one — started if it is IziTest's Chrome
+ * without windows, stopped —; naming none, the user's Chrome — or, none connected for a while, the
+ * fallback browser when there is one (undefined otherwise). The server's own upkeep (`upkeep`: the
+ * live view's) never starts a browser.
  */
-export async function routeProfile(profileId, now = Date.now()) {
-  if (profileId || defaultWs() || !fallbackBrowser) return profileId;
+export async function routeProfile(profileId, now = Date.now(), { upkeep = false } = {}) {
+  if (profileId) {
+    if (!upkeep && profileStarter) {
+      await profileStarter(profileId)?.catch((err) => log(`Starting the browser of profile "${profileId}": ${err.message}`));
+    }
+    return profileId;
+  }
+  if (defaultWs() || !fallbackBrowser || upkeep) return profileId;
   if (now - windowedSeenAt < WINDOWED_GRACE_MS) return profileId;
   return (await fallbackBrowser().catch((err) => {
     log(`Fallback browser: ${err.message}`);
@@ -149,6 +194,8 @@ export function startWebSocketServer(port) {
         if (msg.type === 'register') {
           registeredProfileId = msg.profileId;
           profiles.set(msg.profileId, ws);
+          // Just started: as if it had just had work, not idle since it last ran.
+          activity.set(msg.profileId, { lastAt: Date.now(), inFlight: 0 });
           if (msg.headless === true) headlessProfiles.add(msg.profileId);
           else {
             headlessProfiles.delete(msg.profileId);
@@ -194,7 +241,7 @@ export function startWebSocketServer(port) {
           const pending = pendingCommands.get(msg.id);
           if (pending) {
             clearTimeout(pending.timeout);
-            pendingCommands.delete(msg.id);
+            forgetCommand(msg.id);
             if (msg.error) {
               if (!pending.quiet) log(`[IN]  ❌ Error for ${msg.id}: ${msg.error}`);
               pending.reject(new Error(msg.error));
@@ -218,7 +265,7 @@ export function startWebSocketServer(port) {
       for (const [id, pending] of pendingCommands) {
         if (pending.ws !== ws) continue;
         clearTimeout(pending.timeout);
-        pendingCommands.delete(id);
+        forgetCommand(id);
         pending.reject(new Error(`The browser${registeredProfileId ? ` of profile "${registeredProfileId}"` : ''} disconnected while it ran ${pending.command}: it was closed, stopped or reloaded`));
       }
       // A register under the same id from a newer socket replaced this one: it stays.
@@ -257,12 +304,18 @@ export function waitForProfile(profileId, waitMs = 8000) {
   });
 }
 
-export function sendCommand(profileId, command, params, timeoutMs = 30000, onProgress = null) {
+/**
+ * Sends `command` to the browser of `profileId` (naming none: routeProfile), resolving with its
+ * answer. `upkeep`: a command of the server's own upkeep (the live view's, every `live_*`), which
+ * starts no browser and is no work that keeps one running (profileActivity).
+ */
+export function sendCommand(profileId, command, params, timeoutMs = 30000, onProgress = null, { upkeep = false } = {}) {
+  upkeep ||= command.startsWith('live_');
   return new Promise((resolve, reject) => {
     (async () => {
       try {
         const asked = profileId;
-        profileId = await routeProfile(profileId);
+        profileId = await routeProfile(profileId, Date.now(), { upkeep });
         const ws = await waitForProfile(profileId);
         if (!ws) {
           reject(new Error(
@@ -279,14 +332,16 @@ export function sendCommand(profileId, command, params, timeoutMs = 30000, onPro
 
         const id = `cmd-${++commandCounter}`;
         const timeout = setTimeout(() => {
-          pendingCommands.delete(id);
+          forgetCommand(id);
           reject(new Error(`Command timed out after ${timeoutMs}ms`));
         }, timeoutMs);
 
         // Live view commands run every few seconds per recorded tab, and after every
         // action: logging them would bury the agents' own commands.
         const quiet = command.startsWith('live_');
-        pendingCommands.set(id, { resolve, reject, timeout, onProgress, quiet, ws, command });
+        const work = upkeep ? null : (profileId ?? profileOf(ws));
+        noteWork(work, +1);
+        pendingCommands.set(id, { resolve, reject, timeout, onProgress, quiet, ws, command, work });
 
         if (!quiet) {
           const sessionTag = params?.sessionId ? `[${params.sessionId}] ` : '';

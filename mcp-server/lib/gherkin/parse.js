@@ -51,18 +51,52 @@ export function parseFeatureToStepsWith(featureText, definitions, { targets } = 
  * feature in French), the keyword as `written`, line.
  */
 export function featurePhrases(featureText) {
+  const scenario = scenarioOf(featureText);
+  // A Scenario Outline's <name>, a column of its Examples, is the variable {{name}} of the test.
+  const columns = new Set(examplesIn(scenario)?.columns ?? []);
+  const asVariables = (text) => (columns.size ? text.replace(/<([A-Za-z_]\w*)>/g, (whole, name) => (columns.has(name) ? `{{${name}}}` : whole)) : text);
+  return scenario.steps.map(step => ({
+    text: asVariables(step.text),
+    keyword: canonicalKeyword(step.keywordType, step.keyword.trim()),
+    written: step.keyword.trim(),
+    line: step.location.line,
+  }));
+}
+
+/** The first scenario of a .feature, as Cucumber reads it; throws when there is none. */
+function scenarioOf(featureText) {
   const doc = gherkinParser.parse(featureText);
   const feature = doc.feature;
   if (!feature) throw new Error('No Feature found in document');
 
   const scenarioChild = feature.children.find(c => c.scenario);
   if (!scenarioChild) throw new Error('No Scenario found in Feature');
-  return scenarioChild.scenario.steps.map(step => ({
-    text: step.text,
-    keyword: canonicalKeyword(step.keywordType, step.keyword.trim()),
-    written: step.keyword.trim(),
-    line: step.location.line,
-  }));
+  return scenarioChild.scenario;
+}
+
+/**
+ * The Examples of a Scenario Outline: `{ columns, rows }`, a row an object of its cells by
+ * column (Examples: tables one after the other, their rows in order); null for a Scenario.
+ */
+export function examplesOf(featureText) {
+  return examplesIn(scenarioOf(featureText));
+}
+
+function examplesIn(scenario) {
+  const tables = (scenario.examples ?? []).filter((e) => e.tableHeader);
+  if (!tables.length) return null;
+  const columns = [];
+  const rows = [];
+  for (const table of tables) {
+    const header = table.tableHeader.cells.map((c) => c.value.trim());
+    const repeated = header.find((name, i) => header.indexOf(name) !== i);
+    if (repeated) throw new Error(`Line ${table.tableHeader.location.line}: the column "${repeated}" is twice in the Examples`);
+    const bad = header.find((name) => !/^[A-Za-z_]\w*$/.test(name));
+    if (bad !== undefined) throw new Error(`Line ${table.tableHeader.location.line}: "${bad}" is no variable name (letters, digits and _, not starting with a digit)`);
+    for (const name of header) if (!columns.includes(name)) columns.push(name);
+    for (const line of table.tableBody ?? []) rows.push(Object.fromEntries(header.map((name, i) => [name, line.cells[i]?.value ?? ''])));
+  }
+  return { columns, rows };
 }
 
 export function compileDefinitions(definitions) {

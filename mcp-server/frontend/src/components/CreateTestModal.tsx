@@ -587,7 +587,12 @@ INSTRUCTIONS:
    - Presence of expected elements
    - Text content of key elements
    - Visibility of success/error messages
-4. When all steps are done and checked, call "stop_recording" to save the test (variable detection runs automatically).
+   A value typed or picked (a search, a suggestion) becomes a variable, replayed with other values: after it, act on and check what holds for any value. Check the value itself in the title, a heading or the URL, a list of results shown (its container, a count) — never one particular result (a product, a row) only this value brings. Act on a result by its place among the others ("the second result"), not by a name only it has (a product's name in an aria-label); a name the next steps need, keep it first with "capture_value" and use {{name}} in their selectors.
+   A computed amount (3 × a price): keep the price with "capture_value", then expect "{{price * 3 | 0,00}}" (text_contains; "6,42 €" reads as 6.42).
+   A test that adds to a cart or creates data removes it at the end, so the next run starts the same.
+4. To look at the page without recording a step, use "snapshot" or "extract"; an "execute_js" that only looked: record_step(action_id, remove: true).
+   A click's result may say "List: taken as item N of M": that click becomes a variable replayed by its place or its text. If it is not what you meant, say so right away: record_step(action_id, pick: "none") for a one-off button, "by_place" for "the second result", "by_text" for "the category Garden".
+5. When all steps are done and checked, call "stop_recording" to save the test (variable detection runs automatically).
 
 IMPORTANT:
 - Use "snapshot" to scan the page and identify elements before interacting with them.

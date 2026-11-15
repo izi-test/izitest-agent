@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { LiveStep } from "../store/slices/executionSlice";
+import type { LiveRow, LiveStep } from "../store/slices/executionSlice";
 import type { Triage } from "../types";
 import { CAUSE_LABELS } from "../triage-labels";
 import { LiveScreen } from "./LiveScreen";
@@ -22,6 +22,9 @@ export interface LiveExecutionModalProps {
   agentOutput?: string;
   /** The browser tab the run plays in, shown live beside its steps. */
   liveTabId?: number | null;
+  /** Playing every row of the test: each row, where it stands, and the one playing. */
+  liveRows?: LiveRow[];
+  liveRowIndex?: number | null;
   executionSummary?: {
     status: 'completed' | 'error';
     totalSteps: number;
@@ -74,6 +77,8 @@ export function LiveExecutionModal({
   agentMode = false,
   agentOutput = '',
   liveTabId = null,
+  liveRows = [],
+  liveRowIndex = null,
   executionSummary = null,
   isDebugMode = false,
   isPaused = false,
@@ -162,6 +167,23 @@ export function LiveExecutionModal({
               </div>
             ) : (
               <>
+                {liveRows.length > 0 && (
+                  <>
+                    <div className="live-rows__current">
+                      {isRunning && liveRowIndex != null
+                        ? <>Row {liveRowIndex + 1} of {liveRows.length}{liveRows[liveRowIndex]?.label ? ` — ${liveRows[liveRowIndex].label!.replace(/^row \d+( — )?/, '')}` : ''}</>
+                        : <>{liveRows.filter((r) => r.status === 'success').length} of {liveRows.length} rows passed, a run each</>}
+                    </div>
+                    <div className="live-rows" aria-label="Rows played">
+                      {liveRows.map((r) => (
+                        <span key={r.row} className={`live-rows__row live-rows__row--${r.status}`} title={r.error ?? r.label ?? undefined}>
+                          <StatusIcon status={r.status} />{r.label ?? `row ${r.row}`}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 <div className="live-progress-container">
                   <div className="live-progress-bar" style={{ width: `${progressPercent}%` }} />
                 </div>
@@ -214,6 +236,7 @@ export function LiveExecutionModal({
                 {executionSummary && (
                   <div className={`live-summary-card ${executionSummary.status}`}>
                     <div className="live-summary-title">
+                      {liveRows.length > 0 && liveRowIndex != null ? `Row ${liveRows[liveRowIndex]?.row ?? liveRowIndex + 1}: ` : ''}
                       {executionSummary.status === 'completed' ? 'Execution completed successfully' : 'Execution failed'}
                     </div>
                     <div className="live-summary-metrics">

@@ -98,9 +98,29 @@ an edited step may now aim at another element. Each step keeps what it types and
 
 ## 6. With data
 
-*Datasets*: tables of values (users, products). A test bound to one runs once per row, with
-`{{email}}`, `{{password}}` the values of the row. An agent recording a test of the project takes
-its values from there rather than making them up.
+A test's *Data* tab has a table, **Test data**: a column per variable of the test (`{{first_name}}`,
+`{{email}}`…), a row per case to play. *Add a row* (it starts from the defaults), type the values,
+duplicate or delete a row, *Save rows*. A cell left greyed plays the variable's default; a cell may
+compute its value (`{{today + 3 days | dd/MM/yyyy}}`) or type a secret of the project
+(`{{secret.NAME}}`).
+
+- **Run** plays every row, one after the other, a run each; the live window shows the row being
+  played and how each one did. *Rows* in the *Run options* plays only one, or *Run every row as a
+  campaign*.
+- **Each run says the row it played** under the *Runs* tab — "Row 2 — Bob, Martin", and all its values
+  once opened; so does the campaign report, a row per run. A password shows `(hidden)`, a secret
+  only by its name.
+- **The test's status counts every row**: one row failing, the test shows *Failed* — "row 1 of 2
+  failed" in the test list and on its page, and its requirement is failing —, even when a later run of
+  another row passed. Fix it, play that row alone (*Rows* in the *Run options*), and it turns green.
+- **Its Gherkin**, with two rows or more, is a *Scenario Outline* whose *Examples* are the rows; with
+  one row or none, a *Scenario*. Edit the *Examples* in the *Gherkin* tab and save: the rows change
+  too.
+
+*Datasets*: tables of values (users, products) shared by the project's tests. A test bound to one
+(*Data* tab) plays the dataset's rows instead of its own, with `{{email}}`, `{{password}}` the values
+of the row. An agent recording a test of the project takes its values from there rather than making
+them up.
 
 ## 7. Campaigns
 
@@ -194,8 +214,8 @@ page to print or send* gives the same report as one HTML page, readable without 
 
 ## 10. Take the tests elsewhere
 
-A test's *Gherkin* tab shows it as a scenario, editable; its *Code* tab exports it to Playwright,
-plain or with Cucumber.
+A test's *Gherkin* tab shows it as a scenario — a *Scenario Outline* when it has rows —, editable;
+its *Code* tab exports it to Playwright, plain or with Cucumber, a test or an *Examples* line per row.
 
 ---
 

@@ -491,6 +491,8 @@ export function initDatabase() {
     if (!projectCols.includes('element_timeout_ms')) db.exec('ALTER TABLE projects ADD COLUMN element_timeout_ms INTEGER DEFAULT NULL');
     // Whether each test starts logged out in the browser without windows (lib/projects.js).
     if (!projectCols.includes('clean_start')) db.exec('ALTER TABLE projects ADD COLUMN clean_start INTEGER NOT NULL DEFAULT 1');
+    // Whether a failed test opens a bug by itself (lib/bugs.js), or a person reports it from the run: by hand by default.
+    if (!projectCols.includes('auto_bugs')) db.exec('ALTER TABLE projects ADD COLUMN auto_bugs INTEGER NOT NULL DEFAULT 0');
     const definitionCols = db.prepare('PRAGMA table_info(step_definitions)').all().map(c => c.name);
     if (!definitionCols.includes('language')) {
       db.exec('ALTER TABLE step_definitions ADD COLUMN language TEXT DEFAULT NULL');
@@ -520,6 +522,10 @@ export function initDatabase() {
     if (!testCols.includes('dataset_id')) db.exec('ALTER TABLE tests ADD COLUMN dataset_id INTEGER REFERENCES datasets(id) ON DELETE SET NULL');
     const executionCols = db.prepare('PRAGMA table_info(test_executions)').all().map(c => c.name);
     if (!executionCols.includes('data_row')) db.exec('ALTER TABLE test_executions ADD COLUMN data_row INTEGER DEFAULT NULL');
+    // The rows a test keeps of its own (its Data tab's table: a value per variable), and the
+    // values of the row a run played, as it played them — a password's hidden.
+    if (!testCols.includes('data_rows')) db.exec('ALTER TABLE tests ADD COLUMN data_rows TEXT DEFAULT NULL');
+    if (!executionCols.includes('data_values')) db.exec('ALTER TABLE test_executions ADD COLUMN data_values TEXT DEFAULT NULL');
   } catch (err) {
     log(`Migration warning (datasets): ${err.message}`);
   }

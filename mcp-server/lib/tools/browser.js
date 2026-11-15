@@ -8,6 +8,8 @@ import { currentSession, listSessions, closeNamedSession, forgetTabsEverywhere }
 /** Session ids the extension should treat as still working (see CloseWindowParams). */
 const liveSessionIds = () => listSessions().map((s) => s.id);
 import { recordAction, selectParams, waitsForNothing } from '../recording.js';
+import { detectListContext } from '../classify.js';
+import { listNote } from '../variable-detection.js';
 import { runServerStep } from '../server-steps.js';
 import { resolveValues } from '../values.js';
 import { absolutePaths, readUploadFiles } from '../upload-files.js';
@@ -256,6 +258,13 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
       intent: z.string().optional().describe('Functional description of this step (e.g. "Submit the login form"). Recorded as step intent during test recording.')
     },
     async ({ profile, selector, text, ref, tabId, checked, intent }) => {
+      // While recording, whether what is clicked is an item among others like it — a result, a
+      // row —, read before the click, on the page it is on: once the click has led elsewhere, the
+      // list is gone. Read at stop_recording, on the last page only, the second result of a
+      // search was never found to be one. null: not in a list; undefined: not told (read again then).
+      const listContext = getRecording()
+        ? await detectListContext(sendCommand, { selector: (ref && sess().refMap?.[String(ref).replace('@', '')]?.selector) || selector, text, tabId, profile })
+        : undefined;
       const result = learnTarget(ref, await sendCommand(profile, 'click', { selector, text, ref, tabId, checked }));
       let screenshotBase64 = null;
       if (getRecording()?.use_vrt) {
@@ -280,7 +289,12 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
         ? [{ type: 'role', value: role, name, ...(scope ? { scope } : {}), ...(Number.isInteger(nth) ? { nth } : {}) }]
         : [];
       const actionId = saveActionToHistory('click', { selector, text, tabId, ...state }, ref, screenshotBase64, intent, roleLocator);
-      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) }] };
+      const steps = getRecording()?.steps ?? [];
+      const step = steps.at(-1);
+      if (step?._actionId === actionId && listContext !== undefined) step._listContext = listContext;
+      // Found in a list: the agent is told what it was taken as, and says otherwise if it meant otherwise.
+      const note = step?._actionId === actionId ? listNote(steps, steps.length - 1, actionId) : null;
+      return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) + (note ? `\n\n${note}` : '') }] };
     }
   );
 
@@ -644,7 +658,7 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
   // --- Tool: execute_js ---
   server.tool(
     'execute_js',
-    'Execute arbitrary JavaScript code in the active tab. Use for advanced interactions. Pass `frame` to run it inside an iframe (cross-origin ones included). While a test is recording, the code is recorded as a step and runs again on every replay: to only read the page (a value, a text), use extract or snapshot, which are not recorded.',
+    'Execute arbitrary JavaScript code in the active tab. Use for advanced interactions. Pass `frame` to run it inside an iframe (cross-origin ones included). While a test is recording, the code is recorded as a step and runs again on every replay: to only read the page (a value, a text), use extract or snapshot, which are not recorded. One that only looked at the page: record_step(action_id, remove: true) takes it out of the test.',
     {
       code: z.string().describe('JavaScript code to execute in the page context'),
       profile: z.string().optional(),

@@ -4,6 +4,8 @@ import type { Connector } from '../../types';
 interface CliConfig {
   provider: string;
   command: string;
+  /** Passed as --model; absent or empty, the CLI's own default. */
+  model?: string;
 }
 
 interface ApiConfig {
@@ -25,6 +27,10 @@ interface TestAgentResponse {
   success: boolean;
   output?: string;
   error?: string;
+  /** The model that answered (Claude Code), or the one set (another CLI). */
+  model?: string | null;
+  /** No model was set: the one that answered is the CLI's own default. */
+  model_default?: boolean;
 }
 
 export interface OpenRouterModel {
@@ -45,6 +51,8 @@ export interface HeadlessStatus {
   error: string | null;
   browsers_dir: string;
   profile_dir: string;
+  /** Stopped after that many minutes without work; 0: only with the server. */
+  idle_minutes: number;
 }
 
 export const settingsApi = createApi({
@@ -64,7 +72,7 @@ export const settingsApi = createApi({
       invalidatesTags: ['AgentConfig'],
     }),
 
-    testAgent: builder.mutation<TestAgentResponse, { command: string }>({
+    testAgent: builder.mutation<TestAgentResponse, { command: string; provider?: string; model?: string }>({
       query: (body) => ({ url: 'api/settings/agent/test', method: 'POST', body }),
     }),
 
@@ -95,6 +103,10 @@ export const settingsApi = createApi({
       query: (action) => ({ url: `api/headless/${action}`, method: 'POST' }),
       invalidatesTags: ['Headless'],
     }),
+    setHeadlessIdle: builder.mutation<{ headless: HeadlessStatus }, number>({
+      query: (minutes) => ({ url: 'api/headless/settings', method: 'PUT', body: { idle_minutes: minutes } }),
+      invalidatesTags: ['Headless'],
+    }),
     getModels: builder.query<OpenRouterModel[], void>({
       query: () => 'api/models',
       transformResponse: (response: { models: OpenRouterModel[] }) => response.models,
@@ -113,4 +125,5 @@ export const {
   useTestConnectorMutation,
   useGetHeadlessQuery,
   useHeadlessActionMutation,
+  useSetHeadlessIdleMutation,
 } = settingsApi;

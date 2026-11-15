@@ -253,7 +253,8 @@ async function allTabs() {
   const profileIds = [...bridge.getProfiles().keys()];
   const lists = await Promise.all(profileIds.map(async (profile) => {
     try {
-      const tabs = await bridge.sendCommand(profile, 'get_tabs', {}, 5000);
+      // Every few seconds: no work that keeps a headless Chrome running (lib/headless.js).
+      const tabs = await bridge.sendCommand(profile, 'get_tabs', {}, 5000, null, { upkeep: true });
       return (tabs || []).map((t) => ({ ...t, profile }));
     } catch {
       return [];

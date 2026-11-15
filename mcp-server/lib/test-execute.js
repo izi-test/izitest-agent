@@ -5,15 +5,15 @@ import { db } from './db.js';
 import { loadTest, fillStepPages } from './test-store.js';
 import { computeVariables, resolveValues } from './values.js';
 import { isServerStep, keptNames, runServerStep } from './server-steps.js';
-import { datasetOfTest, datasetRows, rowLabel } from './datasets.js';
+import { rowsOfTest, rowsToPlay, rowsSource, datasetRows, rowLabel, shownRow } from './datasets.js';
 import { redact, secretValue } from './secrets.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
 import { requirementsOfTest } from './requirements.js';
 import { readFootprint, saveFootprint, failuresOnLastPass } from './footprint.js';
-import { recordRunBug, fixRunBugs, stepsHash } from './bugs.js';
-import { elementTimeoutFor, cleanStartFor } from './projects.js';
+import { recordRunBug, fixRunBugs, stepsHash, isAppBug } from './bugs.js';
+import { elementTimeoutFor, cleanStartFor, autoBugsFor } from './projects.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { logoutToPlay } from './closing-logout.js';
 import { startRunVideo, finishRunVideo } from './run-video.js';
@@ -430,6 +430,38 @@ export function actionPlan(steps, startStep, inPlace = new Set()) {
  * except in such a check or in debug mode. `options.campaignId`: the run is part of that
  * campaign (lib/campaigns.js).
  */
+/**
+ * A test played on every row it has — those of its dataset, or its own (lib/datasets.js) —, a
+ * run each, one after the other; on the row asked (`row`) only; on one row (`one`: debugged, or
+ * resumed at a step — the row asked, the first unless told). Without rows, one run. `play(row)`
+ * runs one (executeTest, row null for none); `onRow(event)` hears them: rows_started (with two
+ * rows or more), then row_started and row_finished for each. `stopped()` true: the rows after
+ * are not played. `{ rows, outcomes, source }`: an outcome per row played — row, label (its
+ * first values, a password's hidden), status, executionId, result or error.
+ */
+export async function executeRows(name, { row, one = false, stopped = () => false, onRow = () => {} } = {}, play) {
+  const rows = one ? [row ?? null] : rowsToPlay(name, row);
+  const source = rows.some(Boolean) ? rowsOfTest(name) : null;
+  const labelOf = (n) => (n && source?.rows[n - 1] ? rowLabel(shownRow(source.rows[n - 1]), n) : n ? `row ${n}` : null);
+  if (rows.length > 1) await onRow({ type: 'rows_started', rows: rows.map((n) => ({ row: n, label: labelOf(n) })) });
+  const outcomes = [];
+  for (const [index, n] of rows.entries()) {
+    if (stopped()) break;
+    const label = labelOf(n);
+    await onRow({ type: 'row_started', row: n, index, total: rows.length, label });
+    let outcome;
+    try {
+      const result = await play(n);
+      outcome = { row: n, label, status: 'success', executionId: result?.executionId ?? null, result };
+    } catch (error) {
+      outcome = { row: n, label, status: error.status || 'failed', executionId: error.executionId ?? null, error };
+    }
+    outcomes.push(outcome);
+    await onRow({ type: 'row_finished', ...outcome, index, total: rows.length, last: index === rows.length - 1 });
+  }
+  return { rows, outcomes, source };
+}
+
 export async function executeTest(name, variables, substitutions, start_step, new_window, sendCommand, trigger = 'manual', onProgress = null, debugController = null, options = {}) {
   // What the run tells as it goes, and keeps, holds a secret's reference, never its value
   // (lib/secrets.js): a value typed shows in an error, an assertion reads what a field holds.
@@ -457,15 +489,18 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       rawVariables[key] = String(info.defaultValue ?? '');
     }
   }
-  // Bound to a dataset (lib/datasets.js), the test plays one of its rows — the first unless
-  // told: each column is a variable of the run, over the defaults.
-  const dataset = options.test ? null : datasetOfTest(name);
+  // With rows — those of the dataset it is bound to, else its own (lib/datasets.js) —, the run
+  // plays one of them, the first unless told: each column is a variable of the run, over the
+  // defaults. The run keeps which row, and its values as played (a password's hidden).
+  const dataset = options.test ? null : rowsOfTest(name);
   const dataRow = dataset ? Number(options.row ?? 1) : null;
+  let dataValues = null;
   if (dataset) {
     const row = dataset.rows[dataRow - 1];
-    if (!row) throw new Error(`The dataset "${dataset.name}" has ${dataset.rows.length} row(s), numbered from 1: no row ${options.row}`);
+    if (!row) throw new Error(`${dataset.own ? 'The test' : `The dataset "${dataset.name}"`} has ${dataset.rows.length} row(s), numbered from 1: no row ${options.row}`);
     for (const [key, value] of Object.entries(row)) rawVariables[key] = String(value ?? '');
-    log(`Test "${name}" plays ${rowLabel(row, dataRow)} of the dataset "${dataset.name}"`);
+    dataValues = shownRow(row);
+    log(`Test "${name}" plays ${rowLabel(dataValues, dataRow)} of ${rowsSource(dataset)}`);
   }
   if (variables) {
     for (const [key, value] of Object.entries(variables)) {
@@ -517,7 +552,9 @@ export async function executeTest(name, variables, substitutions, start_step, ne
           parentSelector: hydratedStep.variable.listContext.parentSelector,
           itemXpath: hydratedStep.variable.listContext.itemXpath,
           selectionMode: hydratedStep.variable.listContext.selectionMode,
-          value: varValue
+          value: varValue,
+          // The element inside the item picked (the "Add" of the second product's card).
+          ...(hydratedStep.variable.listContext.withinXpath ? { withinXpath: hydratedStep.variable.listContext.withinXpath } : {}),
         };
         log(`Variable "${varName}" resolved: select ${hydratedStep.variable.listContext.selectionMode} = "${varValue}" in ${hydratedStep.variable.listContext.type}`);
       }
@@ -559,9 +596,10 @@ export async function executeTest(name, variables, substitutions, start_step, ne
 
   // ─── Create execution record ──────────────────────────────────
   const execResult = db.prepare(
-    `INSERT INTO test_executions (test_id, test_name, status, total_steps, variables, new_window, trigger, assertions_total, campaign_id, data_row)
-     VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?) RETURNING id`
-  ).get(testId, name, hydratedSteps.length, redact(JSON.stringify(mergedVariables)), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null, dataRow);
+    `INSERT INTO test_executions (test_id, test_name, status, total_steps, variables, new_window, trigger, assertions_total, campaign_id, data_row, data_values)
+     VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+  ).get(testId, name, hydratedSteps.length, redact(JSON.stringify(mergedVariables)), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null, dataRow,
+    dataValues ? redact(JSON.stringify(dataValues)) : null);
   const executionId = execResult.id;
 
   // ─── Initialize pending step rows ─────────────────────────────
@@ -915,13 +953,15 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       hydratedSteps, hydrate: (step) => server.rehydrate(step), tabId: lastTabId, sendCommand, values: mergedVariables, runOptions: { variables, substitutions },
     });
   }
-  // A failure the diagnosis puts on the app: a bug, in the Bugs page (lib/bugs.js).
+  // A failure the diagnosis puts on the app: a bug, in the Bugs page (lib/bugs.js) — by itself when
+  // the project says so (auto_bugs), otherwise reported by a person from the run's report.
   let bug = null;
+  const autoBugs = autoBugsFor(test.project_id ?? null);
   if (triage && !options.test) {
     try {
       bug = recordRunBug({
         testName: name, projectId: test.project_id ?? null, executionId, campaignId: options.campaignId ?? null,
-        dataRow, stepOrder: failedStepOrder, triage, requirements: requirementsOfTest(name),
+        dataRow, stepOrder: failedStepOrder, triage, requirements: requirementsOfTest(name), auto: autoBugs,
       });
     } catch (err) {
       log(`Could not keep the bug run #${executionId} of "${name}" met: ${err.message}`);
@@ -955,6 +995,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     if (loggedOut) error.closingLogout = loggedOut;
     if (triage) error.triage = triage;
     if (bug) error.bug = { id: bug.bug.id, title: bug.bug.title, kind: bug.bug.kind, status: bug.bug.status, occurrences: bug.bug.occurrences, isNew: bug.isNew, reopened: bug.reopened };
+    // Not opened by itself: the diagnosis puts it on the app, a person may report it from the run.
+    else if (triage && !autoBugs && isAppBug(triage) && !options.test) error.bugToReport = true;
     error.status = finalStatus;
     error.durationMs = extensionResult.durationMs || null;
     error.failedStep = failedStepOrder;
@@ -1299,11 +1341,59 @@ async function readAssertion(sendCommand, assertion, tabId) {
   return typeof answer?.pageUrl === 'string' ? { ...checked, pageUrl: answer.pageUrl } : checked;
 }
 
-/** Whether `value`, read from the page, is what `assertion` expects. */
-function judgeAssertion({ type, selector, expected }, value) {
+/** A URL as a person reads it: + for a space, %xx decoded. */
+const decodedUrl = (url) => {
+  if (typeof url !== 'string') return '';
+  try {
+    return decodeURIComponent(url.replace(/\+/g, ' '));
+  } catch {
+    return url;
+  }
+};
+
+// A text a check read, longer than this, is told by an excerpt: where what it looks for is.
+const MAX_SHOWN = 300;
+const CONTAINS_CHECKS = new Set(['text_contains', 'text_not_contains']);
+
+/**
+ * What a check read in a long text (a whole <body>, its scripts with it), told in a line: where
+ * `expected` is in it — whatever its case with `ignoreCase` —, else its start; with its length.
+ * The report showed thousands of characters, and the run's record kept them.
+ */
+export function textExcerpt(text, expected, ignoreCase = false) {
+  const flat = String(text).replace(/\s+/g, ' ').trim();
+  if (flat.length <= MAX_SHOWN) return flat;
+  const haystack = ignoreCase ? flat.toLocaleLowerCase() : flat;
+  const needle = typeof expected === 'string' && expected ? (ignoreCase ? expected.toLocaleLowerCase() : expected) : '';
+  const at = needle ? haystack.indexOf(needle) : -1;
+  const size = ` (${flat.length} characters)`;
+  if (at >= 0) {
+    const from = Math.max(0, at - 80);
+    const to = Math.min(flat.length, at + needle.length + 80);
+    return `${from > 0 ? '…' : ''}${flat.slice(from, to)}${to < flat.length ? '…' : ''}${size}`;
+  }
+  return `${flat.slice(0, 240)}…${size}`;
+}
+
+/** Whether `value`, read from the page, is what `assertion` expects; a long text told by an excerpt. */
+function judgeAssertion(assertion, read) {
+  const judged = judgeRead(assertion, read);
+  if (!CONTAINS_CHECKS.has(assertion.type) || !assertion.selector || typeof read !== 'string' || read.length <= MAX_SHOWN) return judged;
+  return { ...judged, actual: textExcerpt(read, assertion.expected, assertion.ignoreCase) };
+}
+
+/**
+ * Whether `value`, read from the page, is what `assertion` expects. `ignoreCase`: texts, titles
+ * and URLs compared whatever their case — a check following a picked suggestion ("chocolat")
+ * that the page writes otherwise ("Chocolat" in the title, lib/recorded-checks.js).
+ */
+function judgeRead({ type, selector, expected: wanted, ignoreCase }, read) {
+  const fold = (s) => (ignoreCase && typeof s === 'string' ? s.toLocaleLowerCase() : s);
+  const expected = fold(wanted);
+  const value = fold(read);
   // The whole page's text, checked for a phrase: told in a line, not page after page.
   const wholePage = !selector && (type === 'text_contains' || type === 'text_not_contains') && typeof value === 'string';
-  const actual = wholePage ? pageExcerpt(value, expected) : value;
+  const actual = wholePage ? pageExcerpt(read, wanted) : value;
 
   switch (type) {
     case 'element_exists':
@@ -1323,10 +1413,11 @@ function judgeAssertion({ type, selector, expected }, value) {
       return { passed: typeof actual === 'string' && !actual.includes(expected), expected: `does not contain "${expected}"`, actual: actual ?? '(element not found)', type };
     case 'attribute_equals':
       return { passed: actual === expected, expected, actual: actual ?? '(element/attribute not found)', type };
+    // Read as written and decoded too: a value typed ("laptop computers") is laptop+computers in it.
     case 'url_equals':
-      return { passed: actual === expected, expected, actual: actual ?? '', type };
+      return { passed: actual === expected || decodedUrl(actual) === expected, expected, actual: actual ?? '', type };
     case 'url_contains':
-      return { passed: typeof actual === 'string' && actual.includes(expected), expected: `contains "${expected}"`, actual: actual ?? '', type };
+      return { passed: typeof actual === 'string' && (actual.includes(expected) || decodedUrl(actual).includes(expected)), expected: `contains "${expected}"`, actual: actual ?? '', type };
     case 'title_equals':
       return { passed: actual === expected, expected, actual: actual ?? '', type };
     case 'title_contains':

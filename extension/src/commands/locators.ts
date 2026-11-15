@@ -66,6 +66,8 @@ async function findPlaced(page: Page, locator: Locator, selector: string, option
 // answer it reads and acts on at once. A replay waits as long as its project says (the server
 // sends elementTimeoutMs, lib/projects.js): a page still loading after the step before.
 export const DEFAULT_LOCATOR_TIMEOUT_MS = 2000;
+// How long a less precise locator found first waits for a more precise one still looking.
+const PREFERRED_GRACE_MS = 1000;
 
 export async function findElementWithLocators(
   page: Page,
@@ -86,58 +88,92 @@ export async function findElementWithLocators(
 
   console.log(`  🕵️ Testing ${sortedLocators.length} locators in parallel [condition: ${condition}, up to ${timeoutMs} ms]...`);
 
-  let hasWinner = false;
+  const priorityOf = (i: number) => LOCATOR_PRIORITY[sortedLocators[i].type] ?? 5;
 
-  const promises = sortedLocators.map(async (locator) => {
+  const tryOne = async (locator: Locator): Promise<LocatingResult> => {
     const selector = locatorToPuppeteerSelector(locator);
     const waitOptions = condition === 'visible'
       ? { timeout: timeoutMs, visible: true }
       : { timeout: timeoutMs };
+    const find = (options: typeof waitOptions | { timeout: number }) => locator.type === 'role' && (locator.scope || locator.nth != null)
+      ? findPlaced(page, locator, selector, options)
+      : page.waitForSelector(selector, options);
+    let handle = await find(waitOptions).catch(() => null);
+    let usedFallback = false;
 
-    try {
-      const find = (options: typeof waitOptions | { timeout: number }) => locator.type === 'role' && (locator.scope || locator.nth != null)
-        ? findPlaced(page, locator, selector, options)
-        : page.waitForSelector(selector, options);
-      let handle = await find(waitOptions).catch(() => null);
-      let usedFallback = false;
-
-      if (!handle && condition === 'visible') {
-        handle = await find({ timeout: 800 }).catch(() => null);
-        if (handle) usedFallback = true;
-      }
-
-      if (!handle) {
-        throw new Error(`${locator.type}="${locator.value}" (not found within ${timeoutMs / 1000} s)`);
-      }
-
-      if (condition === 'enabled') {
-        const enabled = await isElementEnabled(handle);
-        if (!enabled) {
-          await handle.dispose().catch(() => {});
-          throw new Error(`${locator.type}="${locator.value}" (found but disabled/inert)`);
-        }
-      }
-
-      if (hasWinner) {
-        await handle.dispose().catch(() => {});
-        throw new Error(`${locator.type}="${locator.value}" (lost the race)`);
-      }
-
-      hasWinner = true;
-      console.log(`  ✅ Found element with locator ${locator.type}="${locator.value}"${usedFallback ? ' (fallback)' : ''}`);
-      return { locatorUsed: locator.type, locatorValue: locator.value, handle, usedFallback };
-    } catch (err) {
-      throw new Error(err instanceof Error ? err.message : String(err));
+    if (!handle && condition === 'visible') {
+      handle = await find({ timeout: 800 }).catch(() => null);
+      if (handle) usedFallback = true;
     }
-  });
 
-  try {
-    const result = await Promise.any(promises);
-    return { result, errors: [] };
-  } catch (aggregateError: any) {
-    const errors = aggregateError instanceof AggregateError
-      ? aggregateError.errors.map((e: Error) => e.message)
-      : [aggregateError.message || 'All locators failed unknown error'];
-    return { result: null, errors };
-  }
+    if (!handle) {
+      throw new Error(`${locator.type}="${locator.value}" (not found within ${timeoutMs / 1000} s)`);
+    }
+
+    if (condition === 'enabled') {
+      const enabled = await isElementEnabled(handle);
+      if (!enabled) {
+        await handle.dispose().catch(() => {});
+        throw new Error(`${locator.type}="${locator.value}" (found but disabled/inert)`);
+      }
+    }
+    return { locatorUsed: locator.type, locatorValue: locator.value, handle, usedFallback };
+  };
+
+  // They all look at once, but a less precise one found first waits a moment for a more precise
+  // one: a text ("chocolat") is on the page before the suggestion list even opens, and won the race
+  // against the suggestion's own selector — the click went to another element.
+  return new Promise((resolve) => {
+    const pending = new Set(sortedLocators.map((_, i) => i));
+    const found: Array<{ index: number; result: LocatingResult }> = [];
+    const errors: string[] = [];
+    let settled = false;
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const best = () => found.reduce((a, b) => (priorityOf(b.index) < priorityOf(a.index) ? b : a));
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(grace);
+      if (!found.length) {
+        resolve({ result: null, errors });
+        return;
+      }
+      const winner = best();
+      for (const other of found) if (other !== winner) other.result.handle.dispose().catch(() => {});
+      console.log(`  ✅ Found element with locator ${winner.result.locatorUsed}="${winner.result.locatorValue}"${winner.result.usedFallback ? ' (fallback)' : ''}`);
+      resolve({ result: winner.result, errors: [] });
+    };
+    const decide = () => {
+      if (settled) return;
+      if (!found.length) {
+        if (!pending.size) settle();
+        return;
+      }
+      const betterPending = [...pending].some((i) => priorityOf(i) < priorityOf(best().index));
+      if (!betterPending) {
+        settle();
+        return;
+      }
+      if (!grace) grace = setTimeout(settle, PREFERRED_GRACE_MS);
+    };
+    sortedLocators.forEach((locator, i) => {
+      tryOne(locator).then(
+        (result) => {
+          pending.delete(i);
+          // Found after the choice was made: not used.
+          if (settled) {
+            result.handle.dispose().catch(() => {});
+            return;
+          }
+          found.push({ index: i, result });
+          decide();
+        },
+        (err) => {
+          pending.delete(i);
+          errors.push(err instanceof Error ? err.message : String(err));
+          decide();
+        },
+      );
+    });
+  });
 }

@@ -512,6 +512,24 @@ input[type="color"] {
   background: none;
   padding: 2px;
 }
+
+/* ===== 7 — SHOP ===== */
+.shop-search { display: flex; gap: 8px; margin-bottom: 14px; }
+.shop-search input { flex: 1; }
+.shop-sponsored, .shop-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.shop-sponsored { padding: 8px; border: 1px dashed var(--border, #333); border-radius: 8px; }
+.shop-sponsored::before { content: 'Sponsored'; grid-column: 1 / -1; font-size: 11px; opacity: .6; }
+.product-card { border: 1px solid var(--border, #333); border-radius: 8px; padding: 10px; font-size: 13px; }
+.product-card__name { font-weight: 600; min-height: 34px; }
+.product-card__price { font-weight: 700; }
+.product-card__footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.product-card__control { display: flex; align-items: center; gap: 4px; }
+.product-card__control input { width: 34px; text-align: center; padding: 2px; }
+.product-card__control button { min-width: 28px; padding: 4px 8px; }
+.shop-promo { border-radius: 8px; padding: 10px; font-size: 13px; background: rgba(120, 80, 200, .15); }
+.shop-carousel { grid-column: 1 / -1; display: flex; gap: 10px; overflow-x: auto; padding: 6px; border-radius: 8px; background: rgba(255,255,255,.03); }
+.shop-carousel .product-card { min-width: 150px; }
+.shop-cart { display: flex; gap: 12px; align-items: center; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -896,6 +914,29 @@ input[type="color"] {
     </div>
   </div>
 
+  <!-- ======================== LEVEL 7 — HARD ======================== -->
+
+  <div class="section" id="shop">
+    <div class="section-header">
+      <span class="difficulty hard">Hard</span>
+      <h2>7 — Product search &amp; cart</h2>
+    </div>
+    <p class="section-desc">Results drawn after a delay, sponsored products above them, a promo and a carousel among them, deep product cards whose "Add" turns into a quantity stepper, a cart total in euros.</p>
+    <div class="card">
+      <form class="shop-search" role="search" onsubmit="shopSearch(event)">
+        <input type="search" id="shop-q" name="text" placeholder="Search a product..." aria-label="Search a product">
+        <button type="submit" class="btn btn-primary shop-search__button" aria-label="Launch the search">Search</button>
+      </form>
+      <div class="shop-sponsored" id="shop-sponsored"></div>
+      <div class="shop-list" id="shop-results" aria-live="polite"></div>
+      <div class="shop-cart" id="shop-cart">
+        <span>Cart: <strong id="shop-cart-count">0</strong> item(s)</span>
+        <span>Total: <strong class="shop-cart__total" id="shop-cart-total">0,00 €</strong></span>
+        <button type="button" class="btn btn-secondary" onclick="shopEmptyCart()" aria-label="Empty the cart">Empty the cart</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Modal -->
@@ -1164,6 +1205,85 @@ document.getElementById('inline-title').addEventListener('blur', function() {
 document.querySelectorAll('.star-rating input').forEach(r => {
   r.addEventListener('change', function() { logEvent(`rating → ${this.value} stars`); });
 });
+</script>
+
+<script>
+// ===== 7 — SHOP =====
+// Cards as deep as a real shop's: the "Add" button six levels below its card, where a list
+// finder that climbs six levels stops one short. Prices written as a French shop writes them.
+const SHOP_CATALOG = [
+  ['Whole milk 1L', 1.15], ['Semi-skimmed milk 6x1L', 6.42], ['Organic semi-skimmed milk 6x1L', 6.63], ['Lactose-free milk 1L', 1.31],
+  ['Oat milk drink 1L', 1.99], ['Mountain milk 1L', 1.32], ['Coconut milk 400ml', 1.49],
+  ['White bread 500g', 1.25], ['Wholemeal bread 500g', 1.65], ['Baguette', 0.95], ['Sandwich bread x12', 2.19], ['Rye bread 400g', 2.35],
+  ['Dark chocolate 100g', 1.89], ['Milk chocolate 100g', 1.69], ['White chocolate 100g', 1.79], ['Chocolate spread 400g', 3.49],
+  ['Bananas 1kg', 1.99], ['Organic bananas 1kg', 2.79], ['Banana chips 200g', 2.29],
+];
+const SHOP_SPONSORED = ['Chocolate milk 6x20cl', 'Strawberry milk 6x20cl', 'Vanilla milk 6x20cl'];
+const shopCart = new Map(); // name → quantity
+const euros = (n) => n.toFixed(2).replace('.', ',') + ' €';
+const shopPrice = (name) => (SHOP_CATALOG.find(([n]) => n === name) ?? [name, 2.5])[1];
+
+function shopCard(name, extraClass = '') {
+  const qty = shopCart.get(name) ?? 0;
+  const control = qty
+    ? `<button type="button" class="btn btn-secondary btn--less" aria-label="Remove 1 of ${name} from the cart" onclick="shopQty('${name}', -1)">−</button>
+       <input type="number" class="product-card__qty" value="${qty}" aria-label="Your cart holds ${qty} of ${name}" readonly>
+       <button type="button" class="btn btn-primary btn--more" aria-label="Add 1 more of ${name} to the cart" onclick="shopQty('${name}', 1)">+</button>`
+    : `<button type="button" class="btn btn-secondary btn--list" aria-label="Add ${name} to my list">☆</button>
+       <button type="button" class="btn btn-primary btn--add" aria-label="Add ${name} to the cart" onclick="shopQty('${name}', 1)">Add</button>`;
+  return `<article class="product-card ${extraClass}" data-name="${name}">
+    <div class="product-card__media" aria-hidden="true">🛒</div>
+    <div class="product-card__content">
+      <p class="product-card__name">${name}</p>
+      <footer class="product-card__footer">
+        <div class="product-card__pricing"><span class="product-card__price">${euros(shopPrice(name))}</span></div>
+        <div class="product-card__actions"><div class="product-card__buy"><div class="product-card__control">${control}</div></div></div>
+      </footer>
+    </div>
+  </article>`;
+}
+
+let shopTerm = '';
+function shopRender() {
+  document.getElementById('shop-sponsored').innerHTML = shopTerm ? SHOP_SPONSORED.map((n) => shopCard(n, 'product-card--sponsored')).join('') : '';
+  const found = SHOP_CATALOG.filter(([n]) => n.toLowerCase().includes(shopTerm.toLowerCase())).map(([n]) => n);
+  const cards = found.map((n) => shopCard(n));
+  // A promo after the third card, and a carousel of other products after the fifth: not results.
+  if (cards.length > 3) cards.splice(3, 0, '<div class="shop-promo">−50% on the second one, this week only</div>');
+  if (cards.length > 6) cards.splice(6, 0, `<div class="shop-carousel">${SHOP_SPONSORED.map((n) => shopCard(n, 'product-card--carousel')).join('')}</div>`);
+  document.getElementById('shop-results').innerHTML = shopTerm
+    ? (cards.length ? cards.join('') : '<p>No product found.</p>')
+    : '';
+  let count = 0, total = 0;
+  for (const [n, q] of shopCart) { count += q; total += q * shopPrice(n); }
+  document.getElementById('shop-cart-count').textContent = String(count);
+  document.getElementById('shop-cart-total').textContent = euros(total);
+}
+
+function shopSearch(event) {
+  event.preventDefault();
+  shopTerm = document.getElementById('shop-q').value.trim();
+  document.getElementById('shop-results').innerHTML = '<p>Searching…</p>';
+  document.getElementById('shop-sponsored').innerHTML = '';
+  // The results come later, as a shop's server sends them.
+  setTimeout(() => { shopRender(); logEvent(`Search: "${shopTerm}"`); }, 500);
+}
+
+function shopQty(name, delta) {
+  // The cart answers after a while: the stepper shows once it has.
+  setTimeout(() => {
+    const qty = Math.max(0, (shopCart.get(name) ?? 0) + delta);
+    if (qty) shopCart.set(name, qty); else shopCart.delete(name);
+    shopRender();
+    logEvent(`Cart: ${name} × ${qty}`);
+  }, 300);
+}
+
+function shopEmptyCart() {
+  shopCart.clear();
+  shopRender();
+  logEvent('Cart emptied');
+}
 </script>
 </body>
 </html>

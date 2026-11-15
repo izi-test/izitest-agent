@@ -121,7 +121,7 @@ export function ProjectSwitcher() {
   );
 }
 
-type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string; language: 'en' | 'fr'; wait_seconds: string; clean_start: boolean };
+type ProjectFields = { name: string; description: string; context: string; project_type: string; base_url: string; language: 'en' | 'fr'; wait_seconds: string; clean_start: boolean; auto_bugs: boolean };
 
 // How long a replayed step waits for its element (lib/projects.js): empty, the default.
 const DEFAULT_WAIT_SECONDS = 10;
@@ -143,6 +143,7 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
     language: project ? project.language ?? 'en' : browserLanguage(),
     wait_seconds: secondsOf(project?.element_timeout_ms),
     clean_start: project ? project.clean_start !== 0 : true,
+    auto_bugs: project ? project.auto_bugs === 1 : false,
   });
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof ProjectFields>(field: K, value: ProjectFields[K]) => { setFields({ ...fields, [field]: value }); setError(null); };
@@ -153,12 +154,13 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
     const wait = fields.wait_seconds.trim().replace(',', '.');
     const seconds = wait === '' ? null : Number(wait);
     if (seconds !== null && !(seconds >= 1 && seconds <= 120)) return setError('The wait for an element is from 1 to 120 seconds, or empty for the default');
-    const { wait_seconds: _wait, clean_start: cleanStart, ...rest } = fields;
+    const { wait_seconds: _wait, clean_start: cleanStart, auto_bugs: autoBugs, ...rest } = fields;
     const body = {
       ...rest, name: fields.name.trim(), description: fields.description.trim(), context: fields.context.trim(), base_url: fields.base_url.trim(),
       element_timeout_ms: seconds === null ? null : Math.round(seconds * 1000),
       // Created, a project starts logged out: only a change is sent.
       ...(project ? { clean_start: cleanStart } : {}),
+      auto_bugs: autoBugs,
     };
     try {
       if (project) {
@@ -236,6 +238,15 @@ export function ProjectDrawer({ project, onClose, onSaved, onDelete }: {
           </span>
           <span className="field__hint">
             In the browser without windows, what the app left there — cookies, storage — is cleared before each test: the test logs in itself, as a user would, and a session kept from the test before cannot lead it elsewhere. Never done in your own Chrome. Untick it when the tests count on staying logged in from one to the next.
+          </span>
+        </label>
+        <label className="field field--check">
+          <span className="checkbox-row">
+            <input type="checkbox" checked={fields.auto_bugs} onChange={(e) => set('auto_bugs', e.target.checked)} />
+            <span className="field__label">Open a bug automatically when a test fails</span>
+          </span>
+          <span className="field__hint">
+            When the diagnosis puts the failure on the app, a bug is opened in the Bugs page by itself. Unticked (the default), you read the run and report the bug from it: the run's Report a bug button. A bug is marked fixed when its test passes again, either way.
           </span>
         </label>
         <label className="field">

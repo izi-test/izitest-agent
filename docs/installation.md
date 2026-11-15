@@ -134,6 +134,13 @@ belong to it. No agent needs the token for that, nor the REST API.
 with AI* — is chosen in *Settings*: a CLI it starts (Claude Code, Gemini, GitHub Copilot,
 OpenCode) or a model through an API key.
 
+A CLI works with the model set in *Settings → Model*, passed as `--model`. Left empty, the CLI
+picks. For Claude Code, that is the model `/model`, its `settings.json` or `ANTHROPIC_MODEL` sets
+on this machine, else the account's default. Claude Code takes an alias (`fable`, `opus`,
+`sonnet`, `haiku`: the latest of that family) or a full name (`claude-opus-5-5`); OpenCode takes
+`provider/model`. *Test* asks Claude Code one word and shows which model answered, or why it did
+not (a model that does not exist, or that the account cannot use).
+
 ## 5. Replay without windows (optional)
 
 To run tests and campaigns out of sight, IziTest uses Chrome for Testing with its extension and
@@ -144,6 +151,11 @@ run asks for it:
 ```bash
 npm run headless:install
 ```
+
+It does not stay open on your computer for nothing: after 10 minutes without work (no run,
+campaign or recording in it) it stops, and the next run that needs it starts it again, which
+takes a few seconds. Change the delay in *Settings → Headless browser → Stop after* (0: it runs
+until the server stops). It always stops with the server.
 
 **Behind a company proxy** that inspects HTTPS (Zscaler, a PKI of the company), the download can
 fail with `self-signed certificate in certificate chain`: Node does not trust the company's root.

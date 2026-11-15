@@ -133,8 +133,30 @@ export function listVariable(name, listContext, { selectionMode }) {
       selectedIndex: listContext.selectedIndex,
       selectedText: listContext.selectedText,
       selectionMode,
+      // The element inside the item picked (the "Add" of the second product's card): its card is the item.
+      ...(listContext.withinXpath ? { withinXpath: listContext.withinXpath } : {}),
     },
   };
+}
+
+/**
+ * The list variable of an earlier step of `steps` that picked the same item as step `i` would
+ * (`listContext`): the second product's card, its "Add", then its "+" twice. The step shares it,
+ * with its own element in the item — one {{product}} moves them all, where three variables let a
+ * replay add one product and raise the quantity of another. null: none.
+ */
+export function sameItemVariable(steps, i, listContext) {
+  if (!listContext) return null;
+  for (let j = i - 1; j >= 0; j--) {
+    const variable = steps[j].variable;
+    const picked = variable?.listContext;
+    if (picked && picked.parentSelector === listContext.parentSelector && picked.itemXpath === listContext.itemXpath
+        && picked.selectedIndex === listContext.selectedIndex) {
+      const { withinXpath: _, ...item } = picked;
+      return { ...variable, listContext: { ...item, ...(listContext.withinXpath ? { withinXpath: listContext.withinXpath } : {}) } };
+    }
+  }
+  return null;
 }
 
 /**
@@ -150,17 +172,38 @@ export function listVariable(name, listContext, { selectionMode }) {
  */
 export function isNavigation(listContext, classified = null, { afterTyping = false } = {}) {
   if (listContext?.choice || afterTyping) return false;
-  return !!listContext?.navigation || classified?.variableName === 'menu_item';
+  return !!listContext?.navigation || inSiteHeader(listContext) || classified?.variableName === 'menu_item';
 }
+
+// The page's header or a bar of links named after navigation, where the list sits: its links go
+// somewhere — the cart, the account, the home page —, never a value of the test. Auchan's cart
+// link, among 4 a.navigation-header__link of its <header>, became {{product}}, "the first of
+// them": on a replay, its logo, which went back to the home page.
+const HEADER_IN_SELECTOR = /(?:^|[\s>+~])(?:header|nav)(?=$|[\s>+~.#:[])|\[role=["']?(?:banner|navigation)["']?\]|#(?:header|nav|navbar)(?=$|[\s>+~.#:[])/i;
+const NAVIGATION_CLASS = /(?:^|[\s'"_-])(?:nav|navbar|navigation|topbar|breadcrumbs?)(?=$|[\s'"_-])/i;
+function inSiteHeader(listContext) {
+  if (!listContext) return false;
+  return HEADER_IN_SELECTOR.test(listContext.parentSelector ?? '') || NAVIGATION_CLASS.test(listContext.itemXpath ?? '');
+}
+
+// Between typing and picking, what does not act on the page: a wait for the suggestions, a check
+// that they show (the agent checks each outcome as it goes).
+const BETWEEN_TYPING_AND_PICKING = new Set(['wait', 'assert']);
+
+/** The action before step `i`, past the waits and checks in between. */
+const typedStepIndex = (steps, i) => {
+  let j = i - 1;
+  while (j >= 0 && BETWEEN_TYPING_AND_PICKING.has(steps[j].command)) j--;
+  return j;
+};
 
 /**
  * Whether the action before step `i` of a recording typed in a field — a wait for its
- * suggestions in between does not count —: what the click picks may be one of them.
+ * suggestions, or a check that they show, in between does not count —: what the click picks may
+ * be one of them.
  */
 export function typedJustBefore(steps, i) {
-  let j = i - 1;
-  while (j >= 0 && steps[j].command === 'wait') j--;
-  const before = steps[j];
+  const before = steps[typedStepIndex(steps, i)];
   return !!before && (before.command === 'fill' || (before.command === 'keyboard' && /^.$/u.test(before.params?.key ?? '')));
 }
 
@@ -184,11 +227,11 @@ const words = (text) => String(text ?? '').normalize('NFD').replace(/[̀-ͯ]/g, 
 export function variabilizeSuggestion(steps, i, usedNames) {
   const step = steps[i];
   if (step.command !== 'click' || step.variable || step._skipVariable || !typedJustBefore(steps, i)) return false;
-  let j = i - 1;
-  while (j >= 0 && steps[j].command === 'wait') j--;
-  const typedStep = steps[j];
+  const typedStep = steps[typedStepIndex(steps, i)];
   const typed = typedStep.variable?.defaultValue ?? typedStep.params?.value ?? '';
-  const label = String(step.params?.text ?? (step.locators ?? []).find((l) => l.type === 'text' || l.type === 'aria')?.value ?? '').replace(/\s+/g, ' ').trim();
+  // Its text before its accessible name: "chocolat", not "Suggestion de mot clé 1/2: chocolat".
+  const locators = step.locators ?? [];
+  const label = String(step.params?.text ?? locators.find((l) => l.type === 'text')?.value ?? locators.find((l) => l.type === 'aria')?.value ?? '').replace(/\s+/g, ' ').trim();
   const typedWords = words(typed);
   if (!label || typedWords.join(' ').length < 2 || label.length > 80) return false;
   const labelWords = words(label);
@@ -204,10 +247,7 @@ export function variabilizeSuggestion(steps, i, usedNames) {
   const name = uniqueVarName(step._variableNameOverride || base, usedNames);
   const placeholder = `{{${name}}}`;
   step.params = { ...Object.fromEntries(Object.entries(step.params ?? {}).filter(([key]) => key !== 'selector')), text: placeholder };
-  const byText = (step.locators ?? [])
-    .filter((l) => String(l.value ?? '').replace(/\s+/g, ' ').trim() === label)
-    .map((l) => ({ ...l, value: placeholder }));
-  step.locators = byText.length ? byText : [{ type: 'text', value: placeholder }];
+  step.locators = suggestionLocators(step.locators, label, placeholder);
   // "Pick France among the suggestions" read so on a run that picked Italy.
   if (step.intent) step.intent = step.intent.split(label).join(placeholder);
   step.variable = { name, type: 'text', defaultValue: label, ...(field ? { suggestionOf: field } : {}), ...suggestionsOfField(typedStep) };
@@ -230,4 +270,106 @@ export function suggestionsOfField(typedStep) {
   if (!field) return {};
   const fieldName = ['label', 'aria', 'placeholder'].map((type) => locators.find((l) => l.type === type && l.value)?.value).find(Boolean) ?? selector ?? testid;
   return { field, fieldName: String(fieldName).replace(/\s+/g, ' ').trim().slice(0, 40) };
+}
+
+
+// A CSS selector naming one attribute's whole value: tag[attr="value"], its value CSS-escaped.
+const ATTRIBUTE_EQUALS = /^([a-zA-Z][\w-]*)?\[\s*([\w-]+)\s*=\s*"((?:\\.|[^"\\])*)"\s*\]$/;
+const unescapeCss = (text) => text.replace(/\\([0-9a-fA-F]{1,6}\s?|.)/g, (_, c) => (/^[0-9a-fA-F]/.test(c) && c.trim().length > 1 ? String.fromCodePoint(parseInt(c, 16)) : c));
+
+/**
+ * How a suggestion picked is found again under its variable (`placeholder`, `{{text_choice}}`):
+ * by an attribute that ends with its text, whatever comes before — a[aria-label$=": {{text_choice}}"]
+ * for "Suggestion de mot clé 1/2: chocolat", the position in it changing with the value —, whatever
+ * its case, and by its accessible name. By its text only when no such selector exists: a text alone
+ * is found anywhere on the page ("chocolat" before the suggestions even showed, "Bananas" in a
+ * heading above them), and the click went there. Never a locator by its place.
+ */
+export function suggestionLocators(locators = [], label, placeholder) {
+  const found = [];
+  const add = (locator) => { if (!found.some((l) => l.type === locator.type && l.value === locator.value)) found.push(locator); };
+  for (const locator of locators ?? []) {
+    const value = String(locator.value ?? '');
+    if (locator.type === 'css' || locator.type === 'attribute') {
+      const [, tag = '', attr, raw] = ATTRIBUTE_EQUALS.exec(value.trim()) ?? [];
+      if (!attr) continue;
+      const whole = unescapeCss(raw);
+      if (!whole.endsWith(label) || /[\p{L}\p{N}]/u.test(whole.at(-label.length - 1) ?? '')) continue;
+      const before = whole.slice(0, whole.length - label.length).slice(-2).replace(/["\\]/g, '\\$&');
+      // Whatever its case (` i`): the value given ("Bananas") as the site writes it ("bananas").
+      add({ type: 'css', value: `${tag}[${attr}$="${before}${placeholder}" i]` });
+    }
+  }
+  const targeted = found.length > 0;
+  for (const locator of locators ?? []) {
+    if (String(locator.value ?? '').replace(/\s+/g, ' ').trim() !== label) continue;
+    // Its text alone is only kept without a targeted selector: it is found anywhere on the page —
+    // "Bananas" in the heading "Bananas Selections" above Walmart's suggestions, clicked for them.
+    if (locator.type === 'aria' || (locator.type === 'text' && !targeted)) add({ ...locator, value: placeholder });
+  }
+  if (!targeted && !found.some((l) => l.type === 'text')) add({ type: 'text', value: placeholder });
+  return found;
+}
+
+/**
+ * `next`, the way a step is done anew (fix_test_step: a click or a fill redone by hand), still
+ * using the variable of the step it replaces (`before`): what a fill typed, its {{name}} again;
+ * a suggestion picked, found by its {{name}}. Redone, the step had the value it was recorded
+ * with written in it, and a replay with another one picked "chocolat" still.
+ */
+export function keepStepVariable(before, next) {
+  const variable = before?.variable;
+  if (!variable?.name || variable.listContext || next.command !== before.command) return next;
+  const placeholder = `{{${variable.name}}}`;
+  if (variable.suggestionOf) {
+    const params = Object.fromEntries(Object.entries(next.params ?? {}).filter(([key]) => key !== 'selector'));
+    return { ...next, params: { ...params, text: placeholder }, locators: suggestionLocators(next.locators ?? [], String(variable.defaultValue ?? ''), placeholder) };
+  }
+  if ((next.command === 'fill' || next.command === 'select') && typeof next.params?.value === 'string' && next.params.value === variable.defaultValue) {
+    return { ...next, params: { ...next.params, value: placeholder } };
+  }
+  return next;
+}
+
+/**
+ * The earlier step of `steps` whose click, while recording, was found in the same item as step
+ * `i`'s (`listContext`): the card its "Add" was in, now its "+". Its number (from 1), or null.
+ */
+export function sameItemStep(steps, i, listContext) {
+  if (!listContext) return null;
+  for (let j = i - 1; j >= 0; j--) {
+    const picked = steps[j]._listContext;
+    if (picked && picked.parentSelector === listContext.parentSelector && picked.itemXpath === listContext.itemXpath
+        && picked.selectedIndex === listContext.selectedIndex) return j + 1;
+  }
+  return null;
+}
+
+const shortly = (text, max = 40) => {
+  const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
+
+/**
+ * What the agent recording is told of a click the page found in a list, right after it: what it
+ * was taken as, and how to say otherwise — the agent knows what it meant ("the second result", or
+ * the search button the code took for "the seventh of the page's sections"). Its word, given with
+ * record_step(pick), goes before the classifier's at stop_recording. null: nothing to tell — not in
+ * a list, a menu (navigation), a suggestion picked after typing (found otherwise), a value kept fixed.
+ */
+export function listNote(steps, i, actionId, { correct = (pick) => `record_step(action_id: "${actionId}", pick: "${pick}")` } = {}) {
+  const step = steps[i];
+  const context = step?._listContext;
+  if (!context || step._skipVariable) return null;
+  const afterTyping = typedJustBefore(steps, i);
+  if (afterTyping || isNavigation(context)) return null;
+  const items = (context.itemTexts ?? []).slice(0, 3).map((t) => `"${shortly(t)}"`).join(', ');
+  const same = sameItemStep(steps, i, context);
+  return [
+    `List: taken as item ${context.selectedIndex + 1} of ${context.totalItems} of a list${items ? ` (${items}${context.totalItems > 3 ? ', …' : ''})` : ''}`
+      + `${context.withinXpath ? ' — this element of that item' : ''}${same ? `, the same item as step ${same}: it shares its variable` : ''}.`,
+    'Saved, it becomes a variable: replayed by its place, or by its text, as decided at stop_recording.',
+    `Not an item of a list (a one-off button)? ${correct('none')}.`,
+    `Meant by its place ("the second result"): ${correct('by_place')}; by its label ("the category Garden"): ${correct('by_text')}.`,
+  ].join(' ');
 }

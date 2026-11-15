@@ -31,7 +31,6 @@ const KEYWORDS = new Set(['today', 'tomorrow', 'yesterday', 'now', 'timestamp', 
 const FUNCTIONS = new Set(['random', 'round', 'floor', 'ceil', 'abs', 'min', 'max']);
 const TEMPLATE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const NAME = /^[A-Za-z_][\w]*$/;
-const NUMERIC = /^-?\d+(?:\.\d+)?$/;
 
 class ValueError extends Error {}
 
@@ -149,9 +148,36 @@ function shift(at, amount, unit) {
   return d;
 }
 
-function asNumber(value, what) {
+// A number as a page shows it — a price kept by capture_value: 6,42 €, €19.26, 1 234,56 €,
+// $1,234.56, 12 %. The decimal mark is the last of . and , when both are there; a comma alone is
+// one ("6,42"), but before three digits only out of English ("1,234" is 1234 in English). Spaces
+// only between groups of three digits ("06 12 34 56 78" is no number). null: not a number.
+const SPACES = /[\s\u00a0\u202f]/g;
+function shownNumber(raw, language = 'en') {
+  let s = String(raw).trim();
+  const negative = s.startsWith('-');
+  if (negative) s = s.slice(1).trim();
+  s = s.replace(/^(?:[€$£¥₹]|EUR|USD|GBP|CHF)\s*/i, '').replace(/\s*(?:[€$£¥₹%]|EUR|USD|GBP|CHF)$/i, '').trim();
+  if (/[\s\u00a0\u202f]/.test(s)) {
+    if (!/^\d{1,3}(?:[\s\u00a0\u202f]\d{3})+(?:[.,]\d+)?$/.test(s)) return null;
+    s = s.replace(SPACES, '');
+  }
+  const sign = negative ? -1 : 1;
+  if (/^\d+(?:\.\d+)?$/.test(s)) return sign * Number(s);
+  if (/^\d{1,3}(?:\.\d{3})+,\d+$/.test(s)) return sign * Number(s.replace(/\./g, '').replace(',', '.'));
+  if (/^\d{1,3}(?:,\d{3})+\.\d+$/.test(s)) return sign * Number(s.replace(/,/g, ''));
+  if (/^\d{1,3}(?:,\d{3}){2,}$/.test(s) || (/^\d{1,3},\d{3}$/.test(s) && String(language).toLowerCase().startsWith('en'))) return sign * Number(s.replace(/,/g, ''));
+  if (/^\d+,\d+$/.test(s)) return sign * Number(s.replace(',', '.'));
+  if (/^\d{1,3}(?:\.\d{3}){2,}$/.test(s)) return sign * Number(s.replace(/\./g, ''));
+  return null;
+}
+
+function asNumber(value, what, language) {
   if (value.type === 'number') return value.value;
-  if (value.type === 'string' && NUMERIC.test(value.value.trim())) return Number(value.value);
+  if (value.type === 'string') {
+    const shown = shownNumber(value.value, language);
+    if (shown !== null) return shown;
+  }
   throw new ValueError(`${what} is not a number`);
 }
 
@@ -180,7 +206,7 @@ function evaluate(node, context) {
   if ('call' in node) return call(node.call, node.args.map((arg) => evaluate(arg, context)));
 
   const left = evaluate(node.left, context);
-  if (node.op === 'neg') return left.type === 'duration' ? { ...left, amount: -left.amount } : num(-asNumber(left, 'it'));
+  if (node.op === 'neg') return left.type === 'duration' ? { ...left, amount: -left.amount } : num(-asNumber(left, 'it', context.language));
   const right = evaluate(node.right, context);
   if (left.type === 'date' && right.type === 'duration' && '+-'.includes(node.op)) {
     return date(shift(left.value, node.op === '+' ? right.amount : -right.amount, right.unit), left.time || ['hour', 'minute', 'second'].includes(right.unit));
@@ -194,10 +220,10 @@ function evaluate(node, context) {
   if (left.type === 'date' || right.type === 'date' || left.type === 'duration' || right.type === 'duration') {
     throw new ValueError(`a date takes + or - a duration (3 days), or - another date`);
   }
-  const numeric = (v) => v.type === 'number' || NUMERIC.test(v.value.trim());
+  const numeric = (v) => v.type === 'number' || shownNumber(v.value, context.language) !== null;
   if (node.op === '+' && !(numeric(left) && numeric(right))) return text(format(left) + format(right));
-  const a = asNumber(left, 'the left side');
-  const b = asNumber(right, 'the right side');
+  const a = asNumber(left, 'the left side', context.language);
+  const b = asNumber(right, 'the right side', context.language);
   switch (node.op) {
     case '+': return num(a + b);
     case '-': return num(a - b);

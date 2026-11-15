@@ -9,4 +9,4 @@ export {
   deleteTest, listTests
 } from './test-store.js';
 
-export { executeTest, evaluateAssertion } from './test-execute.js';
+export { executeTest, executeRows, evaluateAssertion } from './test-execute.js';

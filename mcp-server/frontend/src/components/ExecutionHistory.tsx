@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { useGetExecutionsQuery, useLazyGetExecutionQuery } from '../store/services/executionsApi';
+import { rowFirstValues, rowValuesText } from '../rows';
+import { useGetExecutionsQuery, useLazyGetExecutionQuery, useReportRunBugMutation } from '../store/services/executionsApi';
+import { useGo } from '../navigation';
+import { useAppDispatch } from '../store/hooks';
+import { showToast } from '../store/slices/uiSlice';
 import type { Execution, ExecutionStep } from '../types';
 import { TriagePanel } from './TriagePanel';
 import { CAUSE_LABELS } from '../triage-labels';
@@ -12,9 +16,27 @@ import {
   Play,
   RotateCcw,
   ShieldCheck,
-  Video
+  Video,
+  Bug as BugIcon
 } from 'lucide-react';
 import { RunVideo } from './RunVideo';
+
+/**
+ * A text a run told (what a check read, an error), folded past `max` characters: a check of a
+ * whole <body> read thousands of them, its scripts with them.
+ */
+function LongText({ text, max = 400 }: { text: string; max?: number }) {
+  const [open, setOpen] = useState(false);
+  if (text.length <= max) return <>{text}</>;
+  return (
+    <>
+      {open ? text : `${text.slice(0, max)}…`}{' '}
+      <button type="button" className="long-text__toggle" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
+        {open ? 'Show less' : `Show all (${text.length} characters)`}
+      </button>
+    </>
+  );
+}
 
 const STATUS_LABELS: Record<string, { label: string; className: string }> = {
   success: { label: 'Passed', className: 'exec-status-success' },
@@ -67,6 +89,18 @@ export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: Ex
   const [expandedSteps, setExpandedSteps] = useState<ExecutionStep[]>([]);
   const [expanded, setExpanded] = useState<Execution | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const go = useGo();
+  const dispatch = useAppDispatch();
+  const [reportRunBug, { isLoading: reporting }] = useReportRunBugMutation();
+  // A person reports the bug a failed run met: the project opens none by itself (auto_bugs off).
+  const report = async (executionId: number) => {
+    try {
+      const { bug, existing } = await reportRunBug(executionId).unwrap();
+      dispatch(showToast({ message: existing ? `Already reported: bug #${bug.id}` : `Bug #${bug.id} reported`, type: 'success' }));
+    } catch (err) {
+      dispatch(showToast({ message: (err as { data?: { error?: string } })?.data?.error ?? 'The bug could not be reported', type: 'error' }));
+    }
+  };
 
   const { data: executions = [], isLoading } = useGetExecutionsQuery(
     { testName, limit: 20 },
@@ -119,11 +153,26 @@ export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: Ex
                   {exec.assertions_passed}/{exec.assertions_total} assertions
                 </span>
               )}
+              {exec.data_row ? (
+                // The row of the test it played, told by its first values (all of them below, opened).
+                <span className="row-chip" title={rowValuesText(exec.data_values)}>Row {exec.data_row}{rowFirstValues(exec.data_values)}</span>
+              ) : null}
             </div>
             <div className="exec-meta">
               {exec.triage_cause && <span className={`exec-trigger triage-badge triage-${exec.triage_cause}`}>{CAUSE_LABELS[exec.triage_cause].split(' — ')[0]}</span>}
               {exec.trigger !== 'manual' && <span className="exec-trigger">{exec.trigger}</span>}
               {exec.new_window && <span className="exec-trigger">new window</span>}
+              {exec.status === 'failed' && (exec.bug_id ? (
+                <button type="button" className="exec-video-btn" title="The bug this run met, in the Bugs page"
+                  onClick={(e) => { e.stopPropagation(); go(`/bugs?bug=${exec.bug_id}`, { from: testName }); }}>
+                  <BugIcon size={13} /> Bug #{exec.bug_id}
+                </button>
+              ) : (
+                <button type="button" className="exec-video-btn" disabled={reporting} title="Open a bug from this run: its failed step, what it expected and read, its page"
+                  onClick={(e) => { e.stopPropagation(); report(exec.id); }}>
+                  <BugIcon size={13} /> Report a bug
+                </button>
+              ))}
               {(exec.video_frames ?? 0) > 0 && (
                 <button type="button" className="exec-video-btn" title="Watch the run again, its steps beside it"
                   onClick={(e) => { e.stopPropagation(); setVideoOf(exec.id); }}>
@@ -137,8 +186,16 @@ export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: Ex
           </div>
 
           {exec.error && (
-            <div className="exec-error">{exec.error}</div>
+            <div className="exec-error"><LongText text={exec.error} /></div>
           )}
+
+          {expandedId === exec.id && exec.data_row ? (
+            <div className="row-values" aria-label={`Values of row ${exec.data_row}`}>
+              <strong>Row {exec.data_row} played:</strong>
+              {Object.entries(exec.data_values ?? {}).map(([name, value]) => <span key={name}>{`{{${name}}}`} = <code>{value === '' ? '(empty)' : value}</code></span>)}
+              {Object.keys(exec.data_values ?? {}).length === 0 && <span>its values were not kept</span>}
+            </div>
+          ) : null}
 
           {expandedId === exec.id && expanded?.triage && (
             <TriagePanel
@@ -164,7 +221,7 @@ export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: Ex
                   {step.locator_used && <span className="exec-step-locator">via {step.locator_used}</span>}
                   {step.error && (step.status === 'skipped' || !step.assertion_result?.message) && (
                     // An optional step not done is told, not a failure: the test went on.
-                    <div className={`exec-step-error ${step.status === 'skipped' ? 'exec-step-error--skipped' : ''}`}>{step.error}</div>
+                    <div className={`exec-step-error ${step.status === 'skipped' ? 'exec-step-error--skipped' : ''}`}><LongText text={step.error} /></div>
                   )}
                   {step.assertion_result && (
                     <div className={`exec-step-assertion ${step.assertion_result.passed ? 'passed' : step.status === 'skipped' ? 'skipped' : 'failed'}`}>
@@ -172,7 +229,7 @@ export function ExecutionHistory({ testName, refreshTrigger, onTestChanged }: Ex
                         <div className="exec-step-assertion-message">{step.assertion_result.message}</div>
                       )}
                       <span>Expected: {step.assertion_result.expected}</span>
-                      <span>Actual: {step.assertion_result.actual}</span>
+                      <span>Actual: <LongText text={String(step.assertion_result.actual ?? '')} /></span>
                       {step.assertion_result.type === 'visual_match' ? (
                         <div className="vrt-screenshots" style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                           {step.assertion_result?.refScreenshotUrl && (

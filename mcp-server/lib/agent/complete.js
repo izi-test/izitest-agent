@@ -6,6 +6,7 @@
 import { db, parseJson } from '../db.js';
 import { log } from '../logger.js';
 import { callOpenRouter, spawnCli } from './chat.js';
+import { cliModel, cliModelArgs, readModelCheck } from './cli-model.js';
 
 // The agent the chat and the recording agent fall back on when none is set.
 const DEFAULT_AGENT = {
@@ -19,9 +20,11 @@ export function agentConfig() {
   return row ? { ...DEFAULT_AGENT, ...parseJson(row.value) } : DEFAULT_AGENT;
 }
 
-/** Who answers, as the dashboard shows it: "claude", "anthropic/claude-haiku-4-5". */
+/** Who answers, as the dashboard shows it: "claude", "claude (opus)", "anthropic/claude-haiku-4-5". */
 export function agentName(config = agentConfig()) {
-  return config.mode === 'api' ? config.api?.model : (config.cli?.provider || 'claude');
+  if (config.mode === 'api') return config.api?.model;
+  const model = cliModel(config.cli);
+  return `${config.cli?.provider || 'claude'}${model ? ` (${model})` : ''}`;
 }
 
 /**
@@ -34,11 +37,23 @@ export function cliInvocation(cli, system, prompt) {
   if (provider === 'claude') {
     return {
       command, provider,
-      args: ['-p', prompt, '--system-prompt', system, '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--output-format', 'json'],
+      args: ['-p', prompt, '--system-prompt', system, '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--output-format', 'json', ...cliModelArgs(cli)],
     };
   }
   const whole = `${system}\n\n---\n\n${prompt}`;
-  return { command, provider, args: provider === 'opencode' ? ['run', whole] : ['-p', whole] };
+  return { command, provider, args: [...(provider === 'opencode' ? ['run', whole] : ['-p', whole]), ...cliModelArgs(cli)] };
+}
+
+/**
+ * Which model Claude Code answers with, the one set (cli.model) or its own default: one word
+ * asked, no tools (Settings → Test). { model, error }: see readModelCheck.
+ */
+export async function checkClaudeModel(cli, { timeoutMs = 90_000 } = {}) {
+  const command = (cli?.command || 'claude').trim().split(/\s+/)[0];
+  const args = ['-p', 'Reply with the single word OK.', '--tools', '', '--strict-mcp-config', '--no-session-persistence',
+    '--output-format', 'stream-json', '--verbose', ...cliModelArgs(cli)];
+  const { stdout } = await spawnCli(command, args, { timeoutMs });
+  return readModelCheck(stdout);
 }
 
 /** The agent's answer to `prompt`, as text. Stopped when `signal` aborts, or after `timeoutMs`. */

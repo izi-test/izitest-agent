@@ -26,8 +26,8 @@ const learnTarget = (ref, result) => {
   return shown;
 };
 const saveActionToHistory = (...args) => recordAction(sess(), ...args);
-import { classifyWithLLM, detectListContext } from './classify.js';
-import { uniqueVarName, listVariable, variabilizeInput, isNavigation, typedJustBefore, variabilizeSuggestion } from './variable-detection.js';
+import { detectListContext, judgeListClick } from './classify.js';
+import { uniqueVarName, listVariable, variabilizeInput, typedJustBefore, variabilizeSuggestion, sameItemVariable, listNote } from './variable-detection.js';
 import { linkAssertionToVariables } from './test-variable.js';
 import { loadTest, saveTest } from './test-store.js';
 import { linkRecorded, nonConformityOf } from './requirements.js';
@@ -316,14 +316,38 @@ function buildTools(sendCommand) {
       }),
       execute: async ({ selector, text, ref, intent }) => {
         try {
+          // While recording, the list it is an item of, read before the click (lib/tools/browser.js).
+          const listContext = getRecording()
+            ? await detectListContext(sendCommand, { selector: (ref && sess().refMap?.[String(ref).replace('@', '')]?.selector) || selector, text })
+            : undefined;
           const result = learnTarget(ref, await sendCommand(undefined, 'click', { selector, text, ref }));
           let screenshotBase64 = null;
           if (getRecording()?.use_vrt) {
             try { const s = await sendCommand(undefined, 'screenshot', { annotate: false }); if (s?.dataUrl) screenshotBase64 = s.dataUrl; } catch(e) {}
           }
-          saveActionToHistory('click', { selector, text }, ref, screenshotBase64, intent);
-          return JSON.stringify(result);
+          const actionId = saveActionToHistory('click', { selector, text }, ref, screenshotBase64, intent);
+          const steps = getRecording()?.steps ?? [];
+          const step = steps.at(-1);
+          if (step?._actionId === actionId && listContext !== undefined) step._listContext = listContext;
+          // Found in a list: what it was taken as, and how to say otherwise (pick_list_item).
+          const note = step?._actionId === actionId
+            ? listNote(steps, steps.length - 1, actionId, { correct: (pick) => `pick_list_item({ pick: "${pick}" })` })
+            : null;
+          return note ? `${JSON.stringify(result)}\n\n${note}` : JSON.stringify(result);
         } catch (err) { return formatToolError(err, 'click'); }
+      },
+    }),
+
+    pick_list_item: tool({
+      description: 'While recording, after a click its result says was found in a list ("List: taken as item N of M"): how it is meant. "none" — not an item of a list, a click on this element; "by_place" — the item at its place ("the second result"); "by_text" — the item with its label ("the category Garden"). Applies to the last click recorded.',
+      inputSchema: z.object({ pick: z.enum(['none', 'by_place', 'by_text']) }),
+      execute: async ({ pick }) => {
+        const steps = getRecording()?.steps ?? [];
+        const step = steps.findLast((s) => s.command === 'click');
+        if (!step) return 'No click recorded yet.';
+        step._pick = pick;
+        if (pick === 'none') step._skipVariable = true; else delete step._skipVariable;
+        return `Step ${steps.indexOf(step) + 1}: ${pick === 'none' ? 'a click on this element, not an item of a list' : `the item ${pick === 'by_text' ? 'with its label' : 'at its place'} in the list`}.`;
       },
     }),
 
@@ -635,12 +659,18 @@ function buildTools(sendCommand) {
             const clickText = step.params.text;
             if (selector || clickText) {
               try {
-                const listContext = await detectListContext(sendCommand, { selector, text: clickText, tabId: step.params.tabId });
-                if (listContext && !isNavigation(listContext, null, { afterTyping: typedJustBefore(recording.steps, i) })) {
-                  const llmResult = await classifyWithLLM(listContext, step.intent);
-                  if (llmResult.isList && !isNavigation(listContext, llmResult, { afterTyping: typedJustBefore(recording.steps, i) })) {
-                    const varName = uniqueVarName(llmResult.variableName, usedVarNames);
-                    step.variable = listVariable(varName, listContext, llmResult);
+                const listContext = step._listContext !== undefined ? step._listContext
+                  : await detectListContext(sendCommand, { selector, text: clickText, tabId: step.params.tabId });
+                // The item an earlier step picked (its "Add", then its "+"): the same variable.
+                const sameItem = listContext && sameItemVariable(recording.steps, i, listContext);
+                if (sameItem) {
+                  step.variable = sameItem;
+                } else {
+                  // What the agent said (pick) before what the classifier says.
+                  const judged = await judgeListClick(listContext, step, { afterTyping: typedJustBefore(recording.steps, i) });
+                  if (judged) {
+                    const varName = uniqueVarName(judged.variableName, usedVarNames);
+                    step.variable = listVariable(varName, listContext, judged);
                   }
                 }
               } catch (err) {
@@ -653,7 +683,8 @@ function buildTools(sendCommand) {
 
         const variables = {};
         recording.steps.forEach((step, i) => {
-          if (step.variable) {
+          // A variable several steps share (one card picked): told by the first of them.
+          if (step.variable && !variables[step.variable.name]) {
             variables[step.variable.name] = {
               type: step.variable.type,
               defaultValue: step.variable.defaultValue || '',

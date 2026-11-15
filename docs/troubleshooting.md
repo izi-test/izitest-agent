@@ -221,6 +221,15 @@ n'est pas une donnée du test : retirez la variable de l'étape pour qu'elle soi
 locators. Les enregistrements faits depuis cette version ne font plus de variable d'un clic dans
 un menu, une barre d'onglets ou un menu latéral : seuls les tests plus anciens en ont.
 
+### Un clic part sur un autre élément qui porte le même texte
+
+Les locators d'une étape cherchent tous en même temps. Un texte (« chocolat ») peut être sur la page
+avant l'élément voulu (la liste de suggestions pas encore ouverte). Désormais, un locator moins
+précis trouvé en premier attend jusqu'à 1 s un locator plus précis (CSS, test ID, attribut, nom
+accessible) encore en recherche, et c'est lui qui est pris s'il arrive. Le rapport dit par quel
+locator l'étape a été trouvée (« via css », « via text ») : un clic « via text » sur une étape qui a
+un sélecteur précis mérite un coup d'œil.
+
 ### Une vérification de fin de test échoue alors qu'elle passait à l'enregistrement
 
 Les vérifications sont toutes à la fin du test, après plusieurs actions. À l'enregistrement, l'agent

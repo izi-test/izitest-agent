@@ -3,6 +3,7 @@
 
 import { buildSnapshot, resolveRef, refProblem, describeRef, drawAnnotations, clearAnnotations, SnapshotOptions, locateElement, elementByText, selectOption, setInputValue, setInputFiles, noFieldLabelled } from './dom/snapshot';
 import FindSimilarElements from './utils/FindSimilarElements';
+import { itemOf } from './utils/list-item';
 import { announceToParent, listenForHops } from './dom/frame-hop';
 import type { FileData } from './dom/file-input';
 import { drawCursor } from './dom/cursor';
@@ -190,7 +191,26 @@ import { drawCursor } from './dom/cursor';
         const maxLevels = 6;
         const listInfo = FindSimilarElements.getFrom(el, maxLevels);
         if (!listInfo) {
-          sendResponse({ success: true, result: null });
+          // No look-alike of its own: the card it is in, among cards alike (utils/list-item.ts) —
+          // the "Add" button deep in a product's card, the "+" only the added product shows.
+          const card = itemOf(el);
+          const navCard = card && card.parent.closest('header, [role="banner"], nav, [role="navigation"], [role="menu"], [role="menubar"], [role="tablist"]');
+          sendResponse({
+            success: true,
+            result: card ? {
+              type: 'list',
+              parentSelector: buildCssSelector(card.parent),
+              itemXpath: card.itemXpath,
+              withinXpath: card.withinXpath,
+              totalItems: card.count,
+              selectedIndex: card.index,
+              // The card's text, not the button's ("Ajouter", "+"): what tells the cards apart.
+              selectedText: card.item.textContent?.trim().replace(/\s+/g, ' ').substring(0, 200) || '',
+              itemTexts: Array.from(card.parent.children).slice(0, 5).map((c) => c.textContent?.trim().replace(/\s+/g, ' ').substring(0, 120) || '').filter(Boolean),
+              navigation: navCard ? navCard.tagName.toLowerCase() : null,
+              choice: !!el.closest('[role="option"], [role="listbox"], [role="combobox"], datalist'),
+            } : null,
+          });
           return true;
         }
 
@@ -228,7 +248,10 @@ import { drawCursor } from './dom/cursor';
         const choice = !!el.closest('[role="option"], [role="listbox"], [role="combobox"], [role="grid"], datalist, .ui-autocomplete, [class*="autocomplete" i], [class*="suggest" i], [class*="typeahead" i]');
         // A menu, a tab bar, a side menu: where the test goes, not a value it varies (the
         // server does not make it a variable). What says so, or null.
-        const navEl = choice ? null : el.closest('[role="tab"], [role="tablist"], [role="menuitem"], [role="menu"], [role="menubar"], nav, [role="navigation"], [data-testid*="menu" i], [data-testid*="nav" i]');
+        // The list itself in the page's header (the cart, the account, the logo): links that go somewhere.
+        // Not the clicked element alone: a product card may have a <header> of its own.
+        const navEl = choice ? null : (el.closest('[role="tab"], [role="tablist"], [role="menuitem"], [role="menu"], [role="menubar"], nav, [role="navigation"], [data-testid*="menu" i], [data-testid*="nav" i]')
+          ?? (listInfo.parent as Element | null)?.closest?.('header, [role="banner"]') ?? null);
         const navigation = navEl
           ? `${navEl.tagName.toLowerCase()}${navEl.getAttribute('role') ? `[role=${navEl.getAttribute('role')}]` : ''}${navEl.getAttribute('data-testid') ? `[data-testid=${navEl.getAttribute('data-testid')}]` : ''}`
           : null;

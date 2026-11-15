@@ -163,3 +163,21 @@ test('the exported code computes the values with the very same file', () => {
   const simple = generateTestCode({ ...t, variables: {}, steps: [{ command: 'fill', params: { selector: '#a', value: 'b' } }] }, 'playwright-cucumber', () => definitions).files;
   assert.equal(simple.some((f) => f.path.endsWith('values.js')), false, 'nothing computed, nothing carried');
 });
+
+test('a price as the page shows it is a number: 3 × "6,42 €" is 19,26', () => {
+  const run = (value, language = 'fr') => valueContext({ language, lookup: (name) => (name === 'prix' ? value : undefined) });
+  const at = (expression, value, language) => resolveValues(expression, run(value, language));
+  assert.equal(at('{{prix * 3 | 0,00}}', '6,42 €').text, '19,26');
+  assert.equal(at('{{prix * 3 | 0,00}}', '6,42 €').text, '19,26', 'a non-breaking space before the euro');
+  assert.equal(at('{{prix * 3 | 0.00}}', '€19.26', 'en').text, '57.78');
+  assert.equal(at('{{prix * 2}}', '1 234,56 €').text, '2469.12');
+  assert.equal(at('{{prix * 2}}', '$1,234.56', 'en').text, '2469.12');
+  assert.equal(at('{{prix / 100}}', '12 %').text, '0.12');
+  assert.equal(at('{{prix * 2}}', '-3,5').text, '-7');
+  // "1,234": a thousand in English, a decimal elsewhere.
+  assert.equal(at('{{prix * 1}}', '1,234', 'en').text, '1234');
+  assert.equal(at('{{prix * 1}}', '1,234').text, '1.234');
+  // Not a number: told, left as it is; digits in pairs are no number either (a phone number).
+  assert.deepEqual(at('{{prix * 2}}', 'Lait 6x1L').problems, ['{{prix * 2}}: the left side is not a number']);
+  assert.equal(at('{{prix + 1}}', '06 12 34 56 78').text, '06 12 34 56 781', 'joined, not added');
+});

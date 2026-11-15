@@ -11,11 +11,25 @@ import { HeadlessSettings } from './HeadlessSettings';
 import { Card, PageHeader } from './ui';
 import { Save, Play, Check, X, Terminal, Cloud, Search, Bot } from 'lucide-react';
 
+// `models`: what the Model field suggests (each CLI takes --model). Empty, the CLI picks.
 const CLI_PROVIDERS = [
-  { id: 'claude', label: 'Claude Code', command: 'claude', description: 'Anthropic Claude Code CLI' },
-  { id: 'copilot', label: 'GitHub Copilot', command: 'copilot', description: 'GitHub Copilot CLI' },
-  { id: 'gemini', label: 'Gemini CLI', command: 'gemini', description: 'Google Gemini CLI' },
-  { id: 'opencode', label: 'Open Code', command: 'opencode', description: 'Open Code CLI' },
+  {
+    id: 'claude', label: 'Claude Code', command: 'claude', description: 'Anthropic Claude Code CLI',
+    models: ['fable', 'opus', 'sonnet', 'haiku'],
+    modelHint: "Empty: Claude Code's default on this machine — the one /model or its settings.json sets, else your account's. An alias (fable, opus, sonnet, haiku) follows the latest model of that family; a full name (claude-opus-5-5) stays the same. Test shows which model answers.",
+  },
+  {
+    id: 'copilot', label: 'GitHub Copilot', command: 'copilot', description: 'GitHub Copilot CLI',
+    models: ['auto'], modelHint: "Empty: Copilot's default. Passed as --model; auto lets Copilot pick.",
+  },
+  {
+    id: 'gemini', label: 'Gemini CLI', command: 'gemini', description: 'Google Gemini CLI',
+    models: [], modelHint: "Empty: Gemini CLI's default. Passed as --model.",
+  },
+  {
+    id: 'opencode', label: 'Open Code', command: 'opencode', description: 'Open Code CLI',
+    models: [], modelHint: "Empty: Open Code's default. Written provider/model, passed as --model.",
+  },
 ];
 
 const DEFAULT_CONFIG: AgentConfig = {
@@ -58,10 +72,11 @@ export function Settings() {
   }
 
   const config = localConfig || serverConfig || DEFAULT_CONFIG;
+  const cliProvider = CLI_PROVIDERS.find(p => p.id === config.cli.provider);
 
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; output?: string; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; output?: string; error?: string; model?: string | null; model_default?: boolean } | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [modelSearch, setModelSearch] = useState('');
 
@@ -95,7 +110,7 @@ export function Settings() {
     setTestResult(null);
     try {
       if (config.mode === 'cli') {
-        const data = await testAgentMut({ command: config.cli.command }).unwrap();
+        const data = await testAgentMut({ command: config.cli.command, provider: config.cli.provider, model: config.cli.model ?? '' }).unwrap();
         setTestResult(data);
       } else {
         const data = await testApiKeyMut({
@@ -117,7 +132,7 @@ export function Settings() {
       await updateConfig({ agent: config }).unwrap();
       dispatch(showToast({ message: 'Agent configuration saved' }));
     } catch (err: any) {
-      dispatch(showToast({ message: err.message || 'Save failed', type: 'error' }));
+      dispatch(showToast({ message: err?.data?.error || err.message || 'Save failed', type: 'error' }));
     } finally {
       setSaving(false);
     }
@@ -223,12 +238,40 @@ export function Settings() {
               </Button>
             </div>
 
+            <div className="field-group">
+              <label htmlFor="cli-model">Model</label>
+              <input
+                id="cli-model"
+                type="text"
+                list="cli-model-suggestions"
+                value={config.cli.model ?? ''}
+                onChange={e => {
+                  setLocalConfig(prev => ({
+                    ...(prev || config),
+                    cli: { ...(prev || config).cli, model: e.target.value }
+                  }));
+                  setTestResult(null);
+                }}
+                placeholder={`Default of ${cliProvider?.label ?? 'the CLI'}`}
+              />
+              <datalist id="cli-model-suggestions">
+                {(cliProvider?.models ?? []).map(m => <option key={m} value={m} />)}
+              </datalist>
+              <span className="field-hint">{cliProvider?.modelHint ?? "Empty: the CLI's own default. Passed as --model."}</span>
+            </div>
+
             {testResult && (
               <div className={`settings-test-result ${testResult.success ? 'success' : 'error'}`}>
                 <div className="settings-test-status">
                   {testResult.success ? <Check size={16} /> : <X size={16} />}
                   <span>{testResult.success ? 'Agent is operational' : 'Agent not available'}</span>
                 </div>
+                {config.cli.provider === 'claude' && testResult.model && (
+                  <p className="settings-test-model">
+                    {testResult.success ? 'Answers with ' : 'Started with '}<code>{testResult.model}</code>
+                    {testResult.model_default ? " — Claude Code's default" : ''}
+                  </p>
+                )}
                 {testResult.output && (
                   <pre className="settings-test-output">{testResult.output}</pre>
                 )}

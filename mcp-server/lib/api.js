@@ -5,13 +5,14 @@ import { promisify } from 'util';
 import { writeFileSync, unlinkSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { writeAgentMcpConfig, dashboardToolName } from './agent/cli-mcp.js';
+import { cliModelArgs, isModelName } from './agent/cli-model.js';
 import { runVideo, runVideoFrame } from './run-video.js';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
-import { executeTest } from './tests.js';
+import { executeTest, executeRows } from './tests.js';
 import { sendCommand, broadcastToExtensions, getProfiles, waitForProfileReregister, getClientErrors, clearClientErrors, isHeadlessProfile } from './websocket.js';
 import { DebugController, activeDebugControllers } from './debug-controller.js';
 import {
@@ -28,13 +29,16 @@ import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './
 import { languageOf } from './gherkin/language.js';
 import { createProject, elementTimeoutOf } from './projects.js';
 import { computeVariables } from './values.js';
-import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetOfTest, datasetRows, rowLabel, datasetLines } from './datasets.js';
+import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetRows, rowLabel, datasetLines, rowsOfTest, testRows, saveTestRows, codeData, shownRow, datasetOfTest } from './datasets.js';
+import { withExamples, rowsFromExamples } from './gherkin/outline.js';
+import { lastRunOfTest } from './test-status.js';
+import { examplesOf } from './gherkin/parse.js';
 import { listSecrets, saveSecret, deleteSecret, secretLines, secretValue } from './secrets.js';
 import { pendingAsks, answerAsk, cancelAsk, cancelAsksOfRun, followAsks } from './asks.js';
 import { loadTest, saveTest, insertTestStep } from './test-store.js';
 import { stepsOfBusinessPhrase, businessStepsOf } from './business-play.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff, repairUses } from './repairs.js';
-import { listBugs, getBug, updateBug, reportBug, reproBrief, adoptReproTest, listExplorations, getExploration, runExploration } from './bugs.js';
+import { listBugs, getBug, updateBug, reportBug, reproBrief, adoptReproTest, listExplorations, getExploration, runExploration, recordRunBug } from './bugs.js';
 import { CHECKS, DEFAULT_IMPACTS } from './explore.js';
 import { saveRequirement, getRequirement, listRequirements, deleteRequirement, planCases, linkTest, deleteCase, updateCase, saveDesign, requirementsOfTest } from './requirements.js';
 import { designTests, planDesigned, placeMissing, withResolution, recordingBrief, projectBrief } from './requirement-design.js';
@@ -43,14 +47,14 @@ import { readWithAgent, importConfirmed } from './requirement-reading.js';
 import {
   describeConnectors, connectorOf, saveConnectorConfig, testConnector, connectorConfig, importFromConnector, sendCoverage, sendResults, sendBug, sentTo,
 } from './connectors/index.js';
-import { complete, agentName } from './agent/complete.js';
+import { complete, agentName, checkClaudeModel } from './agent/complete.js';
 import { progressReport, htmlProgress } from './reports.js';
 import { startCampaign, updateCampaignPlan, getCampaign, listCampaigns, stopCampaign, deleteCampaign, junitReport, htmlReport, proposeStages, testsOfScope } from './campaigns.js';
 import { selectTests } from './regression.js';
 import { generateTestCode } from './codegen/index.js';
 import { listSessions } from './session.js';
 import { followRun } from './live.js';
-import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless } from './headless.js';
+import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless, holdHeadless, setIdleMinutes } from './headless.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
 // How long to wait for a reloaded extension to register again. A reload drops the socket
@@ -191,6 +195,7 @@ export async function apiRouter(req, res, url) {
       // Each test with how it last ran and the requirements it checks: what the list filters on.
       let query = `
         SELECT t.id, t.name, t.description, t.variables, t.viewport, t.project_id, t.created_at, t.updated_at,
+               (t.data_rows IS NOT NULL OR t.dataset_id IS NOT NULL) AS has_rows,
                (SELECT COUNT(*) FROM test_steps ts WHERE ts.test_id = t.id) AS step_count,
                last.status AS last_status, last.started_at AS last_run_at, last.duration_ms AS last_duration_ms,
                (SELECT json_group_array(key) FROM (
@@ -206,7 +211,12 @@ export async function apiRouter(req, res, url) {
         params.push(projectId === 'null' ? null : projectId);
       }
       query += ' ORDER BY t.updated_at DESC';
-      const rows = db.prepare(query).all(...params);
+      // A test with rows: how it last did on each of them (lib/test-status.js), not on its last row only.
+      const rows = db.prepare(query).all(...params).map(({ has_rows: hasRows, ...test }) => {
+        if (!hasRows) return test;
+        const last = lastRunOfTest(test.id);
+        return last ? { ...test, last_status: last.status, last_run_at: last.started_at, last_duration_ms: last.duration_ms, ...(last.rows ? { last_rows: last.rows } : {}) } : test;
+      });
       return json(res, 200, { tests: parseRows(rows, 'variables', 'viewport', 'requirement_keys') });
     }
 
@@ -221,13 +231,19 @@ export async function apiRouter(req, res, url) {
       ).all(test.id);
       // Each step with the element it acts on (`element`, its name), when it is known.
       const { steps: named } = withElementNames({ project_id: test.project_id, steps: parseRows(steps, 'params', 'locators', 'variable', 'assertion') });
-      // The dataset it runs the rows of, each row told by its first values.
+      // The dataset it runs the rows of, each row told by its first values; the rows it keeps of
+      // its own (its Data tab's table); the rows a run plays — those of the dataset, else its own.
       const dataset = datasetOfTest(test.name);
+      const played = rowsOfTest(test.name);
+      const labels = (rows) => rows.map((row, i) => rowLabel(shownRow(row), i + 1));
       return json(res, 200, {
         test: {
           ...parseRow(test, 'variables', 'viewport'),
+          data_rows: undefined,
           steps: named,
-          dataset: dataset && { id: dataset.id, name: dataset.name, columns: dataset.columns, row_count: dataset.row_count, row_labels: dataset.rows.map((row, i) => rowLabel(row, i + 1)) },
+          dataset: dataset && { id: dataset.id, name: dataset.name, columns: dataset.columns, row_count: dataset.row_count, row_labels: labels(dataset.rows) },
+          rows: testRows(test.name),
+          played_rows: played && { source: played.own ? 'test' : 'dataset', name: played.name, columns: played.columns, row_count: played.row_count, row_labels: labels(played.rows) },
         }
       });
     }
@@ -273,8 +289,9 @@ export async function apiRouter(req, res, url) {
       if (!test) return json(res, 404, { error: 'Test not found' });
       const projectId = test.project_id;
       if (!projectId) return json(res, 400, { error: 'Test is not assigned to a project; assign it first to use Gherkin' });
-      // Its elements by their names, not their selectors: When I click on "Save profile".
-      const feature = serializeTestToFeature(withElementNames(test), projectId);
+      // Its elements by their names, not their selectors: When I click on "Save profile". With
+      // two rows or more, a Scenario Outline, its Examples the rows (lib/gherkin/outline.js).
+      const feature = withExamples(serializeTestToFeature(withElementNames(test), projectId), { rows: rowsOfTest(test.name)?.rows, variables: test.variables, language: test.language });
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(feature);
     }
@@ -291,19 +308,40 @@ export async function apiRouter(req, res, url) {
       if (!projectId) return json(res, 400, { error: 'Test is not assigned to a project; assign it first to use Gherkin' });
 
       let steps;
+      let examples;
       try {
         // Unchanged phrases keep their steps whole: list variables, intents, locators.
         // A name of an element reads back as that element.
         steps = stepsForEditedFeature(featureText, projectDefinitions(projectId), withElementNames(existing), { targets: elementTargets(projectId) });
+        examples = examplesOf(featureText);
       } catch (err) {
         if (err.code === 'GHERKIN_UNRESOLVED') {
           return json(res, 422, { error: err.message, errors: err.errors });
         }
         return json(res, 400, { error: err.message });
       }
+      // The Examples of a Scenario Outline are the rows it plays: its own, saved with it. Bound
+      // to a dataset, they are the dataset's: changed there, not here.
+      const bound = datasetOfTest(existing.name);
+      const own = testRows(existing.name);
+      let rows = null;
+      if (examples) {
+        rows = rowsFromExamples(examples, bound ? bound.rows : own);
+        const shown = (i, column) => String(bound?.rows[i]?.[column] ?? existing.variables?.[column]?.defaultValue ?? '');
+        if (bound && (rows.length !== bound.rows.length || rows.some((row, i) => Object.entries(row).some(([column, value]) => value !== shown(i, column))))) {
+          return json(res, 400, { error: `Its rows are those of the dataset "${bound.name}": change them in Datasets, or unbind it (Data tab) to type rows of the test's own` });
+        }
+      }
 
       saveTest({ ...existing, steps });
-      return json(res, 200, { success: true, step_count: steps.length });
+      let saved = { rows: own, added: [] };
+      if (!bound) {
+        // A Scenario, from an Outline: its rows are gone. One row is shown as a Scenario: kept.
+        if (examples) saved = saveTestRows(existing.name, rows, { addVariables: true });
+        else if (own.length > 1) saved = saveTestRows(existing.name, []);
+        if (saved.error) return json(res, saved.status, { error: `Steps saved, not the rows: ${saved.error}` });
+      }
+      return json(res, 200, { success: true, step_count: steps.length, row_count: saved.rows?.length ?? 0, ...(saved.added?.length ? { variables_added: saved.added } : {}) });
     }
 
     // ── POST /api/values/preview — { values: { name: "{{today | dd/MM/yyyy}}" }, language }: what
@@ -355,7 +393,7 @@ export async function apiRouter(req, res, url) {
 
       try {
         // With the datasets of its project, and the one it runs the rows of.
-        const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name), datasets: datasetRows(test.project_id), dataset: datasetOfTest(test.name)?.name ?? null }, framework, projectDefinitions);
+        const result = generateTestCode({ ...test, requirements: requirementsOfTest(test.name), ...codeData(test) }, framework, projectDefinitions);
         if (result.error) return json(res, result.status, { error: result.error });
         return json(res, 200, { framework, files: result.files });
       } catch (err) {
@@ -414,33 +452,61 @@ export async function apiRouter(req, res, url) {
       // and its window closed after: nobody looks at it. Not in debug: that one is watched.
       const headless = body.headless === true && !body.debug;
       const run = headless ? inHeadless(sendCommand) : sendCommand;
-      let tabId = null;
+      const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+      const closeWindow = (tabId) => run(undefined, 'close_window', { tabId, liveSessions: listSessions().map((s) => s.id) }).catch(() => {});
+      // A test with rows (lib/datasets.js) plays every row, a run each, one after the other —
+      // or the row asked; debugged or resumed at a step, one row (the first unless told).
+      // The dashboard gone (Stop, the page closed): the rows not played yet are not.
+      let gone = false;
+      res.on('close', () => { if (!res.writableEnded) gone = true; });
+      let several = false;
+      const onRow = (event) => {
+        if (event.type === 'rows_started') { several = true; send(event); return; }
+        if (event.type === 'row_started') { liveTab = null; if (several) send(event); return; }
+        const { row, result, error } = event;
+        const tabId = result ? result.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null : error?.tabId ?? null;
+        if (result) send({ type: 'execution_completed', result, row });
+        else {
+          send({
+            type: 'execution_error',
+            row,
+            error: error.message,
+            executionId: error.executionId,
+            status: error.status || 'failed',
+            durationMs: error.durationMs ?? null,
+            totalSteps: error.totalSteps ?? null,
+            completedSteps: error.completedSteps ?? null,
+            failedStep: error.failedStep ?? null,
+            assertionsTotal: error.assertionsTotal ?? null,
+            assertionsPassed: error.assertionsPassed ?? null,
+            assertionsFailed: error.assertionsFailed ?? null,
+            triage: error.triage ?? null,
+            bug: error.bug ?? null,
+          });
+        }
+        // Headless, nobody looks at its window; in sight, a row that passed leaves its window
+        // to the next one — a failed one stays open, to be looked at.
+        if (tabId && (headless || (several && !event.last && result))) closeWindow(tabId);
+      };
+      // Not stopped for being idle while it runs: between two rows, a step that waits.
+      const release = headless ? holdHeadless() : () => {};
       try {
         if (headless) await ensureHeadless();
         const newWindow = headless || (body.new_window !== undefined ? body.new_window : true);
-        const resObj = await executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, run, 'manual', onProgress, debugController, { row: body.row, recordVideo: body.record_video === true });
-        tabId = resObj?.results?.findLast?.((r) => r.tabId != null)?.tabId ?? null;
-        res.write(`data: ${JSON.stringify({ type: 'execution_completed', result: resObj })}\n\n`);
+        const { rows, outcomes } = await executeRows(params.name, { row: body.row, one: !!(body.debug || body.start_step), stopped: () => gone, onRow },
+          (row) => executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, run, 'manual', onProgress, debugController, { ...(row ? { row } : {}), recordVideo: body.record_video === true }));
+        if (rows.length > 1) {
+          send({
+            type: 'rows_completed',
+            rows: outcomes.map(({ row, label, status, executionId, error }) => ({ row, label, status, executionId, ...(error ? { error: error.message } : {}) })),
+            stopped: outcomes.length < rows.length,
+          });
+        }
       } catch (err) {
-        tabId = err.tabId ?? null;
-        res.write(`data: ${JSON.stringify({
-          type: 'execution_error',
-          error: err.message,
-          executionId: err.executionId,
-          status: err.status || 'failed',
-          durationMs: err.durationMs ?? null,
-          totalSteps: err.totalSteps ?? null,
-          completedSteps: err.completedSteps ?? null,
-          failedStep: err.failedStep ?? null,
-          assertionsTotal: err.assertionsTotal ?? null,
-          assertionsPassed: err.assertionsPassed ?? null,
-          assertionsFailed: err.assertionsFailed ?? null,
-          triage: err.triage ?? null,
-          bug: err.bug ?? null,
-        })}\n\n`);
+        send({ type: 'execution_error', error: err.message, status: 'failed' });
       } finally {
+        release();
         res.end();
-        if (headless && tabId) run(undefined, 'close_window', { tabId, liveSessions: listSessions().map((s) => s.id) }).catch(() => {});
       }
       return;
     }
@@ -500,7 +566,7 @@ export async function apiRouter(req, res, url) {
       const rows = db.prepare(
         `SELECT id, status, started_at, finished_at, duration_ms, total_steps, completed_steps,
                 failed_step, error, new_window, trigger, assertions_total, assertions_passed, assertions_failed,
-                json_extract(triage, '$.cause') AS triage_cause, campaign_id, video_frames
+                json_extract(triage, '$.cause') AS triage_cause, campaign_id, video_frames, bug_id, data_row, data_values
          FROM test_executions
          WHERE test_id = ?
          ORDER BY started_at DESC
@@ -511,7 +577,15 @@ export async function apiRouter(req, res, url) {
         'SELECT COUNT(*) AS total FROM test_executions WHERE test_id = ?'
       ).get(test.id);
 
-      return json(res, 200, { executions: rows, total: countRow.total, page, pageSize });
+      return json(res, 200, { executions: parseRows(rows, 'data_values'), total: countRow.total, page, pageSize });
+    }
+
+    // ── GET /api/tests/:name/last-run — how it last did, every row it plays counted (lib/test-status.js) ──
+    params = matchRoute(path, '/api/tests/:name/last-run');
+    if (method === 'GET' && params) {
+      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
+      if (!test) return json(res, 404, { error: 'Test not found' });
+      return json(res, 200, { last_run: lastRunOfTest(test.id) });
     }
 
     // ── GET /api/tests/:name/campaigns — the campaigns it ran in, newest first, with how it did in each ──
@@ -527,6 +601,30 @@ export async function apiRouter(req, res, url) {
         ...c, run: runs.find((r) => r.name === params.name) ?? null,
       }));
       return json(res, 200, { campaigns });
+    }
+
+    // POST /api/executions/:id/bug — a person reports the bug a failed run met (the project opens
+    // none by itself, or the diagnosis did not put it on the app): opened from what the run knows —
+    // its failed step, what it expected and read, its page, its campaign —; the run linked to it.
+    params = matchRoute(path, '/api/executions/:id/bug');
+    if (method === 'POST' && params) {
+      const exec = db.prepare(`SELECT e.id, e.test_name, e.status, e.failed_step, e.error, e.triage, e.campaign_id, e.data_row, e.bug_id, t.project_id
+                               FROM test_executions e LEFT JOIN tests t ON t.id = e.test_id WHERE e.id = ?`).get(Number(params.id));
+      if (!exec) return json(res, 404, { error: 'Execution not found' });
+      if (exec.status !== 'failed') return json(res, 400, { error: 'Only a failed run reports a bug' });
+      if (exec.bug_id) return json(res, 200, { bug: getBug(exec.bug_id), existing: true });
+      const failedStep = exec.failed_step ?? db.prepare("SELECT MIN(step_order) AS n FROM execution_steps WHERE execution_id = ? AND status = 'failed'").get(exec.id)?.n;
+      if (!failedStep) return json(res, 400, { error: 'This run says no step failed: nothing to report from it' });
+      const triage = parseJson(exec.triage) ?? { cause: 'unknown', confidence: 'low', summary: exec.error ?? '', evidence: {} };
+      try {
+        const opened = recordRunBug({
+          testName: exec.test_name, projectId: exec.project_id ?? null, executionId: exec.id, campaignId: exec.campaign_id ?? null,
+          dataRow: exec.data_row ?? null, stepOrder: failedStep, triage, requirements: requirementsOfTest(exec.test_name), manual: true,
+        });
+        return json(res, 201, { bug: opened.bug, isNew: opened.isNew });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
     }
 
     // GET /api/executions/:id/video — the run's video (lib/run-video.js): { video: { startedAt,
@@ -559,7 +657,7 @@ export async function apiRouter(req, res, url) {
         'SELECT * FROM execution_steps WHERE execution_id = ? ORDER BY step_order'
       ).all(execId);
 
-      const execution = parseRow(exec, 'variables', 'triage');
+      const execution = parseRow(exec, 'variables', 'triage', 'data_values');
       // The repairs its diagnosis proposed: one may have been proposed by an earlier run first.
       const repairIds = (execution.triage?.proposals ?? []).map((proposal) => proposal.id).filter(Boolean);
       return json(res, 200, {
@@ -1225,7 +1323,7 @@ export async function apiRouter(req, res, url) {
     // project) and its last campaign
     if (method === 'GET' && path === '/api/projects') {
       const rows = db.prepare(`
-        SELECT p.id, p.name, p.description, p.context, p.project_type, p.base_url, p.language, p.element_timeout_ms, p.clean_start, p.created_at, p.updated_at,
+        SELECT p.id, p.name, p.description, p.context, p.project_type, p.base_url, p.language, p.element_timeout_ms, p.clean_start, p.auto_bugs, p.created_at, p.updated_at,
                (SELECT COUNT(*) FROM tests t WHERE t.project_id = p.id) AS test_count,
                (SELECT COUNT(*) FROM requirements r WHERE r.project_id = p.id) AS requirement_count,
                (SELECT COUNT(*) FROM campaigns c WHERE c.project_id = p.id) AS campaign_count,
@@ -1294,6 +1392,7 @@ export async function apiRouter(req, res, url) {
       if (body.base_url !== undefined) { sets.push('base_url = ?'); vals.push(body.base_url); }
       if (body.language !== undefined) { sets.push('language = ?'); vals.push(languageOf(body.language)); }
       if (body.clean_start !== undefined) { sets.push('clean_start = ?'); vals.push(body.clean_start ? 1 : 0); }
+      if (body.auto_bugs !== undefined) { sets.push('auto_bugs = ?'); vals.push(body.auto_bugs ? 1 : 0); }
       if (body.element_timeout_ms !== undefined) {
         try {
           sets.push('element_timeout_ms = ?'); vals.push(elementTimeoutOf(body.element_timeout_ms));
@@ -1383,6 +1482,17 @@ export async function apiRouter(req, res, url) {
     if (method === 'DELETE' && params) {
       return deleteDataset(parseInt(params.id, 10)) ? json(res, 200, { deleted: true }) : json(res, 404, { error: 'Dataset not found' });
     }
+    // ── PUT /api/tests/:name/rows — { rows: [{ variable: value }] }: the rows it keeps of its own,
+    // a run each (its Data tab's table); [] for none. A column is a variable of the test. ──
+    params = matchRoute(path, '/api/tests/:name/rows');
+    if (method === 'PUT' && params) {
+      const body = await readBody(req);
+      const result = saveTestRows(params.name, body.rows ?? []);
+      if (result.error) return json(res, result.status, { error: result.error });
+      const bound = datasetOfTest(params.name);
+      return json(res, 200, { rows: result.rows, ...(bound ? { played_from: bound.name } : {}) });
+    }
+
     // ── PUT /api/tests/:name/dataset — { dataset: id or name, or null }: the rows it runs ──
     params = matchRoute(path, '/api/tests/:name/dataset');
     if (method === 'PUT' && params) {
@@ -1516,6 +1626,18 @@ export async function apiRouter(req, res, url) {
       return json(res, 202, { headless: await headlessStatus() });
     }
 
+    // PUT /api/headless/settings { idle_minutes } — stopped after that many minutes without
+    // work, 0: only with the server
+    if (method === 'PUT' && path === '/api/headless/settings') {
+      const body = await readBody(req);
+      try {
+        setIdleMinutes(body.idle_minutes);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+      return json(res, 200, { headless: await headlessStatus() });
+    }
+
     // POST /api/headless/start | stop
     params = matchRoute(path, '/api/headless/:action');
     if (method === 'POST' && params && (params.action === 'start' || params.action === 'stop')) {
@@ -1552,6 +1674,12 @@ export async function apiRouter(req, res, url) {
       if (!body.agent) return json(res, 400, { error: 'agent config is required' });
 
       const incoming = body.agent;
+      // The CLI agent's model: empty for the CLI's own, else a name the CLI takes as --model.
+      if (incoming.cli) {
+        const model = String(incoming.cli.model ?? '').trim();
+        if (model && !isModelName(model)) return json(res, 400, { error: `"${model.slice(0, 80)}" is not a model name` });
+        if (model) incoming.cli.model = model; else delete incoming.cli.model;
+      }
 
       // If the API key contains mask characters (•), keep the existing key from the DB
       if (incoming.api?.apiKey && incoming.api.apiKey.includes('•')) {
@@ -1566,42 +1694,44 @@ export async function apiRouter(req, res, url) {
         `INSERT INTO settings (key, value, updated_at) VALUES ('agent', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
          ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
       ).run(JSON.stringify(incoming));
-      log(`Agent config updated: mode=${incoming.mode}, api.provider=${incoming.api?.provider}, api.model=${incoming.api?.model}`);
+      log(`Agent config updated: mode=${incoming.mode}, cli.provider=${incoming.cli?.provider}, cli.model=${incoming.cli?.model ?? '(the CLI\'s)'}, api.model=${incoming.api?.model}`);
       return json(res, 200, { success: true, agent: incoming });
     }
 
     // ── POST /api/settings/agent/test ──
+    // The CLI is there (its --version, else --help). Claude Code is also asked one word, with the
+    // model set or its own default: which model answered, or why none did (a model that does not
+    // exist, or the account cannot use).
     if (method === 'POST' && path === '/api/settings/agent/test') {
       const body = await readBody(req);
       const command = body.command;
       if (!command) return json(res, 400, { error: 'command is required' });
+      const model = String(body.model ?? '').trim();
+      if (model && !isModelName(model)) return json(res, 200, { success: false, error: `"${model.slice(0, 80)}" is not a model name` });
+
+      const baseCmd = command.trim().split(/\s+/)[0];
+      const run = (flag) => execFileAsync(baseCmd, [flag], {
+        timeout: 10000,
+        encoding: 'utf-8',
+        env: { ...process.env, PATH: process.env.PATH }
+      });
+      let output;
+      try {
+        const { stdout, stderr } = await run('--version').catch(() => run('--help'));
+        output = (stdout || stderr || '').trim().substring(0, 200);
+        log(`Agent test "${baseCmd}" => ${output}`);
+      } catch (err) {
+        log(`Agent test failed for "${baseCmd}": ${err.message}`);
+        return json(res, 200, { success: false, error: `Command "${baseCmd}" not found or not executable` });
+      }
+      if (body.provider !== 'claude') return json(res, 200, { success: true, output, model: model || null });
 
       try {
-        const baseCmd = command.trim().split(/\s+/)[0];
-        const { stdout, stderr } = await execFileAsync(baseCmd, ['--version'], {
-          timeout: 10000,
-          encoding: 'utf-8',
-          env: { ...process.env, PATH: process.env.PATH }
-        });
-        const output = (stdout || stderr || '').trim().substring(0, 200);
-        log(`Agent test "${baseCmd} --version" => ${output}`);
-        return json(res, 200, { success: true, output });
+        const check = await checkClaudeModel({ command, model });
+        log(`Agent test "${baseCmd}" model=${model || "(Claude Code's)"} => ${check.model ?? 'none'}${check.error ? `: ${check.error}` : ''}`);
+        return json(res, 200, { success: !check.error, output, model: check.model, model_default: !model, ...(check.error ? { error: check.error } : {}) });
       } catch (err) {
-        try {
-          const baseCmd = command.trim().split(/\s+/)[0];
-          const { stdout, stderr } = await execFileAsync(baseCmd, ['--help'], {
-            timeout: 10000,
-            encoding: 'utf-8',
-            env: { ...process.env, PATH: process.env.PATH }
-          });
-          const output = (stdout || stderr || '').trim().substring(0, 200);
-          log(`Agent test "${baseCmd} --help" => ${output}`);
-          return json(res, 200, { success: true, output });
-        } catch (err2) {
-          const baseCmd = command.trim().split(/\s+/)[0];
-          log(`Agent test failed for "${baseCmd}": ${err2.message}`);
-          return json(res, 200, { success: false, error: `Command "${baseCmd}" not found or not executable` });
-        }
+        return json(res, 200, { success: false, output, error: `Claude Code did not answer: ${err.message.slice(0, 300)}` });
       }
     }
 
@@ -1769,6 +1899,8 @@ export async function apiRouter(req, res, url) {
       } else {
         args.push('-p', body.prompt);
       }
+      // The model set in Settings (lib/agent/cli-model.js), if one is: the CLI's own otherwise.
+      args.push(...cliModelArgs(agentConfig.cli));
 
       // Create a temp MCP config that connects to the ALREADY-RUNNING server via SSE
       let tmpMcpConfig = null;

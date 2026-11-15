@@ -1,7 +1,8 @@
 // The datasets of a project: tables of values — a CSV, a JSON or an Excel sheet dropped in —
 // that a test bound to one runs once per row of (each column a variable of the run: {{email}}),
-// and any test reads a value of ({{utilisateurs[2].email}}, rows numbered from 1). A campaign
-// runs a bound test once per row.
+// and any test reads a value of ({{utilisateurs[2].email}}, rows numbered from 1). A run of a
+// bound test plays every row, a campaign too. A test may also keep rows of its own (testRows),
+// played the same way.
 
 import { db, parseJson } from './db.js';
 import { textOf, parseCsv, parseXlsx } from './requirement-import.js';
@@ -133,6 +134,105 @@ export function datasetRows(projectId) {
 export function datasetOfTest(testName) {
   const row = db.prepare('SELECT d.* FROM datasets d JOIN tests t ON t.dataset_id = d.id WHERE t.name = ?').get(testName);
   return row ? asDataset(row, { withRows: true }) : null;
+}
+
+// ─── The rows a test keeps of its own ─────────────────────────────────────
+// Typed in its Data tab's table, or read from the Examples of its Gherkin: one row, one run of
+// the test, a value per variable of it by its name — a variable a row has no value for plays
+// its default; a value may be computed ({{today + 3 days}}) or a secret ({{secret.NAME}}).
+// Kept with the test (tests.data_rows), not as a dataset of the project: its columns are the
+// test's variables, the rows go with the test (renamed, deleted), take no name among the
+// project's datasets ({{users[2].email}}) and change no other test's runs. They are played as
+// a dataset's are (rowsOfTest): a run per row (data_row), a campaign entry per row. A test
+// bound to a dataset plays the dataset's rows; its own are kept for when it is unbound.
+
+/** The rows a test keeps of its own: a list of objects, [] when it has none. */
+export function testRows(testName) {
+  const rows = parseJson(db.prepare('SELECT data_rows FROM tests WHERE name = ?').get(testName)?.data_rows);
+  return Array.isArray(rows) ? rows : [];
+}
+
+/**
+ * Saves the rows a test keeps of its own (`rows`: a list of objects, a value per variable by its
+ * name; [] for none): `{ rows, added }` or `{ error, status }`. A column that is no variable of
+ * the test is refused — or, with `addVariables` (rows read from the Examples of its Gherkin),
+ * made one (`added`), its default the value of row 1.
+ */
+export function saveTestRows(testName, rows, { addVariables = false } = {}) {
+  const test = db.prepare('SELECT id, variables FROM tests WHERE name = ?').get(testName);
+  if (!test) return { error: 'Test not found', status: 404 };
+  if (!Array.isArray(rows) || !rows.every((row) => row && typeof row === 'object' && !Array.isArray(row))) {
+    return { error: 'rows: a list of objects, a value per variable of the test ([{ "email": "bob@x.dev" }, …])', status: 400 };
+  }
+  if (rows.length > MAX_ROWS) return { error: `${rows.length} rows: at most ${MAX_ROWS}`, status: 400 };
+  const variables = parseJson(test.variables) ?? {};
+  const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+  const badName = columns.find((column) => !NAME.test(column));
+  if (badName !== undefined) return { error: `"${badName}" is no variable name: letters, digits and _, not starting with a digit`, status: 400 };
+  const unknown = columns.filter((column) => !variables[column]);
+  if (unknown.length && !addVariables) {
+    const known = Object.keys(variables);
+    return {
+      error: `${unknown.map((c) => `{{${c}}}`).join(', ')}: no variable of the test — each column is one of its variables (${known.length ? known.map((c) => `{{${c}}}`).join(', ') : 'it has none'})`,
+      status: 400,
+    };
+  }
+  const text = (value) => (value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value));
+  const clean = rows.map((row) => Object.fromEntries(Object.entries(row).map(([column, value]) => [column, text(value)])));
+  for (const column of unknown) {
+    variables[column] = { type: 'text', defaultValue: clean.find((row) => column in row)?.[column] ?? '', description: 'A column of its rows' };
+  }
+  db.prepare(`UPDATE tests SET data_rows = ?, variables = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`)
+    .run(clean.length ? JSON.stringify(clean) : null, JSON.stringify(variables), test.id);
+  return { rows: clean, added: unknown };
+}
+
+/** A variable of a test renamed: the column of its rows goes with it. */
+export function renameRowColumn(testName, from, to) {
+  const rows = testRows(testName);
+  if (!from || from === to || !rows.some((row) => from in row)) return;
+  const renamed = rows.map((row) => Object.fromEntries(Object.entries(row).map(([column, value]) => [column === from ? to : column, value])));
+  db.prepare('UPDATE tests SET data_rows = ? WHERE name = ?').run(JSON.stringify(renamed), testName);
+}
+
+/**
+ * The rows a test plays, a run each: those of the dataset it is bound to, else its own (`own`,
+ * its variables the columns) — in the shape datasetOfTest gives; null when it has none.
+ */
+export function rowsOfTest(testName) {
+  const dataset = datasetOfTest(testName);
+  if (dataset) return dataset;
+  const rows = testRows(testName);
+  if (!rows.length) return null;
+  const variables = parseJson(db.prepare('SELECT variables FROM tests WHERE name = ?').get(testName)?.variables) ?? {};
+  const columns = [...new Set([...Object.keys(variables), ...rows.flatMap((row) => Object.keys(row))])];
+  return { id: null, name: null, own: true, columns, rows, row_count: rows.length };
+}
+
+/** The rows a run of a test plays, numbered from 1: the one asked, else every row it has; [null] when it has none. */
+export function rowsToPlay(testName, row) {
+  if (row != null && row !== '' && row !== 'all') return [Number(row)];
+  const played = rowsOfTest(testName);
+  return played ? played.rows.map((_, i) => i + 1) : [null];
+}
+
+/** What a run says of the rows it plays: "row 2 — bob@x.dev, Bob" of its rows or of the dataset "users". */
+export function rowsSource(played) {
+  return played?.own ? 'its rows' : `the dataset "${played?.name}"`;
+}
+
+/**
+ * What the code of a test carries of its data (codegen): the datasets of its project, and the
+ * name of the rows it plays among them — its own rows go as one more.
+ */
+export function codeData(test) {
+  const datasets = datasetRows(test.project_id);
+  const played = rowsOfTest(test.name);
+  if (!played) return { datasets, dataset: null };
+  if (!played.own) return { datasets, dataset: played.name };
+  let name = 'rows';
+  for (let n = 2; datasets[name]; n += 1) name = `rows_${n}`;
+  return { datasets: { ...datasets, [name]: played.rows }, dataset: name };
 }
 
 /** Binds a test to a dataset of its project (by id or name), or to none (null). */

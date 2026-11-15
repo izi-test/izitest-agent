@@ -146,6 +146,12 @@ export const testsApi = createApi({
       providesTags: (_result, _error, name) => [{ type: 'Test', id: name }],
     }),
 
+    // The rows a test keeps of its own (its Data tab's table): a run each.
+    saveTestRows: builder.mutation<{ rows: Array<Record<string, string>>; played_from?: string }, { testName: string; rows: Array<Record<string, string>> }>({
+      query: ({ testName, rows }) => ({ url: `api/tests/${encodeURIComponent(testName)}/rows`, method: 'PUT', body: { rows } }),
+      invalidatesTags: (_result, _error, { testName }) => [{ type: 'Test', id: testName }, { type: 'TestList', id: 'LIST' }],
+    }),
+
     // The dataset a test runs the rows of, or none.
     bindDataset: builder.mutation<unknown, { testName: string; dataset: number | null }>({
       query: ({ testName, dataset }) => ({ url: `api/tests/${encodeURIComponent(testName)}/dataset`, method: 'PUT', body: { dataset } }),
@@ -218,6 +224,7 @@ export const {
   useGetBusinessProposalsQuery,
   usePreviewValuesQuery,
   useBindDatasetMutation,
+  useSaveTestRowsMutation,
   useProposeBusinessStepsMutation,
   useAcceptBusinessStepMutation,
   useDismissBusinessStepMutation,

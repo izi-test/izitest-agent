@@ -21,6 +21,7 @@ import { db } from './db.js';
 import { footprintOfTest, pathOf } from './footprint.js';
 import { loadTest } from './test-store.js';
 import { keptNames } from './server-steps.js';
+import { lastRunOfTest } from './test-status.js';
 
 // What does not change the app as its tests see it.
 const IGNORED = [
@@ -215,8 +216,10 @@ export function selectTests({ projectId, changedFiles = [], touched = [], commit
     for (const name of names) {
       const footprint = footprints.get(name);
       if (!footprint.run) choose(name, 'no run of it kept what its pages call: what it touches is not known');
-      const last = db.prepare(`SELECT status FROM test_executions WHERE test_name = ? AND status IN ('success', 'failed') ORDER BY id DESC LIMIT 1`).get(name);
-      if (last?.status === 'failed') choose(name, 'it failed last time: does the change fix it?');
+      // Every row it plays counted: one failing, it failed (lib/test-status.js).
+      const testId = db.prepare('SELECT id FROM tests WHERE name = ?').get(name)?.id;
+      const last = testId ? lastRunOfTest(testId, { finishedOnly: true }) : null;
+      if (last?.status === 'failed') choose(name, `it failed last time${last.rows?.total > 1 ? ` (row ${last.rows.failed.join(', ')} of ${last.rows.total})` : ''}: does the change fix it?`);
     }
     for (const name of include) choose(name, 'asked');
     // A chosen test using a value another one keeps (capture) needs it to run first.

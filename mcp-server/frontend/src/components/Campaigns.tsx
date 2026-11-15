@@ -632,7 +632,15 @@ function RunRow({ run: t, onOpen }: { run: CampaignRun; onOpen: (name: string) =
   const go = useGo();
   return (
     <tr>
-      <td><button className="test-link" onClick={() => onOpen(t.name)}><FlaskConical size={12} /> {t.label ?? t.name}</button></td>
+      <td>
+        <button className="test-link" onClick={() => onOpen(t.name)}><FlaskConical size={12} /> {t.label ?? t.name}</button>
+        {t.row_values && Object.keys(t.row_values).length > 0 && (
+          // The values of the row it played (as they are now, not run yet): a password hidden.
+          <div className="row-values row-values--inline">
+            {Object.entries(t.row_values).map(([name, value]) => <span key={name}>{name} = <code>{value === '' ? '(empty)' : value}</code></span>)}
+          </div>
+        )}
+      </td>
       <td><StatusPill status={t.status} icon={t.status === 'running' ? Loader2 : undefined} /></td>
       <td className="col-num cell-muted">{t.duration_ms != null ? formatDuration(t.duration_ms) : '—'}</td>
       <td className="why">

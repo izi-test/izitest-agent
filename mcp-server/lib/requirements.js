@@ -10,6 +10,7 @@ import { db, parseJson } from './db.js';
 import { log } from './logger.js';
 import { keywordsOf } from './gherkin/language.js';
 import { projectLanguage } from './gherkin/step-definition-store.js';
+import { lastRunOfTest } from './test-status.js';
 
 // Where a requirement comes from: a request, a person, a file — or a tool, by the id of its
 // connector (lib/connectors: jira, github…).
@@ -134,10 +135,14 @@ export function deleteRequirement(ref) {
   return row;
 }
 
-/** The last run of a test that says how it does: not a repair being checked, nor a bug's confirmation. */
-const lastRunOf = (testId) => db.prepare(
-  `SELECT id, status, started_at FROM test_executions WHERE test_id = ? AND trigger NOT IN ('repair', 'explore') ORDER BY id DESC LIMIT 1`
-).get(testId) ?? null;
+/**
+ * The last run of a test that says how it does: not a repair being checked, nor a bug's
+ * confirmation. A test with rows: the last run of each row counted — one failing, it fails.
+ */
+const lastRunOf = (testId) => {
+  const last = lastRunOfTest(testId, { excludeTriggers: ['repair', 'explore'] });
+  return last && { id: last.id, status: last.status, started_at: last.started_at, ...(last.rows ? { rows: last.rows } : {}) };
+};
 
 /**
  * Where a requirement stands, from its criteria and cases:
@@ -386,7 +391,7 @@ export function formatRequirement(requirement) {
   ];
   if (requirement.description) lines.push(`  ${requirement.description.split('\n').join('\n  ')}`);
   const caseLine = (c) => `      case #${c.id} (${[c.kind, c.technique, c.priority].filter(Boolean).join(', ')}) ${c.title}: `
-    + (c.test ? `test "${c.test}" — ${c.last_run ? c.last_run.status : 'never run'}` : `planned${plannedScenario(c)}`);
+    + (c.test ? `test "${c.test}" — ${c.last_run ? `${c.last_run.status}${c.last_run.rows?.failed?.length ? ` (row ${c.last_run.rows.failed.join(', ')} of ${c.last_run.rows.total})` : ''}` : 'never run'}` : `planned${plannedScenario(c)}`);
   for (const criterion of requirement.criteria) {
     lines.push(`  ${criterion.position}. ${criterion.text}`);
     for (const c of requirement.cases.filter((x) => x.criterion_id === criterion.id)) lines.push(caseLine(c));

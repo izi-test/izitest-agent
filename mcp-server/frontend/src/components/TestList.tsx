@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { rowsVerdict } from '../rows';
 import { ChevronRight, FlaskConical, FolderInput, Play, Plus, Search, Trash2, X } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setCreateTestOpen, showToast } from '../store/slices/uiSlice';
@@ -203,6 +204,7 @@ export function TestList() {
                         <div className="last-run">
                           <StatusPill status={statusOf(t)} />
                           {t.last_run_at && <span className="cell-muted">{relativeTime(t.last_run_at)}</span>}
+                          {rowsVerdict(t.last_rows) && <span className={t.last_rows?.failed.length ? 'meta-rows meta-rows--failed' : 'meta-rows'}>{rowsVerdict(t.last_rows)}</span>}
                         </div>
                       </td>
                       <td className="col-num">{t.step_count ?? 0}</td>

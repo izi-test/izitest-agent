@@ -151,3 +151,88 @@ test('a suggestion picked after typing, then checked: a variable of its own, and
   assert.equal(saved.steps[3].assertion.expected, '{{country}}');
   assert.deepEqual(Object.keys(saved.variables).sort(), ['country', 'country_input']);
 });
+
+test('the checks around a picked suggestion follow it: in a selector\'s attribute, and whatever the case', async () => {
+  const { followSuggestion } = await import('../lib/recorded-checks.js');
+  const { evaluateAssertion } = await import('../lib/test-execute.js');
+  const suggestion = { command: 'click', params: { text: '{{text_choice}}' }, variable: { name: 'text_choice', type: 'text', defaultValue: 'chocolat', suggestionOf: 'text' } };
+  const steps = [
+    { command: 'fill', params: { value: '{{text}}' }, variable: { name: 'text', type: 'text', defaultValue: 'choco' } },
+    { command: 'assert', params: {}, assertion: { type: 'element_visible', selector: 'a[href="/recherche?text=chocolat"]' } },
+    suggestion,
+    { command: 'assert', params: {}, assertion: { type: 'title_contains', expected: 'Chocolat' } },
+    { command: 'assert', params: {}, assertion: { type: 'text_contains', selector: 'article', expected: 'chocolat' } },
+    { command: 'assert', params: {}, assertion: { type: 'text_contains', selector: 'h1', expected: 'Chocolaterie' } },
+  ];
+  const variables = { text: { type: 'text', defaultValue: 'choco' }, text_choice: { type: 'text', defaultValue: 'chocolat' } };
+  const { linked } = linkRecordedChecks(steps, variables);
+  assert.deepEqual(steps[1].assertion.selector, 'a[href="/recherche?text={{text_choice}}"]');
+  assert.deepEqual(steps[3].assertion, { type: 'title_contains', expected: '{{text_choice}}', ignoreCase: true });
+  assert.deepEqual(steps[4].assertion, { type: 'text_contains', selector: 'article', expected: '{{text_choice}}', ignoreCase: true }, 'a search term: "Bananes Prix Bas" for "banane"');
+  assert.equal(steps[5].assertion.expected, 'Chocolaterie', 'never a piece of a word');
+  assert.deepEqual(linked.map((l) => l.step), [2, 4, 5]);
+  assert.equal(followSuggestion({ type: 'url_contains', expected: 'x' }, 'v', 'ab'), null, 'a value too short says nothing');
+
+  // Compared whatever the case: "banane" is in "Bananes Prix Bas".
+  const page = async () => ({ result: { value: '(181) Bananes Prix Bas', pageUrl: 'https://www.auchan.fr/recherche?text=banane' } });
+  assert.equal((await evaluateAssertion(page, { type: 'text_contains', selector: 'article', expected: 'banane', ignoreCase: true })).passed, true);
+  assert.equal((await evaluateAssertion(page, { type: 'text_contains', selector: 'article', expected: 'banane' })).passed, false);
+});
+
+test('exported to Playwright, a check following a suggestion reads its variable, whatever the case', async () => {
+  const { generatePlaywrightPlain } = await import('../lib/codegen/playwright-plain.js');
+  const code = generatePlaywrightPlain({ name: 'search', variables: { text_choice: { type: 'text', defaultValue: 'chocolat' } }, steps: [
+    { command: 'assert', params: {}, assertion: { type: 'title_contains', expected: '{{text_choice}}', ignoreCase: true } },
+    { command: 'assert', params: {}, assertion: { type: 'text_contains', selector: 'article', expected: '{{text_choice}}', ignoreCase: true } },
+  ] });
+  const title = code.split('\n').find((line) => line.includes('toHaveTitle')).match(/toHaveTitle\((.*)\);/)[1];
+  const VARS = { text_choice: 'cho.colat' }; // eslint-disable-line no-unused-vars
+  assert.equal(String(eval(title)), '/cho\\.colat/i', 'its value, escaped, not "{{text_choice}}" word for word');
+  assert.match(code, /toContainText\(`\$\{VARS\.text_choice\}`, \{ ignoreCase: true \}\)/);
+});
+
+test('a URL check follows a suggestion picked: its query value, or its first word, read on the URL decoded', async () => {
+  const { followSuggestion } = await import('../lib/recorded-checks.js');
+  const { evaluateAssertion } = await import('../lib/test-execute.js');
+  // Walmart: "laptop computers" picked, the agent checked the URL holds /search?q=laptop.
+  const check = followSuggestion({ type: 'url_contains', expected: '/search?q=laptop' }, 'search_choice', 'laptop computers');
+  assert.deepEqual(check, { type: 'url_contains', expected: '/search?q={{search_choice}}', ignoreCase: true });
+  assert.equal(followSuggestion({ type: 'url_contains', expected: '/search?q=lap' }, 'search_choice', 'laptop computers'), null, 'a piece of a word says nothing');
+  const at = (url) => async () => ({ result: { value: url } });
+  assert.equal((await evaluateAssertion(at('https://www.walmart.com/search?q=laptop+computers&typeahead=lapt'), { ...check, expected: '/search?q=laptop computers' })).passed, true);
+  assert.equal((await evaluateAssertion(at('https://www.walmart.com/search?q=bananas'), { ...check, expected: '/search?q=Bananas' })).passed, true, 'the value given with a capital');
+  assert.equal((await evaluateAssertion(at('https://www.walmart.com/'), { ...check, expected: '/search?q=Bananas' })).passed, false);
+});
+
+test('a suggestion\'s plural, and a query value alone, follow it: the page another value leads to holds it too', async () => {
+  const { followSuggestion } = await import('../lib/recorded-checks.js');
+  const { evaluateAssertion } = await import('../lib/test-execute.js');
+  // Auchan: "chocolat" picked leads to its aisle, "Chocolats pas cher - Auchan.fr", at
+  // /…/ca-n0507?redirect_keywords=chocolat; "banane" to its search, "Votre recherche banane".
+  const steps = [
+    { command: 'fill', params: { value: '{{text}}' }, variable: { name: 'text', type: 'text', defaultValue: 'choco' } },
+    { command: 'click', params: { text: '{{text_choice}}' }, variable: { name: 'text_choice', type: 'text', defaultValue: 'chocolat', suggestionOf: 'text' } },
+    { command: 'assert', params: {}, assertion: { type: 'url_contains', expected: 'redirect_keywords=chocolat' } },
+    { command: 'assert', params: {}, assertion: { type: 'title_contains', expected: 'Chocolats' } },
+    { command: 'assert', params: {}, assertion: { type: 'title_equals', expected: 'Chocolats' } },
+    { command: 'assert', params: {}, assertion: { type: 'text_contains', selector: 'h1', expected: 'Chocolaterie' } },
+  ];
+  const { linked } = linkRecordedChecks(steps, { text: { type: 'text', defaultValue: 'choco' }, text_choice: { type: 'text', defaultValue: 'chocolat' } });
+  assert.deepEqual(steps[2].assertion, { type: 'url_contains', expected: '{{text_choice}}', ignoreCase: true }, 'the query name is how the site took this value');
+  assert.deepEqual(steps[3].assertion, { type: 'title_contains', expected: '{{text_choice}}', ignoreCase: true });
+  assert.equal(steps[4].assertion.expected, 'Chocolats', 'what a text is, not what it holds: kept');
+  assert.equal(steps[5].assertion.expected, 'Chocolaterie', 'never another word made of it');
+  assert.deepEqual(linked.map((l) => l.step), [3, 4]);
+  // Linked before it was followed (redirect_keywords={{text_choice}}): the same.
+  assert.deepEqual(followSuggestion({ type: 'url_contains', expected: '?redirect_keywords={{text_choice}}', ignoreCase: true }, 'text_choice', 'chocolat'),
+    { type: 'url_contains', expected: '{{text_choice}}', ignoreCase: true });
+  assert.equal(followSuggestion({ type: 'url_contains', expected: '/search?q={{v}}', ignoreCase: true }, 'v', 'laptop'), null, 'a path with it is kept whole');
+  assert.deepEqual(followSuggestion({ type: 'text_contains', selector: '.results', expected: '12 bananes' }, 'v', 'banane'),
+    { type: 'text_contains', selector: '.results', expected: '12 {{v}}', ignoreCase: true });
+
+  const page = (url, title) => async () => ({ result: { value: title ?? url, pageUrl: url } });
+  const banane = 'https://www.auchan.fr/recherche?text=banane&keywords=ban&suggestType=mots-cles&suggestLabel=banane';
+  assert.equal((await evaluateAssertion(page(banane), { ...steps[2].assertion, expected: 'banane' })).passed, true);
+  assert.equal((await evaluateAssertion(page(banane, 'Votre recherche banane sur Auchan.fr'), { ...steps[3].assertion, expected: 'banane' })).passed, true);
+  assert.equal((await evaluateAssertion(page(banane, 'Chocolats pas cher - Auchan.fr'), { ...steps[3].assertion, expected: 'chocolat' })).passed, true);
+});

@@ -17,6 +17,7 @@ import { elementLines } from '../element-store.js';
 import { datasetLines } from '../datasets.js';
 import { secretLines } from '../secrets.js';
 import { writeAgentMcpConfig, dashboardToolName } from './cli-mcp.js';
+import { cliModel, cliModelArgs } from './cli-model.js';
 
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 
@@ -324,6 +325,8 @@ async function handleAgentChatCli(project, convId, message, cliConfig, isNewConv
   } else {
     args.push('-p', prompt);
   }
+  // The model set in Settings, if one is: the CLI's own otherwise.
+  args.push(...cliModelArgs(cliConfig));
 
   try {
     const { stdout } = await spawnCli(command, args);
@@ -488,7 +491,7 @@ export async function handleAgentChat(req, res, body) {
 
     if (isCli) {
       // ── CLI mode ──
-      log(`[Agent Chat] CLI mode — provider=${agentConfig.cli?.provider}, command=${agentConfig.cli?.command}`);
+      log(`[Agent Chat] CLI mode — provider=${agentConfig.cli?.provider}, command=${agentConfig.cli?.command}, model=${cliModel(agentConfig.cli) ?? 'the CLI\'s default'}`);
       assistantText = await handleAgentChatCli(
         project, convId, message, agentConfig.cli, isNewConversation
       );

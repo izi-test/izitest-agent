@@ -11,6 +11,8 @@ export interface Project {
   element_timeout_ms?: number | null;
   /** Each test starts logged out in the browser without windows (1, the default) or not (0). */
   clean_start?: number;
+  /** 1: a failed test opens a bug by itself; 0 (default): a person reports it from the run. */
+  auto_bugs?: number;
   created_at: string;
   updated_at: string;
   test_count?: number;
@@ -136,9 +138,15 @@ export interface Test {
   last_status?: Execution['status'] | null;
   last_run_at?: string | null;
   last_duration_ms?: number | null;
+  /** A test with rows: how its rows did, each by its last run — the status above failed when one of them failed. */
+  last_rows?: LastRows;
   requirement_keys?: string[];
   /** The dataset it runs the rows of (mcp-server/lib/datasets.js), each row told by its first values. */
   dataset?: { id: number; name: string; columns: string[]; row_count: number; row_labels: string[] } | null;
+  /** The rows it keeps of its own (its Data tab's table): a value per variable by its name; one left out plays its default. */
+  rows?: Array<Record<string, string>>;
+  /** The rows a run plays, a run each: the dataset's when it is bound to one, else its own; null when it has none. */
+  played_rows?: { source: 'test' | 'dataset'; name: string | null; columns: string[]; row_count: number; row_labels: string[] } | null;
 }
 
 /** A table of values of a project: a test bound to it runs once per row ({{column}}). */
@@ -223,6 +231,23 @@ export interface Repair {
   relocated?: StepRef[];
 }
 
+/** How the rows a test plays did, each by its last run (mcp-server/lib/test-status.js): failed ones by number. */
+export interface LastRows {
+  total: number;
+  played: number;
+  failed: number[];
+}
+
+/** How a test last did, every row it plays counted. */
+export interface LastRun {
+  id: number;
+  status: Execution['status'];
+  started_at: string;
+  duration_ms: number | null;
+  data_row: number | null;
+  rows?: LastRows;
+}
+
 export interface Execution {
   id: number;
   test_name: string;
@@ -247,6 +272,11 @@ export interface Execution {
   campaign_id?: number | null;
   /** How many images its video kept: 0 when none (kept when it failed, or Record video was ticked). */
   video_frames?: number;
+  /** The bug it met, when one was opened or reported from it. */
+  bug_id?: number | null;
+  /** The row of its test it played (numbered from 1), and that row's values as played — a password hidden, a secret by its name. */
+  data_row?: number | null;
+  data_values?: Record<string, string> | null;
 }
 
 /** A bug the explorer found (mcp-server/lib/bugs.js), with the test that reproduces it. */
@@ -382,7 +412,7 @@ export interface RequirementCase {
   position: number;
   test: string | null;
   test_id: number | null;
-  last_run: { id: number; status: string; started_at: string } | null;
+  last_run: { id: number; status: string; started_at: string; rows?: LastRows } | null;
 }
 
 /** A scenario an agent proposed for a requirement (mcp-server/lib/requirement-design.js). */
@@ -490,6 +520,9 @@ export interface CampaignRun {
   /** The row of its dataset it played, and how it is told apart: "login [row 2]". */
   row?: number | null;
   label?: string;
+  /** That row's values as played (as they are now, not run yet) — a password hidden; and the row told by its first values. */
+  row_values?: Record<string, string> | null;
+  row_label?: string;
   status: CampaignTestStatus;
   execution_id: number | null;
   duration_ms: number | null;
