@@ -302,6 +302,33 @@ export function nameElementsAs(projectId, names) {
   })();
 }
 
+/**
+ * The element `step` acts on is the one the user wrote in the scenario the test was recorded from
+ * ("je clique sur "Vider le panier""): when the project has an element of that name, whatever its
+ * case, the step's is merged into it — the same button, found another way —; when it has none,
+ * the step's is named so. Not an element the user named otherwise. What was done: 'same',
+ * 'merged', 'named', or null.
+ */
+export function elementAsWritten(projectId, step, name) {
+  const wanted = String(name ?? '').replace(/\s+/g, ' ').trim();
+  if (!wanted || !elementKey(step)) return null;
+  return db.transaction(() => {
+    const index = loadIndex(projectId);
+    const id = attach(index, step);
+    const row = id ? index.elements.get(id) : null;
+    if (!row) return null;
+    const named = [...index.elements.values()].find((other) => other.name.toLowerCase() === wanted.toLowerCase());
+    if (named?.id === id) return 'same';
+    if (row.renamed) return null;
+    if (named) {
+      merge(index, id, named.id);
+      return 'merged';
+    }
+    db.prepare('UPDATE elements SET name = ?, renamed = 1 WHERE id = ?').run(wanted, id);
+    return 'named';
+  })();
+}
+
 /** Renames an element; `{ error, status }` when the name is empty or another element has it. */
 export function renameElement(id, name) {
   const wanted = String(name ?? '').replace(/\s+/g, ' ').trim();

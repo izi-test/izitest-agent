@@ -3072,6 +3072,11 @@ textarea { resize: vertical; line-height: 1.5; }
 .modal-body .field { margin-bottom: 14px; }
 .modal-body .create-options .field { margin-bottom: 0; }
 .create-options__after { margin-bottom: 14px; }
+.create-wf-write { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.create-wf-write .create-wf-hint { margin: 0; }
+.create-wf-hint--error { color: var(--red-muted); }
+.scenario-steps__new { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.scenario-steps__new li { display: flex; align-items: baseline; gap: 6px; }
 
 /* Requirements: criteria and cases */
 .criterion { padding: 12px 0; }
@@ -3317,6 +3322,59 @@ tr:hover .element-name .icon-button, .element-name .icon-button:focus-visible { 
   flex-direction: column;
 }
 .create-wf-run__output .create-wf-output { flex: 1; max-height: none; min-height: 0; }
+
+/* A test's conversation with the agent (TestAgentModal): its browser on the left, live; what is
+   asked and answered on the right. */
+.modal-content.test-agent { width: min(1320px, 96vw); max-width: min(1320px, 96vw); height: min(860px, calc(100vh - 48px)); }
+.test-agent__name { color: var(--text-secondary); font-weight: 500; }
+.test-agent__header-actions { display: flex; align-items: center; gap: 8px; }
+.test-agent__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr);
+  border-top: 1px solid var(--border);
+}
+.test-agent__screen { display: flex; flex-direction: column; gap: 10px; padding: 16px; overflow-y: auto; background: var(--surface-subtle); }
+.test-agent__where { margin-top: auto; padding-top: 6px; }
+.test-agent__where .switch { margin: 0; }
+.test-agent__where-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; font-size: 12px; color: var(--text-secondary); }
+.test-agent__where-line span { color: var(--text-muted); }
+.test-agent__chat { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); }
+.test-agent__messages { padding: 16px; gap: 14px; }
+.test-agent__messages .chat-welcome { padding: 12px 8px; }
+.test-agent__messages .chat-welcome h3 { font-size: 17px; }
+.test-agent__messages .chat-welcome p { font-size: 13px; }
+.test-agent__messages .chat-message { max-width: 100%; }
+.test-agent__messages .chat-message-content { padding: 10px 14px; font-size: 13px; min-width: 0; }
+.test-agent__messages .chat-message-avatar { width: 28px; height: 28px; font-size: 10px; background: var(--primary-tint); color: var(--primary-hover); border: none; }
+.test-agent__messages .chat-message-user .chat-message-content { background: var(--primary); color: #fff; border-color: var(--primary); white-space: pre-wrap; }
+.test-agent__messages .agent-ask { flex: none; }
+.test-agent__text > :first-child { margin-top: 0; }
+.test-agent__text > :last-child { margin-bottom: 0; }
+.test-agent__text p { margin: 0 0 8px; }
+.test-agent__text ul, .test-agent__text ol { margin: 0 0 8px; padding-left: 20px; }
+.test-agent__text li { margin: 2px 0; }
+.test-agent__did { margin-bottom: 8px; font-size: 12px; color: var(--text-muted); }
+.test-agent__did summary { cursor: pointer; user-select: none; }
+.test-agent__did ol, .test-agent__doing { margin: 6px 0 0; padding-left: 22px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.test-agent__doing { margin: 0 0 8px; }
+.test-agent__doing li.current { color: var(--text); font-weight: 500; }
+.test-agent__status { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: var(--radius-full); background: var(--orange-bg); color: var(--orange); font-size: 11px; font-weight: 600; }
+.test-agent__status--error { background: var(--red-bg); color: var(--red); }
+.test-agent .chat-thinking { font-size: 12px; margin-top: 4px; }
+.test-agent .chat-input-area { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface-subtle); }
+.test-agent .chat-input { background: var(--surface); padding: 10px 14px; font-size: 13px; min-height: 58px; }
+.test-agent__stop { background: var(--red); box-shadow: none; }
+.test-agent__stop:hover:not(:disabled) { background: var(--red); transform: none; box-shadow: none; opacity: 0.88; }
+.test-agent__note { margin: 0; padding: 0 16px 10px; font-size: 11px; color: var(--text-muted); background: var(--surface-subtle); }
+
+@media (max-width: 900px) {
+  .modal-content.test-agent { height: calc(100vh - 48px); }
+  .test-agent__body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .test-agent__chat { border-left: none; border-top: 1px solid var(--border); }
+  .test-agent__where { display: none; }
+}
 
 /* A run of a test: the browser beside its steps. */
 .live-exec-drawer--wide { max-width: min(1280px, 96vw); }

@@ -2,7 +2,7 @@
 // POST /api/agent/run): what it does, not only what it says. A value it types is not shown —
 // it may be a password —, its intent is.
 
-const DETAIL_KEYS = ['intent', 'url', 'name', 'description', 'text', 'selector', 'ref', 'key'];
+const DETAIL_KEYS = ['intent', 'phrase', 'url', 'name', 'description', 'text', 'selector', 'ref', 'key'];
 
 export function toolCallLine(tool: string, input: Record<string, unknown> | null | undefined): string {
   const name = tool.split('__').pop() || tool;

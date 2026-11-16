@@ -30,6 +30,7 @@ import { redactToolResults } from './lib/secrets.js';
 import { registerAskTools } from './lib/tools/ask.js';
 import { initDatabase, db } from './lib/db.js';
 import { purgeRunVideos } from './lib/run-video.js';
+import { closeIdleTestConversations } from './lib/agent/test-chat.js';
 import { trustSystemCertificates } from './lib/system-ca.js';
 import { seedAllProjectsStepDefinitions } from './lib/gherkin/step-definition-store.js';
 import { registerAllElements } from './lib/element-store.js';
@@ -140,6 +141,9 @@ const purgeVideos = () => {
 };
 purgeVideos();
 setInterval(purgeVideos, 24 * 60 * 60 * 1000).unref();
+// A test's conversation with the agent (lib/agent/test-chat.js) nobody wrote in for a while
+// gives its browser window back: the page that opened it may be long closed.
+setInterval(() => closeIdleTestConversations({ sendCommand }).catch((err) => log(`Idle conversations not closed: ${err.message}`)), 60_000).unref();
 
 // An extension that just restarted (a rebuild reload, or Chrome waking the service worker)
 // has lost chrome.storage.session, so it no longer knows which windows belong to which

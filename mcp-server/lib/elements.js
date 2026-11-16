@@ -211,8 +211,11 @@ export function baseName(step) {
     ?? readableSelector(dataOf(step).selector)
     ?? dataOf(step).selector
     ?? 'element';
-  return String(named).replace(/\s+/g, ' ').trim().slice(0, 60) || 'element';
+  // The glyph of an icon font (\uE900, drawn before "Me connecter") reads as nothing.
+  return String(named).replace(ICON_GLYPHS, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'element';
 }
+
+const ICON_GLYPHS = /[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/gu;
 
 // A text that names a button or a link: short, no {{value}}, not a number or a price alone.
 const readableText = (value) => typeof value === 'string' && value.trim().length > 1 && value.length <= 40

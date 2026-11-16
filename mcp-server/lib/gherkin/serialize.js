@@ -149,6 +149,9 @@ function extractCompositeArgs(steps, startIndex, tpls) {
  */
 function matchSubStep(tpl, step, args) {
   if (step.command !== tpl.command) return false;
+  // An item picked in a list by its place: the same list and the same way of picking, whichever
+  // item was clicked when each was recorded.
+  if (tpl.variable?.listContext) return samePick(tpl.variable, step.variable);
   const actual = normalizeParams(step);
   const expected = tpl.params ?? {};
   const selector = expected.selector;
@@ -167,6 +170,16 @@ function matchSubStep(tpl, step, args) {
 }
 
 const isWeakSelector = (selector) => isFragileSelector(selector) || isPositionalSelector(selector);
+
+/** Two picks in a list: the same list, its items found the same way, picked the same way. */
+function samePick(ours, theirs) {
+  const a = ours?.listContext;
+  const b = theirs?.listContext;
+  if (!a || !b) return false;
+  return a.parentSelector === b.parentSelector && a.itemXpath === b.itemXpath
+    && (a.withinXpath ?? null) === (b.withinXpath ?? null) && (a.selectionMode ?? null) === (b.selectionMode ?? null)
+    && String(ours.defaultValue ?? '') === String(theirs.defaultValue ?? '');
+}
 
 /**
  * Whether two different selectors, one of them weak, name the same element: same test ID,

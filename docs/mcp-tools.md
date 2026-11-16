@@ -115,7 +115,8 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | :--- | :--- |
 | `list_projects` | Lists the projects (id, name, base URL, language of their tests, number of tests). With `url`, only those of that app: its URL starts with their base URL, or shares its origin. The first call for a new app. |
 | `create_project` | Creates a project: `name` (unique), `base_url`, `language` (`en`, `fr`), `description`, `context`, `project_type`. A name taken answers with the project that has it; another project of the same app is pointed out. Its id is the `project_id` of the tools below. |
-| `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Jeux de données). |
+| `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Jeux de données). With `scenario` (a Gherkin feature, as written), the test is recorded phrase by phrase: the answer numbers the phrases and says how to do each (see « Un test écrit en Gherkin d'abord »). |
+| `start_phrase` | Recording a scenario (`start_recording` with `scenario`): before the actions of each phrase, its `number` (and the `phrase`, shown to the user). The steps recorded until the next call are that phrase's: a new phrase becomes a business step of the project made of them at `stop_recording`. |
 | `record_step` | Optional: steps record themselves. Names the variable of the step an action recorded (`action_id`, `variable_name`: what a fill typed becomes `{{email}}` instead of a name taken from its field), keeps its value fixed (`skip_variable`), changes its intent, makes it optional (`optional`), removes it (`remove`: an `execute_js` that only looked at the page, an action done by mistake), or says how a click found in a list is meant (`pick`: `none`, `by_place`, `by_text` — the click's result says what it was taken as). |
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. It first waits for the actions still under way (up to 30 s), so one sent in the same message is recorded. A last `wait` for an element is kept: it checks what the test did (before, every wait at the end was dropped as an artifact). One of a time only, at the end, is not, and the answer says what was not kept. When the user chose so (**Settings → Browser windows**), the window the test was recorded in is closed once it is saved, and the answer says so. |
 | `list_tests` | Lists all saved tests, their variables, and how many rows each plays. |
@@ -139,6 +140,10 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `add_assertion` | Adds a check (e.g., "element exists", "text does not contain") to a test. While the test is recorded, the check is recorded as the next step, right after the action whose result it checks (see below); on a saved test, it goes at the end or at `step_order`. A value the test typed in it is saved as its `{{variable}}`. `tabId` checks it in another tab, e.g. the one `run_test` ended on. On a test linked to a requirement, `non_conformity: true` saves the requirement's expected value even though the page does not show it. |
 | `set_step_optional` | Makes a step of a saved test optional (a cookie banner, a popup only shown sometimes): when it fails on a replay, its failure is told and the test goes on. `optional: false` makes it required again (see below). |
 | `fix_test_step` | Updates a failed step with data from a manual action. |
+| `get_test` | Reads a saved test as it is now: its steps, numbered (what each does, on what, with which value), its variables, the rows it plays, how its last run went and the repairs proposed. The numbers are the ones the tools below take (see below). |
+| `add_test_step` | Adds a step to a saved test: the browser action just done (`action_id`), put at `step_order` — the steps from there move down. Without `step_order`, at the end. |
+| `delete_test_step` | Deletes a step of a saved test; the steps after it move up by one. |
+| `update_test_gherkin` | Rewrites a saved test from its Gherkin, edited: a phrase left as it was keeps its step as recorded, a new one must read as a phrase of the project — one that does not is refused, and nothing is saved. |
 | `delete_test` | Removes a saved test from the database. |
 | `add_retroactive_vrt` | Adds a visual regression test assertion retroactively using a recorded baseline. |
 | `get_test_as_code` | Returns a saved test as Playwright code to commit in the project under test (see below). |
@@ -187,6 +192,74 @@ reste passe. Elle attend son élément comme toute étape (le délai du projet, 
 - **Une vérification facultative** qui ne tient pas n'est pas comptée en échec. Ne rendez jamais
   facultative une étape que le test vérifie : un échec là doit faire échouer le test.
 - **En Playwright exporté**, l'étape est dans un `try { … } catch {}`.
+
+### Modifier un test enregistré
+
+Un test enregistré se change sans le réenregistrer, depuis n'importe quel agent connecté — et
+depuis le tableau de bord, dans la conversation du test (*Ask the agent*, plus bas).
+
+- **Le lire** : `get_test(name)` donne ses étapes numérotées (ce que fait chacune, sur quel
+  élément, avec quelle valeur, sa variable, si elle est facultative), ses variables, les lignes
+  qu'il joue, sa dernière exécution (l'étape en échec et son erreur) et les réparations proposées.
+  À relire après chaque étape ajoutée ou supprimée : les numéros bougent.
+- **Ajouter une étape** : faire l'action dans le navigateur, sur la page telle que les étapes
+  d'avant la laissent, puis `add_test_step(test_name, action_id, step_order, intent)`. L'étape
+  garde ce que l'action a appris de son élément (sélecteur, localisateurs, page). Sans
+  `step_order`, elle va à la fin ; `optional: true` pour une étape dont l'appli n'a pas toujours
+  besoin.
+- **Supprimer une étape** : `delete_test_step(test_name, step_order)`. Jamais une vérification
+  pour faire passer un test qui échoue.
+- **Remplacer une étape qui échoue** : `fix_test_step`, comme avant.
+- **Réécrire son scénario** : `get_test_as_gherkin`, changer ses phrases (une valeur entre
+  guillemets, leur ordre, une phrase retirée, une ajoutée), puis
+  `update_test_gherkin(test_name, gherkin)` avec le scénario entier. C'est ce que fait l'onglet
+  *Gherkin* : une phrase inchangée garde son étape telle qu'elle a été enregistrée, une nouvelle
+  doit être une phrase du projet. Le test doit appartenir à un projet.
+
+**Après `run_test`, la session reprend sur la page où l'exécution s'est arrêtée** : là où
+l'étape a échoué, pour la réparer sur place ; là où le test a fini, si sa fenêtre reste ouverte,
+pour y ajouter une vérification. L'action suivante (`snapshot`, `click`…) n'a pas d'onglet à
+nommer. Avant, la fenêtre de l'exécution n'était pas celle de la session : l'agent s'entendait
+répondre « no window of its own », rouvrait l'application et réparait l'étape sur une page que
+les étapes d'avant n'avaient pas préparée.
+
+### La conversation d'un test avec l'agent (tableau de bord)
+
+Sur la page d'un test, *Ask the agent* ouvre une fenêtre : à gauche le navigateur de l'agent, en
+direct ; à droite la conversation. On y demande de réparer le test, de le modifier, de dire ce
+qu'il vérifie (`lib/agent/test-chat.js`).
+
+- **Une conversation par test**, gardée avec lui (`test_conversations`,
+  `test_conversation_messages`) : rouverte, elle est là. *Start over* l'oublie ; elle est
+  supprimée avec le test.
+- **Chaque message est une exécution de Claude Code** (`claude -p`, sortie `stream-json`), qui
+  reprend sa propre session (`--resume`) : l'agent se souvient de ce qui s'est dit et fait. Le
+  premier message porte le brief : le test tel qu'il est (`get_test`), son projet (URL, contexte,
+  jeux de données, noms des secrets), ce que l'agent peut faire et ses règles. Si la session de
+  la CLI a disparu, l'agent repart du brief et de l'historique.
+- **Une seule session de navigateur** pour toute la conversation, tant que sa fenêtre est
+  ouverte : chaque exécution de la CLI se connecte avec l'identifiant de la conversation
+  (`/sse?run=…`) et travaille dans la même session (`keepRunSession`, `lib/session.js`) — même
+  fenêtre, mêmes références, mêmes actions, qu'un message suivant peut encore nommer
+  (`fix_test_step`, `add_test_step`).
+- **Ses outils** : le navigateur et le test (`get_test`, `run_test`, `fix_test_step`,
+  `add_test_step`, `delete_test_step`, `update_test_gherkin`, `add_assertion`,
+  `set_step_optional`, `add_test_variable`, les réparations, `ask_user`…). Ni
+  `start_recording`, ni `delete_test`, ni `get_tabs`, ni les outils propres à Claude Code (Bash,
+  fichiers, web).
+- **Ce que la fenêtre montre** : ce que l'agent fait, une ligne par action, en mots simples
+  (« Runs the test », « Repairs step 5 ») — jamais une valeur tapée ; ce qu'il dit avant d'agir
+  rejoint cette liste, et sa réponse est ce qu'il dit à la fin.
+- **Arrêter** arrête l'agent ; ce qu'il a déjà changé reste. **Fermer la fenêtre** ferme la
+  fenêtre de navigateur de l'agent (après la fin de l'exécution en cours, pour ne pas la garder
+  en échec) ; sans message pendant 30 minutes, elle est rendue de la même façon
+  (`IZITEST_TEST_CHAT_IDLE_MS`).
+- **Sans fenêtre** quand *Headless* est coché : toute la session travaille dans le Chrome sans
+  fenêtre, et on la suit dans la fenêtre de la conversation.
+- **Secrets** : un message et une réponse passent par `redact()` avant d'être gardés ou envoyés ;
+  un mot de passe se demande avec `ask_user`, jamais dans la conversation.
+- **Agent** : Claude Code (réglage *CLI*). L'agent API et les autres CLI n'ont pas ces outils sur
+  plusieurs messages : la fenêtre le dit, et rien n'est lancé.
 
 ### Export Playwright : `get_test_as_code`
 
@@ -343,7 +416,8 @@ nouvelle clé s'ajoute aux siennes, son nom ne change pas. Une étape sans page 
 Chaque élément a un nom, unique dans son projet quelle que soit la casse (« save » est le « Save »
 d'une autre page), pris de ce qu'une personne lit dessus : son rôle et son nom accessible, son libellé,
 le texte du bouton ou du lien cliqué (« Accept all cookies » ; pas un prix ni l'élément d'une liste choisi
-par une variable), son placeholder, son test ID. Un élément que rien ne nomme — une vérification n'a que
+par une variable), son placeholder, son test ID — sans le caractère d'une police d'icônes qu'un site
+dessine devant (« Me connecter », pas « \uE900 Me connecter », qui s'affichait comme un espace). Un élément que rien ne nomme — une vérification n'a que
 son sélecteur — reçoit des mots tirés de la partie du sélecteur qui le désigne, jamais le sélecteur
 lui-même : `#shop-cart-total` → « Shop cart total », `[data-testid=flash-message]` → « Flash message »,
 `button[aria-label="Empty the cart"]` → « Empty the cart ». Un nom déjà pris reçoit sa page
@@ -465,8 +539,32 @@ ses clics : `play_business_step({ phrase: 'je me connecte au portail avec l\'ide
 et le mot de passe "{{secret.PORTAL_PASSWORD}}"' })`. Ses étapes sont jouées dans le navigateur avec leurs
 locators et le délai d'attente du projet, puis enregistrées liées à elle : le test se lit avec la phrase,
 sans dépendre de la reconnaissance. Chaque `{string}` prend sa valeur entre guillemets ; un secret s'écrit
-`{{secret.NOM}}`, et le test garde la référence. Si une étape échoue, rien n'est enregistré et la réponse
-dit laquelle. `start_recording` liste les étapes métier du projet.
+`{{secret.NOM}}`, et le test garde la référence. `start_recording` liste les étapes métier du projet.
+
+Pendant un enregistrement, chaque étape d'une étape métier attend son élément **8 s au plus**, pas le
+délai du projet (30 s sur un site lent) : la page est déjà là, et un élément absent est dit en quelques
+secondes. Les rejeux gardent le délai du projet.
+
+Un élément choisi dans une liste **par sa place** (« le premier résultat ») le reste dans l'étape
+métier faite de ce clic : elle choisit l'élément à cette place, au rejeu comme quand l'agent la joue, et
+non celui qui a été cliqué à l'enregistrement. Elle se reconnaît dans un test qui a choisi un autre
+produit à la même place.
+
+**Une étape qui échoue en route.** La réponse dit laquelle, et ce qui a déjà été fait reste fait : les
+actions jouées avant sont enregistrées. Une étape métier qui ne fait que vérifier (« je suis connecté »,
+jouée pour savoir) et dont la vérification ne tient pas n'enregistre rien : une vérification ne change
+rien à la page. Une connexion faite dans le navigateur ne manque donc plus au test,
+qui échouerait sinon une fois rejoué déconnecté. Échouée dès sa première étape, rien n'est fait ni
+enregistré : la réponse dit d'abord d'aller là où elle commence (un formulaire à ouvrir).
+
+**Une étape demandée seulement parfois** (le code de vérification qu'un site ne demande que sur un nouvel
+appareil, une bannière) : `play_business_step(phrase, optional_step: 4)` la rend **facultative dans
+l'étape métier de la bibliothèque**. Tous les tests qui l'utilisent la font quand la page la demande, et
+continuent quand elle ne la demande pas. Appelé juste après l'échec sur cette étape, il repart de là :
+ce qui a été fait (l'e-mail, le mot de passe) n'est pas refait, l'étape manquante n'est pas réessayée, et
+le test reçoit l'étape métier entière, liée à elle, cette étape facultative. La réponse à l'échec le
+propose à l'agent. Une étape enregistrée facultative le reste quand elle entre dans une étape métier
+(`create_business_step`).
 
 #### Dans le tableau de bord
 
@@ -567,13 +665,28 @@ Sa réponse passe avant celle du classifieur à `stop_recording`, et avant la r�
 dit rien, rien ne change. L'agent du tableau de bord en mode API a le même retour, et répond par
 `pick_list_item(pick)`, qui vise le dernier clic.
 
+Quand l'élément cliqué porte le nom de l'élément choisi (« Ajouter le produit : Lait demi-écrémé UHT
+à une liste », le même bouton des autres cartes disant « Ajouter le produit : … à une liste »), le
+résultat du clic donne aussi ce nom, et comment le garder tout de suite pour une étape suivante qui le
+nommera (le vérifier dans la liste, le retirer) : « Its name here: "Lait demi-écrémé UHT" … capture_value(name:
+"item_name", ref: the one you clicked, what: "attribute", attribute: "aria-label", pattern: …) ». Le nom
+est ce que son libellé dit que ceux des autres éléments ne disent pas : au clic, le serveur lit le
+libellé de l'élément cliqué dans chaque carte (`pickedLabel`, `otherLabels`, et d'où il vient :
+`aria-label`, `title`, `alt` ou le texte).
+
 Un clic dans un **menu, une barre d'onglets ou un menu latéral** n'est jamais une variable : c'est
 l'endroit où va le test, pas une valeur qu'il fait varier. La page le dit (élément dans un `nav`, un
 `role="tab"`, `tablist`, `menu`, `menubar`, `menuitem`, ou un `data-testid` qui contient « menu » ou
 « nav »), ou la liste est dans l'en-tête de la page (`header`, `role="banner"`) ou ses liens portent
 un nom de navigation (`navigation-header__link`, `navbar`…), sinon le LLM (qui le classe
 `menu_item`). Le lien du panier d'Auchan, parmi les 4 liens de son en-tête, était devenu
-`{{product}}`, « le premier d'entre eux » : au rejeu, son logo, qui ramenait à l'accueil. Variable, un onglet était rejoué par son libellé,
+`{{product}}`, « le premier d'entre eux » : au rejeu, son logo, qui ramenait à l'accueil. Des
+**cartes** ne sont jamais un menu, où qu'elles soient : un `article`, ou un élément dont la classe
+parle de produit, de carte ou de tuile (`product`, `card`, `tile`). Auchan dessine ses produits — ceux
+qu'une marque sponsorise au-dessus des résultats aussi — dans un `<nav>` : « le deuxième résultat »
+était pris pour un lien du menu, et enregistré tel quel, sans variable. La règle vaut aussi quand
+c'est la page qui signale le `<nav>` autour des cartes, et pour une carte trouvée autour de son
+bouton (`./article…`) ; seul le LLM, s'il les classe `menu_item`, en fait encore un menu. Variable, un onglet était rejoué par son libellé,
 « Runs7 » avec son compteur, qui change à la prochaine exécution ; c'est maintenant un clic avec ses
 locators. Une liste de choix n'est jamais prise pour un menu : des options (`role="option"`,
 `listbox`, classes « autocomplete » ou « suggest »), ou une liste cliquée juste après une saisie, même
@@ -621,9 +734,10 @@ enregistre (`start_recording`, et l'agent du dashboard) lui demandent d'agir et 
 une valeur saisie ou choisie, ce qui tient pour toute valeur :
 - vérifier la valeur elle-même dans le titre, un titre de la page ou l'URL, et une liste de
   résultats affichée (son conteneur, un compte), jamais un résultat en particulier ;
-- prendre un résultat par sa place (« le deuxième résultat »), pas par un nom que lui seul porte
-  (le nom du produit dans un `aria-label`) ; un nom dont les étapes suivantes ont besoin est gardé
-  d'abord par `capture_value`, puis utilisé en `{{nom}}` ;
+- prendre un résultat par sa place (« le deuxième résultat ») dans la liste des résultats elle-même —
+  pas dans un bloc qu'une marque sponsorise au-dessus ou à côté, qui change d'une visite à l'autre —,
+  pas par un nom que lui seul porte (le nom du produit dans un `aria-label`) ; un nom dont les étapes
+  suivantes ont besoin est gardé d'abord par `capture_value`, puis utilisé en `{{nom}}` ;
 - vérifier un montant calculé par une expression : le prix gardé, puis `{{prix * 3 | 0,00}}` ;
 - retirer à la fin ce que le test a ajouté (un panier, une donnée créée), pour que l'exécution
   suivante parte du même état ;
@@ -760,11 +874,28 @@ là, donc un test qui passe ne prend pas plus de temps. Une étape qui ne trouve
 chargement). Sinon l'étape échoue avec la raison : « Not clicked: the element stayed covered by
 <div.loading-bg> within 10 s ».
 
+**Une action attend que sa page ait fini de se charger.** Un clic, une saisie, un choix dans une
+liste : avant d'agir, le rejeu attend que le document de l'élément soit chargé (`readyState`
+`complete` : ses scripts ont tourné, ceux qu'il a ajoutés en se chargeant aussi), puis recherche
+l'élément, la page s'étant dessinée entre-temps. Un élément choisi par sa place dans une liste
+(« le deuxième résultat ») attend de même, avant que la liste soit lue. Une page chargée ne coûte
+rien. Chez Auchan, le clic « ajouter à une liste » partait dès que le bouton était dessiné sur la
+page de résultats que le clic d'avant venait d'ouvrir : ses scripts n'avaient pas tourné, rien
+n'écoutait le bouton, et l'étape suivante échouait une exécution sur deux.
+
+L'attente dure au plus 15 s, comme celle d'un `navigate`. Passé ce délai (une ressource qui ne
+répond jamais), l'étape est jouée quand même, son résultat le dit (« the page was still loading
+after 15 s »), et cette page n'est plus attendue aux étapes suivantes. Les clics, saisies et choix
+de l'agent (`click`, `fill`, `select`) attendent de la même façon : un clic fait sur la page qu'un
+clic venait d'ouvrir était perdu (« no visible change »).
+
 **Un clic sans effet est refait une fois.** Après un clic, le rejeu observe la page une seconde : un
 changement de la page, une navigation ou une requête suffisent. Si rien de tout cela n'arrive, la
 page n'écoutait pas encore (une application qui affiche ses boutons avant d'y brancher leurs
 actions) : le rejeu reclique, si l'élément est toujours là et prêt. Le résultat de l'étape le dit
-(« clicked twice »).
+(« clicked twice »). Un élément choisi par sa place est observé et recliqué de la même façon. Une
+page encore en chargement change d'elle-même (ses images, son panier) : c'est pourquoi le rejeu
+l'attend d'abord, sans quoi ces changements passaient pour l'effet du clic.
 
 **Attendre un élément, pas un temps.** Une attente en ms enregistrée juste avant une étape qui
 attend elle-même (un clic, une saisie, l'attente d'un élément, une vérification) n'est pas gardée
@@ -1021,10 +1152,25 @@ enregistre le test, ni le tableau de bord.
   référence : à `stop_recording`, elle devient la valeur par défaut d'une variable
   (`{{password}}` = `{{secret.TIIME_PASSWORD}}`). Une colonne d'un jeu de données peut en contenir une
   (un mot de passe par utilisateur).
+- **Donnés seulement à ce qui agit.** À l'exécution, la valeur n'entre que dans ce que le navigateur
+  utilise pour agir : ce qu'une étape tape, cherche (`params`, `locators`) ou vérifie (`assertion`).
+  **Le libellé d'une étape garde la référence**, que le secret y soit écrit
+  (`je me connecte avec le mot de passe "{{secret.TIIME_PASSWORD}}"`) ou qu'il y arrive par une
+  variable (`{{password}}`) : c'est lui que le bandeau de l'exécution affiche dans la page testée — donc
+  dans la vidéo de l'exécution — et que l'exécution garde (`execution_steps.intent`). Les autres
+  valeurs du libellé (une variable, `{{today}}`) y sont calculées comme avant. Un secret se tape tel
+  quel : on ne calcule pas avec (`{{secret.PIN * 2}}` est refusé avant que le navigateur s'ouvre) ; ce
+  qui l'entoure s'écrit hors des accolades (`{{secret.PREFIX}}-x`).
 - **Jamais redits.** Partout où une valeur sortirait du serveur, sa référence la remplace
   (`redact`) : la réponse de chaque outil à un agent (une page qui affiche ce qu'on a tapé, une erreur),
-  les logs, les variables et les erreurs gardées d'une exécution, ce que le tableau de bord en reçoit.
-  Une valeur de moins de 4 caractères n'est pas reconnue ainsi.
+  les logs, les variables, les erreurs, le localisateur utilisé et le diagnostic gardés d'une exécution
+  (et les réparations, le bug qui en sortent), l'erreur du bandeau en fin d'exécution, ce que le tableau
+  de bord en reçoit, ce qu'un connecteur envoie (résultats d'une campagne, bug).
+  Une valeur de moins de 4 caractères n'est pas reconnue ainsi — le libellé d'une étape, lui, ne la
+  reçoit jamais.
+- **Ce qui la voit quand même** : la page testée, où elle est tapée (un champ mot de passe la masque,
+  un champ e-mail l'affiche, la vidéo aussi), et la console de l'extension dans le navigateur qui joue
+  le test, qui écrit les paramètres de chaque commande — elle n'est gardée nulle part.
 - **Le snapshot masque les champs mot de passe** : `value="••••••"` dit qu'il est rempli, pas avec quoi.
   Une colonne de jeu de données nommée comme un mot de passe, une clé ou un code (`password`,
   `token`, `api_key`…) est montrée `(hidden)` à un agent.
@@ -1646,6 +1792,72 @@ ordinaire (sans « HeadlessChrome » dans le user agent).
   `idle_minutes`), `POST /api/headless/install|start|stop`, `PUT /api/headless/settings { idle_minutes }`
   (minutes entières, 0 à 1440) ; `headless: true` dans `POST /api/tests/:name/execute` et `POST
   /api/campaigns`.
+
+#### Le parcours relu avant d'être sauvé
+
+À `stop_recording`, avant de sauver, le serveur relit les étapes (`lib/recording-review.js`, sans
+modèle) et cherche ce qui passerait une fois puis échouerait à l'exécution suivante :
+- le **nom d'un élément choisi par sa place**, écrit tel quel dans une étape suivante : la vérification
+  que « Penne rigate » est dans la liste, après avoir pris le premier résultat d'une recherche de
+  pâtes. Le nom est d'abord ce que le libellé de l'élément cliqué dit que celui des autres cartes ne
+  dit pas (« Lait demi-écrémé UHT » dans « Ajouter le produit : Lait demi-écrémé UHT à une liste ») ;
+  une étape suivante le nomme si elle le contient en entier, ses échappements CSS défaits
+  (`Supprimer\ le\ produit\ \:\ Lait\ demi-écrémé\ UHT…`). Sans ces libellés, ce sont les mots de la
+  carte : il en faut au moins deux, que toutes ses voisines ne lisent pas (« Afficher le prix »,
+  « 500g », le mot cherché) — un mot seul est souvent celui du site. Tout est lu au clic : la carte de
+  l'élément choisi (un bouton qui ne dit rien, une icône, est lu avec la carte où il est) et ses
+  voisines, gardés avec la variable (`pickedText`, `otherTexts`, `pickedLabel`, `otherLabels`) ;
+- une **valeur tapée**, écrite telle quelle (ou encodée dans une URL) dans le sélecteur ou la valeur
+  attendue d'une étape suivante.
+
+Le nom d'un élément choisi par sa place, quand son libellé le donne et que le sélecteur du clic le
+trouve par sa place (pas par ce nom), est **corrigé par le serveur lui-même** : juste après le choix,
+une étape `capture` garde son nom (`{{product_name}}`, lu dans l'attribut d'où vient le libellé, les
+mots autour ôtés par un `pattern`), et les étapes qui le nommaient l'écrivent `{{product_name}}` — leur
+sélecteur, leur valeur attendue, leurs locators. La réponse de `stop_recording` le dit. Au rejeu, la
+2ᵉ carte d'une autre recherche donne son propre nom, et c'est lui qu'on retire de la liste.
+
+Pour le reste, s'il en trouve, le test **n'est pas encore sauvé** : la réponse liste ces étapes avec leur `action_id`
+et comment les corriger pendant que la page est encore là (`record_step(action_id, remove: true)`,
+`capture_value`, `add_assertion` avec `{{valeur}}`). Le second appel à `stop_recording` sauve, corrigé
+ou non. Une valeur tapée que vérifie l'URL encodée (`p%C3%A2tes` pour « pâtes ») est désormais reliée à
+sa variable d'elle-même : une vérification d'URL compare aussi l'URL décodée.
+
+#### Un test écrit en Gherkin d'abord
+
+Dans le tableau de bord, **New test → Gherkin** : l'utilisateur décrit ce que le test vérifie,
+**Generate Gherkin** fait écrire le scénario à l'agent (`POST /api/projects/:id/scenario/write
+{ name, description }` → `{ gherkin, phrases }`), avec la bibliothèque du projet : ses étapes métier
+d'abord, ses phrases génériques avec les éléments de l'application par leur nom, jamais un sélecteur
+deviné. Ce qu'aucune ne dit, il l'écrit comme une **nouvelle étape**, dans les mots du métier. Un compte, un
+mot de passe, un code : un secret du projet (`{{secret.NAME}}`, il en reçoit les noms, jamais les valeurs)
+ou une valeur de ses jeux de données (`{{users[1].email}}`), jamais un compte inventé ; quand aucun ne
+convient, la valeur reste vide (`""`), et l'agent qui enregistre la demande à l'utilisateur (`ask_user`).
+Le scénario s'affiche, modifiable ; chaque phrase est lue contre la bibliothèque au fil de la saisie
+(`POST /api/projects/:id/scenario/check { gherkin }` → `phrases`), et la fenêtre compte à part les étapes
+métier du projet (listées), les phrases génériques que tout projet a (aller sur, cliquer, voir…) et les
+nouvelles (listées). Chaque phrase est :
+- `library` : une étape métier du projet, jouée d'un coup (`play_business_step`) ;
+- `phrase` : une phrase de la bibliothèque, sur un élément que le projet connaît (l'agent reçoit son
+  sélecteur) ou sur un sélecteur ;
+- `find` : une phrase de la bibliothèque sur un élément que le projet ne connaît pas, écrit par son nom
+  (« je clique sur "Vider le panier" ») : à trouver sur la page ;
+- `new` : une phrase qu'aucune définition ne dit.
+
+**Create test** fait enregistrer le test par l'agent, dans le navigateur, sa console et son navigateur
+affichés : `start_recording(name, project_id, scenario)` répond les phrases numérotées et comment faire
+chacune ; avant les actions de chaque phrase, `start_phrase(number, phrase)`. À `stop_recording` :
+- chaque nouvelle phrase devient une **étape métier** du projet, faite des étapes enregistrées pour elle,
+  ses valeurs entre guillemets ses paramètres quand les étapes les utilisent (une variable du test,
+  une valeur tapée) ; une phrase sans étape, ou dont les étapes ne se suivent pas, ne l'est pas, et la
+  réponse le dit ;
+- l'élément d'une phrase qui le nomme est celui-là : l'élément de l'étape est fusionné avec celui du
+  projet qui porte ce nom, ou nommé ainsi s'il n'y en a pas — sauf un élément que l'utilisateur a nommé
+  autrement.
+
+Le test se lit alors comme le scénario a été écrit. L'agent enregistre toujours, même quand toutes les
+phrases sont déjà dans la bibliothèque : le test est vérifié sur l'application avant d'être sauvé. Un
+cas d'une exigence prêt (« Create ») passe par le même enregistrement.
 
 #### Les fenêtres après une exécution ou un enregistrement
 

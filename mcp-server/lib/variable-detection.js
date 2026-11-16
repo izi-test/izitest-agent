@@ -2,6 +2,7 @@
 // recorder (tools/test.js) and the dashboard agent (agent-executor.js), which each had
 // their own copy.
 
+import { pickTemplate } from './recording-review.js';
 import { isFragileSelector, isPositionalSelector } from './codegen/locators.js';
 
 function slug(text) {
@@ -135,6 +136,9 @@ export function listVariable(name, listContext, { selectionMode }) {
       selectionMode,
       // The element inside the item picked (the "Add" of the second product's card): its card is the item.
       ...(listContext.withinXpath ? { withinXpath: listContext.withinXpath } : {}),
+      // What the item picked read, and its neighbours, when recorded: a later step naming it is told (recording-review.js).
+      ...(listContext.pickedText ? { pickedText: listContext.pickedText, otherTexts: listContext.otherTexts ?? [] } : {}),
+      ...(listContext.pickedLabel ? { pickedLabel: listContext.pickedLabel, pickedLabelFrom: listContext.pickedLabelFrom ?? 'text', otherLabels: listContext.otherLabels ?? [] } : {}),
     },
   };
 }
@@ -172,7 +176,11 @@ export function sameItemVariable(steps, i, listContext) {
  */
 export function isNavigation(listContext, classified = null, { afterTyping = false } = {}) {
   if (listContext?.choice || afterTyping) return false;
-  return !!listContext?.navigation || inSiteHeader(listContext) || classified?.variableName === 'menu_item';
+  if (classified?.variableName === 'menu_item') return true;
+  // Cards are content wherever the page draws them: in a <nav> (what the page then says,
+  // `navigation: "nav"`), in its header.
+  if (listContext && cardItems(listContext)) return false;
+  return !!listContext?.navigation || inSiteHeader(listContext);
 }
 
 // The page's header or a bar of links named after navigation, where the list sits: its links go
@@ -184,6 +192,18 @@ const NAVIGATION_CLASS = /(?:^|[\s'"_-])(?:nav|navbar|navigation|topbar|breadcru
 function inSiteHeader(listContext) {
   if (!listContext) return false;
   return HEADER_IN_SELECTOR.test(listContext.parentSelector ?? '') || NAVIGATION_CLASS.test(listContext.itemXpath ?? '');
+}
+
+// Cards — an <article>, an element styled as a product, a card, a tile —: content, wherever they
+// sit. Auchan draws the products of a search, and a brand's sponsored ones, in a <nav>: "the
+// second product" was taken for a link of the site's menu, recorded as it was, not by its place —
+// twice: by the selector of its list, then by the page itself, which tells of the <nav> around.
+const CARD = /^(?:article\b|[\w-]+(?:\.|\[contains\(@class,\s*'|\[class[*^~]?=["']?)[\w-]*(?:product|card|tile))/i;
+function cardItems({ type, parentSelector = '', itemXpath = '' }) {
+  // A box: its first item is the parent (article:nth-of-type(1)); a list: its items are the
+  // itemXpath ("article[…]", or "./article[…]" for a card found around a button).
+  const item = type === 'box' ? String(parentSelector).split(/\s*>\s*/).pop() : String(itemXpath).replace(/^\.?\/+/, '');
+  return CARD.test(item ?? '');
 }
 
 // Between typing and picking, what does not act on the page: a wait for the suggestions, a check
@@ -345,6 +365,8 @@ export function sameItemStep(steps, i, listContext) {
   return null;
 }
 
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const shortly = (text, max = 40) => {
   const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
@@ -365,11 +387,19 @@ export function listNote(steps, i, actionId, { correct = (pick) => `record_step(
   if (afterTyping || isNavigation(context)) return null;
   const items = (context.itemTexts ?? []).slice(0, 3).map((t) => `"${shortly(t)}"`).join(', ');
   const same = sameItemStep(steps, i, context);
+  // Its name, as the element clicked says it: what a later step naming it needs kept now.
+  const template = same ? null : pickTemplate(context);
+  const how = template && (template.from === 'text' ? 'what: "text"' : `what: "attribute", attribute: "${template.from}"`);
   return [
     `List: taken as item ${context.selectedIndex + 1} of ${context.totalItems} of a list${items ? ` (${items}${context.totalItems > 3 ? ', …' : ''})` : ''}`
       + `${context.withinXpath ? ' — this element of that item' : ''}${same ? `, the same item as step ${same}: it shares its variable` : ''}.`,
     'Saved, it becomes a variable: replayed by its place, or by its text, as decided at stop_recording.',
     `Not an item of a list (a one-off button)? ${correct('none')}.`,
     `Meant by its place ("the second result"): ${correct('by_place')}; by its label ("the category Garden"): ${correct('by_text')}.`,
+    ...(template ? [
+      `Its name here: "${template.name}" — another item at the next run. A later step that names it (a check that it is in the list, in the cart; its removal)`
+        + ` needs it kept now: capture_value(name: "item_name", ref: the one you clicked, ${how}, pattern: ${JSON.stringify(`${escapeRegex(template.before.trim())}\\s*(.+?)\\s*${escapeRegex(template.after.trim())}`)}),`
+        + ' then write {{item_name}} in that step.',
+    ] : []),
   ].join(' ');
 }

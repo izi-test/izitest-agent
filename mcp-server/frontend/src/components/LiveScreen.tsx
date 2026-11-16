@@ -17,12 +17,14 @@ type State =
   | { kind: 'ended' }
   | { kind: 'unavailable'; reason: string };
 
-export function LiveScreen({ tabId, running, waiting = 'Waiting for the browser to open a page…' }: {
+export function LiveScreen({ tabId, running, waiting = 'Waiting for the browser to open a page…', idle = 'Nothing was shown in a browser.' }: {
   /** The tab to show; null until the run has opened one. */
   tabId: number | null;
   /** Whether the run is still going: a stream that ends then is opened again. */
   running: boolean;
   waiting?: string;
+  /** What it says with no tab and nothing running: a run that showed nothing, or one not started yet. */
+  idle?: string;
 }) {
   const [frame, setFrame] = useState<string | null>(null);
   const [state, setState] = useState<State>({ kind: 'waiting' });
@@ -73,7 +75,7 @@ export function LiveScreen({ tabId, running, waiting = 'Waiting for the browser 
           {state.kind === 'unavailable' ? (
             <><MonitorOff size={22} /><span>{state.reason}</span></>
           ) : tabId == null ? (
-            running ? <><Loader2 size={20} className="spin" /><span>{waiting}</span></> : <span>Nothing was shown in a browser.</span>
+            running ? <><Loader2 size={20} className="spin" /><span>{waiting}</span></> : <span>{idle}</span>
           ) : state.kind === 'ended' && !running ? (
             <span>The browser window was closed before an image came.</span>
           ) : (

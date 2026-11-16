@@ -64,6 +64,7 @@ test('a name in words, drawn from the part of the selector that picks the elemen
   assert.equal(baseName(clickCss('#cookie-banner-accept', SHOP, { locators: [{ type: 'css', value: '#cookie-banner-accept' }, { type: 'text', value: 'Accept all cookies' }] })), 'Accept all cookies', 'the text of what is clicked');
   assert.equal(baseName(clickCss('#total', SHOP, { locators: [{ type: 'text', value: '19,47 €' }] })), 'Total', 'a price is no name');
   assert.equal(baseName(clickCss('div > span', SHOP)), 'div > span', 'the selector when nothing else says anything');
+  assert.equal(baseName(clickCss('button[data-id="customer-panel"]', SHOP, { locators: [{ type: 'text', value: '\uE900 Me connecter' }] })), 'Me connecter', 'the glyph of an icon font reads as nothing');
 });
 
 test('the elements to name: found by a selector alone, or with a page added — not those the user named', () => {

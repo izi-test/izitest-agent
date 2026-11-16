@@ -31,6 +31,13 @@ function variablesIn(value, found = new Set()) {
   return found;
 }
 
+// What a pick in a list keeps in a business step: how to find the list and the item, and which.
+const PICK_CONTEXT = ['type', 'parentSelector', 'itemXpath', 'selectionMode', 'withinXpath'];
+function pickOf(variable) {
+  const listContext = Object.fromEntries(PICK_CONTEXT.filter((key) => variable.listContext[key] != null).map((key) => [key, variable.listContext[key]]));
+  return { name: variable.name, type: variable.type, defaultValue: variable.defaultValue, listContext };
+}
+
 /**
  * `{ steps_template }`, or `{ error }`. Steps are numbered from 1, both ends included.
  * Each entry of `args` maps a parameter of the pattern, in order, to a recorded value:
@@ -65,6 +72,11 @@ export function buildBusinessStep(test, { from_step, to_step, pattern, args = []
       ...(step.locators?.length && { locators: structuredClone(step.locators) }),
       // The page it was recorded on: with it, the sub-step is known by its element (elements.js).
       ...(step.page && { page: step.page }),
+      // Only needed sometimes (a banner, a code asked on a new device): so in every test using it.
+      ...(step.optional && { optional: true }),
+      // An item picked in a list by its place (the first result): picked so in every test, not
+      // the item clicked when it was recorded.
+      ...(step.variable?.listContext && { variable: pickOf(step.variable) }),
     };
   });
 

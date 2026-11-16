@@ -7,9 +7,11 @@
 //   just before the extension types it, recording as replaying. The test keeps the reference.
 // - IZITEST_SECRET_<NAME>, in the server's environment, is used instead of the stored value:
 //   a CI gives its own.
+// - Given to what acts only (runSecrets): in a run, a value goes into what a step types, looks
+//   for or checks — never into its label, which the run draws on the page and keeps.
 // - Never sent back: the API lists names and descriptions only, and redact() puts the reference
 //   back wherever a value would leave the server — a tool's answer to an agent, a log line, a
-//   run's variables.
+//   run's variables, errors and diagnosis, what a connector sends.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -202,6 +204,37 @@ export function secretValue(projectId, name) {
   } catch (err) {
     throw new Error(`The secret ${name} of project ${projectId} cannot be read with this machine's key (${err.message}): enter its value again`);
   }
+}
+
+const REFERENCE = /\{\{\s*secret\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+/**
+ * How a run reads the secrets of its project (null: it has none), in two times, so that a value
+ * is only ever in what the browser acts with — never in a step's label, which is shown on the
+ * page (the run's overlay, its video) and kept (the run's record):
+ * - `references(name)`, given to lib/values.js as its `secrets`: the secret's own reference,
+ *   {{secret.NAME}}, in place of its value (undefined when the project has none of that name).
+ *   Everything else is worked out, the reference left as written;
+ * - `fill(value)`: the references left in a text — or in the texts of an object or a list, a
+ *   new one — replaced by their values, for what types them. One no secret is named after is
+ *   left as it is.
+ */
+export function runSecrets(projectId) {
+  const read = (name) => (projectId == null ? undefined : secretValue(projectId, name));
+  const fill = (value) => {
+    if (typeof value === 'string') {
+      return value.includes('{{') ? value.replace(REFERENCE, (whole, name) => read(name) ?? whole) : value;
+    }
+    if (Array.isArray(value)) return value.map(fill);
+    if (value && typeof value === 'object' && !Buffer.isBuffer(value)) {
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v)]));
+    }
+    return value;
+  };
+  return {
+    references: projectId == null ? undefined : (name) => (read(name) === undefined ? undefined : `{{secret.${name}}}`),
+    fill,
+  };
 }
 
 /** What an agent is told of a project's secrets: one line each, its name and what it is for. */

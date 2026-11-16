@@ -189,6 +189,116 @@ test('a run types the secret, and keeps its reference in its record; exported co
     /process\.env/, 'a test with no secret reads no environment');
 });
 
+// As JSON writes it too: the password has a quote in it.
+const holdsPassword = (kept) => {
+  const text = typeof kept === 'string' ? kept : JSON.stringify(kept);
+  return text.includes(PASSWORD) || text.includes(JSON.stringify(PASSWORD).slice(1, -1));
+};
+
+test('a step\'s label keeps the reference, whatever its step types: sent to the page, kept, told by a failed run', async () => {
+  saveTest({
+    name: 'labelled with a secret',
+    variables: { pw: { type: 'text', defaultValue: '{{secret.SHOP_PASSWORD}}' }, who: { type: 'text', defaultValue: 'alice' } },
+    steps: [
+      { command: 'fill', params: { selector: '#user', value: '{{who}}' }, intent: 'I log in as "{{who}}" with the password "{{secret.SHOP_PASSWORD}}"' },
+      { command: 'fill', params: { selector: '#password', value: 'x{{pw}}' }, intent: 'I type "{{pw}}" again' },
+      { command: 'click', params: { selector: '#show' }, locators: [{ type: 'text', value: '{{pw}}' }], intent: 'I show it' },
+      { command: 'assert', params: {}, assertion: { type: 'text_equals', selector: '#shown', expected: '{{secret.SHOP_PASSWORD}}' }, intent: 'It shows "{{pw}}"' },
+    ],
+  });
+  db.prepare("UPDATE tests SET project_id = ? WHERE name = 'labelled with a secret'").run(project);
+  const sent = [];
+  const events = [];
+  const sendCommand = async (_profile, command, params) => {
+    if (command === 'replay_sequence') {
+      sent.push(...params.steps);
+      // As the extension tells a failure: the label of the step, what it looked for.
+      const failed = params.steps.length;
+      throw Object.assign(new Error(`Step ${failed}/${failed} (${params.steps.at(-1).intent}) failed: nothing reads "${params.steps.at(-1).locators[0].value}"`), {
+        results: params.steps.map((s, i) => ({
+          step: i + 1, command: s.command, intent: s.intent, tabId: 9, status: i + 1 < failed ? 'success' : 'failed',
+          ...(i + 1 < failed ? { locator: `css=${s.params.selector}` } : { locator: `text=${s.locators[0].value}`, error: `nothing reads "${s.locators[0].value}"` }),
+        })),
+      });
+    }
+    return {};
+  };
+  let thrown;
+  await assert.rejects(executeTest('labelled with a secret', {}, null, null, true, sendCommand, 'test', (event) => events.push(event)), (err) => { thrown = err; return true; });
+
+  assert.deepEqual(sent.map((s) => s.intent), [
+    'I log in as "alice" with the password "{{secret.SHOP_PASSWORD}}"',
+    'I type "{{secret.SHOP_PASSWORD}}" again',
+    'I show it',
+  ], 'the labels the page draws: a variable\'s value, a secret\'s reference — written in the label or through a variable');
+  assert.deepEqual(sent.map((s) => s.params.value ?? s.locators[0].value), ['alice', `x${PASSWORD}`, PASSWORD], 'what acts has the value');
+
+  const run = db.prepare('SELECT * FROM test_executions WHERE id = ?').get(thrown.executionId);
+  const steps = db.prepare('SELECT * FROM execution_steps WHERE execution_id = ? ORDER BY step_order').all(thrown.executionId);
+  const repairs = db.prepare('SELECT * FROM test_repairs WHERE execution_id = ?').all(thrown.executionId);
+  assert.deepEqual(steps.map((s) => s.intent), [
+    'I log in as "alice" with the password "{{secret.SHOP_PASSWORD}}"',
+    'I type "{{secret.SHOP_PASSWORD}}" again',
+    'I show it',
+    'It shows "{{secret.SHOP_PASSWORD}}"',
+  ], 'the labels the run keeps');
+  assert.equal(steps[2].locator_used, 'text={{secret.SHOP_PASSWORD}}');
+  assert.equal(steps[2].error, 'nothing reads "{{secret.SHOP_PASSWORD}}"');
+  assert.equal(JSON.parse(run.variables).pw, '{{secret.SHOP_PASSWORD}}');
+  assert.equal(thrown.message, 'nothing reads "{{secret.SHOP_PASSWORD}}"');
+  assert.equal(thrown.values.pw, '{{secret.SHOP_PASSWORD}}', 'the values of the run, as its project names them');
+  assert.equal(thrown.values.who, 'alice');
+  const told = { message: thrown.message, stepResults: thrown.stepResults, values: thrown.values, intent: thrown.failedStepIntent, triage: thrown.triage };
+  for (const [what, kept] of Object.entries({ run, steps, repairs, events, told })) {
+    assert.ok(!holdsPassword(kept), `not in ${what}: ${JSON.stringify(kept).slice(0, 300)}`);
+  }
+});
+
+test('a step played after a value was kept, and a check on a secret: the label still keeps the reference', async () => {
+  // Too short for redact() to put its reference back: its label never had the value.
+  saveSecret(project, 'PIN', { value: '42' });
+  saveTest({
+    name: 'kept then typed',
+    steps: [
+      { command: 'capture', params: { selector: '#order', name: 'order' }, intent: 'I keep the order number' },
+      { command: 'fill', params: { selector: '#note', value: '{{order}} {{secret.SHOP_PASSWORD}}' }, intent: 'I note "{{order}}" with "{{secret.SHOP_PASSWORD}}"' },
+      { command: 'fill', params: { selector: '#pin', value: '{{secret.PIN}}' }, intent: 'I type the code "{{secret.PIN}}" of order {{order}}' },
+      { command: 'assert', params: {}, assertion: { type: 'text_equals', selector: '#note', expected: '{{order}} {{secret.SHOP_PASSWORD}}' }, intent: 'The note reads "{{order}} {{secret.SHOP_PASSWORD}}"' },
+    ],
+  });
+  db.prepare("UPDATE tests SET project_id = ? WHERE name = 'kept then typed'").run(project);
+  const sent = [];
+  const checked = [];
+  const events = [];
+  const sendCommand = async (_profile, command, params) => {
+    if (command === 'replay_sequence') {
+      sent.push(...params.steps);
+      return { results: params.steps.map((s, i) => ({ step: i + 1, command: s.command, status: 'success', tabId: 9 })) };
+    }
+    if (command === 'execute_js') {
+      if (params.code.includes('#order')) return { result: '4521' };
+      checked.push(params.code);
+      return { result: { value: `4521 ${PASSWORD}`, pageUrl: 'https://shop.test/note' } };
+    }
+    return {};
+  };
+  const run = await executeTest('kept then typed', {}, null, null, true, sendCommand, 'test', (event) => events.push(event));
+  assert.deepEqual(sent.map((s) => [s.intent, s.params.value]), [
+    ['I note "4521" with "{{secret.SHOP_PASSWORD}}"', `4521 ${PASSWORD}`],
+    ['I type the code "{{secret.PIN}}" of order 4521', '42'],
+  ]);
+  assert.equal(run.assertionsPassed, 1, 'checked against the value');
+  const steps = db.prepare('SELECT * FROM execution_steps WHERE execution_id = ? ORDER BY step_order').all(run.executionId);
+  // Kept when the run starts, before the order number is known.
+  assert.equal(steps[3].intent, 'The note reads "{{order}} {{secret.SHOP_PASSWORD}}"');
+  assert.equal(steps[2].intent, 'I type the code "{{secret.PIN}}" of order {{order}}');
+  deleteSecret(project, 'PIN');
+  assert.equal(run.values.order, '4521');
+  for (const [what, kept] of Object.entries({ run, steps, events })) {
+    assert.ok(!holdsPassword(kept), `not in ${what}: ${JSON.stringify(kept).slice(0, 300)}`);
+  }
+});
+
 test('an agent is told the names of the secrets, never a value: get_project_context, a dataset of passwords', () => {
   const context = AGENT_TOOLS.find((t) => t.name === 'get_project_context').handler({ project_id: project }).data;
   assert.deepEqual(context.secrets, [{ name: 'SHOP_PASSWORD', description: 'Password of the test account', write: '{{secret.SHOP_PASSWORD}}' }]);

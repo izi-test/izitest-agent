@@ -205,6 +205,31 @@ export function initDatabase() {
     log(`Migration warning (cli_session_id): ${err.message}`);
   }
 
+  // The conversation a test page keeps with the agent about its test (lib/agent/test-chat.js):
+  // one per test, gone with it — its messages, what the agent did for each, and the CLI
+  // session it goes on in.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS test_conversations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      test_id INTEGER NOT NULL UNIQUE REFERENCES tests(id) ON DELETE CASCADE,
+      cli_session_id TEXT,
+      seen_updated_at TEXT,
+      seen_name TEXT,
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+    CREATE TABLE IF NOT EXISTS test_conversation_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id INTEGER NOT NULL REFERENCES test_conversations(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+      content TEXT NOT NULL DEFAULT '',
+      activity TEXT,
+      status TEXT,
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_test_conversation_messages ON test_conversation_messages(conversation_id);
+  `);
+
   // Why a run failed, and the repairs proposed for it (lib/triage.js, lib/repairs.js).
   try {
     const execCols = db.prepare("PRAGMA table_info(test_executions)").all().map(c => c.name);
@@ -481,6 +506,16 @@ export function initDatabase() {
     // Named by the agent from what the tests do with it (lib/element-naming.js): not asked again,
     // and kept when a later step reads a label on it.
     if (!elementCols.includes('agent_named')) db.exec('ALTER TABLE elements ADD COLUMN agent_named INTEGER NOT NULL DEFAULT 0');
+    // Names read with the glyph of an icon font ("\uE900 Me connecter", the icon drawn before the
+    // link's text, shown as a space): as baseName makes them now, unless another element of the
+    // project has that name.
+    const ICON_GLYPHS = /[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/gu;
+    const taken = db.prepare('SELECT 1 FROM elements WHERE project_id = ? AND name = ? COLLATE NOCASE');
+    const rename = db.prepare('UPDATE elements SET name = ? WHERE id = ?');
+    for (const row of db.prepare('SELECT id, project_id, name FROM elements').all()) {
+      const name = row.name.replace(ICON_GLYPHS, ' ').replace(/\s+/g, ' ').trim();
+      if (name && name !== row.name && !taken.get(row.project_id, name)) rename.run(name, row.id);
+    }
   } catch (err) {
     log(`Migration warning (element keys): ${err.message}`);
   }

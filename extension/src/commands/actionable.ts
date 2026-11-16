@@ -8,6 +8,8 @@
 //   - still — the same box twice in a row, not sliding in;
 //   - the one the click lands on: what is at its middle is the element, or inside it, or a label
 //     standing for it (not a loading veil, a banner, a dialog over it).
+// And its page has to have loaded (waitPageLoaded): a button of a page still loading is drawn
+// before the scripts that listen to it have run.
 // And after the click something has to happen within a second: the DOM changes, the page
 // navigates, or a request leaves. A click after which nothing at all happened is made once more.
 // A click on a link to another page has to open it: a page still drawing itself changes its DOM
@@ -104,6 +106,74 @@ export async function waitActionable(
     await sleep(POLL_MS);
   }
 }
+
+// As long as a navigate waits for its page (helpers.ts).
+export const PAGE_LOAD_WAIT_MS = 15000;
+
+/**
+ * In the page: whether the document — `el`'s, else this one — has loaded: its scripts have run,
+ * the ones it added while loading too. `giveUp` notes on its window that it was waited for in
+ * vain: asked again, it counts as loaded — a page that never ends loading (a resource that never
+ * answers) costs its wait once, not at every step. Serialised: everything it uses is inside.
+ */
+export function documentLoaded(el?: Element | null, giveUp = false): boolean {
+  const doc = el?.ownerDocument ?? document;
+  const w = (doc.defaultView ?? window) as Window & { __izitestLoadWaited?: boolean };
+  if (giveUp) w.__izitestLoadWaited = true;
+  return doc.readyState === 'complete' || w.__izitestLoadWaited === true;
+}
+
+export interface LoadWait {
+  /** False when the wait was given up: the page was still loading after `timeoutMs`. */
+  loaded: boolean;
+  /** 0 when the page had loaded already: nothing was waited for. */
+  waitedMs: number;
+}
+
+type Sleep = (ms: number) => Promise<void>;
+const realSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function untilLoaded(isLoaded: (giveUp: boolean) => Promise<boolean>, timeoutMs: number, sleep: Sleep): Promise<LoadWait> {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  for (let first = true; ; first = false) {
+    if (await isLoaded(false)) return { loaded: true, waitedMs: first ? 0 : Math.max(1, Date.now() - startedAt) };
+    if (Date.now() >= deadline) {
+      await isLoaded(true);
+      return { loaded: false, waitedMs: Math.max(1, Date.now() - startedAt) };
+    }
+    await sleep(POLL_MS);
+  }
+}
+
+/**
+ * Waits until the page the element is in has loaded, up to `timeoutMs`.
+ *
+ * A step acted as soon as its element was there, visible and still. Right after a click that
+ * opened another page (Auchan's search results), the next click landed on a button drawn before
+ * the page's scripts had run: nothing listened to it, and the page drawing itself — its images,
+ * its cart — passed for the click's effect, so it was not made again. One run in two failed on
+ * the step after. A page that has loaded has run its scripts.
+ *
+ * Never an error: past `timeoutMs` the step goes on, and that page is not waited for again.
+ * What was waited tells the caller to look its element up again (the page drew meanwhile).
+ */
+export function waitPageLoaded(handle: ElementHandle<Element>, timeoutMs: number = PAGE_LOAD_WAIT_MS, sleep: Sleep = realSleep): Promise<LoadWait> {
+  return untilLoaded((giveUp) => handle.evaluate(documentLoaded, giveUp), timeoutMs, sleep);
+}
+
+/**
+ * The same for a step that has no element yet — an item picked by its place in a list still
+ * being drawn, a step played through its selector: the page's own document. While the page is
+ * being replaced (the click before opened another), it is not loaded.
+ */
+export function waitDocumentLoaded(page: Pick<Page, 'evaluate'>, timeoutMs: number = PAGE_LOAD_WAIT_MS, sleep: Sleep = realSleep): Promise<LoadWait> {
+  return untilLoaded((giveUp) => page.evaluate(documentLoaded, null, giveUp).catch(() => false), timeoutMs, sleep);
+}
+
+/** What a step's result says of a page that was still loading when it acted. */
+export const stillLoadingDetail = (wait: LoadWait, timeoutMs: number = PAGE_LOAD_WAIT_MS): string | null =>
+  wait.loaded ? null : `the page was still loading after ${timeoutMs / 1000} s: the step was played anyway`;
 
 /**
  * In the page: whether `el` is, or sits in, a link that opens another page in this tab — an

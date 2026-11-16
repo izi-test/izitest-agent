@@ -7,6 +7,7 @@ import { attachNetworkCapture } from './network';
 import { attachConsoleCapture } from './checks';
 import { adoptOpenedWindow, rememberOwnedWindow } from '../owned-windows';
 import { armEffects } from '../effects';
+import { waitDocumentLoaded } from './actionable';
 import { dragBetween, dropPoint } from './drag';
 import type { NavigateParams, ClickParams, FillParams, SelectParams, UploadParams, DragParams, KeyboardParams, ScrollParams } from '../types';
 import type { CDPSession, Page } from 'puppeteer-core/lib/puppeteer/puppeteer-core-browser.js';
@@ -324,9 +325,17 @@ export async function cmdNavigate(
   return { tabId: targetTabId, windowId: updatedTab.windowId, url: updatedTab.url, title: updatedTab.title };
 }
 
+/**
+ * An action on a page still loading waits for it to have loaded (actionable.ts), as a navigate
+ * does: a click the agent made on a button of the page its click before had just opened was
+ * lost — "no visible change" —, its scripts not run yet.
+ */
+const untilPageLoaded = (page: Page): Promise<unknown> => waitDocumentLoaded(page).catch(() => null);
+
 export async function cmdClick({ selector, tabId, sessionId, text, ref, label, checked }: ClickParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
   const page = await getPage(resolvedTabId);
+  await untilPageLoaded(page);
 
   // Every path resolves coordinates from inside the page, then clicks with real mouse
   // events: that is what makes the click a genuine user gesture (so target=_blank and
@@ -414,6 +423,7 @@ function watchForNewTab(openerTabId: number, waitMs = NEW_TAB_WATCH_MS): Promise
 export async function cmdFill({ selector, value, tabId, sessionId, clear, ref, label, typing }: FillParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
   const page = await getPage(resolvedTabId);
+  await untilPageLoaded(page);
   const shouldClear = clear ?? true;
 
   if (ref) {
@@ -498,6 +508,7 @@ async function askFrameOf<T extends PageAnswer>(tabId: number, by: { ref?: strin
 export async function cmdSelect({ selector, value, tabId, sessionId, ref, label, matchBy }: SelectParams) {
   const resolvedTabId = await resolveTabId(tabId, sessionId);
   if (!ref && !selector && !label) throw new Error('Provide selector, label or ref to select');
+  await getPage(resolvedTabId).then(untilPageLoaded, () => null);
 
   // Chosen from inside the page (see selectOption): it reaches selects inside same-origin
   // iframes, which the previous page.evaluate() — top frame only — could not.

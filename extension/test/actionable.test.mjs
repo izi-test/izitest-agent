@@ -18,7 +18,7 @@ async function load() {
   await build({ entryPoints: [SRC], outfile, bundle: true, format: 'esm', target: 'node20', logLevel: 'silent' });
   return import(outfile);
 }
-const { actionStateOf, waitActionable, notActionable, untilReady, linkLeadsAway } = await load();
+const { actionStateOf, waitActionable, notActionable, untilReady, linkLeadsAway, documentLoaded, waitPageLoaded, waitDocumentLoaded, stillLoadingDetail, PAGE_LOAD_WAIT_MS } = await load();
 
 // ─── The page side ──────────────────────────────────────────────────
 
@@ -172,4 +172,72 @@ test('an anchor, a script link, a download, a new tab or the same page are not',
   assert.equal(linkLeadsAway(link('/other', { target: '_blank' })), false);
   assert.equal(linkLeadsAway(link('/ECM/workflowmanagement/createupdateuserrequestfirststep#form')), false);
   assert.equal(linkLeadsAway({ closest: () => null }), false);
+});
+
+// ─── A page still loading ───────────────────────────────────────────
+
+// A document that goes through `states`, one at each look, and stays at the last.
+function loadingDocument(states) {
+  const seen = [...states];
+  const win = {};
+  const doc = { defaultView: win, get readyState() { return seen.length > 1 ? seen.shift() : seen[0]; } };
+  return { doc, win, element: { ownerDocument: doc } };
+}
+const elementHandle = (element) => ({ evaluate: async (fn, ...args) => fn(element, ...args) });
+
+test('a page that has loaded is not waited for', async () => {
+  const { element } = loadingDocument(['complete']);
+  assert.equal(documentLoaded(element), true);
+  assert.deepEqual(await waitPageLoaded(elementHandle(element), 5000, noSleep), { loaded: true, waitedMs: 0 });
+});
+
+test('a step on a page still loading waits for it to have loaded, and says it waited', async () => {
+  // Auchan's search results: the "add to a list" button is there, drawn, before the page's
+  // scripts have run. Clicked then, nothing listened: one run in two failed on the step after.
+  const { element } = loadingDocument(['loading', 'interactive', 'interactive', 'complete']);
+  const sleeps = [];
+  const wait = await waitPageLoaded(elementHandle(element), 5000, async (ms) => { sleeps.push(ms); });
+  assert.equal(wait.loaded, true);
+  assert.ok(wait.waitedMs > 0, 'what it waited tells the caller to look its element up again');
+  assert.equal(sleeps.length, 3);
+  assert.equal(stillLoadingDetail(wait), null);
+});
+
+test('a page that never ends loading is played anyway, and waited for once only', async () => {
+  const { element, win } = loadingDocument(['interactive']);
+  const first = await waitPageLoaded(elementHandle(element), 0, noSleep);
+  assert.equal(first.loaded, false);
+  assert.ok(first.waitedMs > 0);
+  assert.match(stillLoadingDetail(first), /still loading after 15 s: the step was played anyway/);
+  assert.equal(PAGE_LOAD_WAIT_MS, 15000);
+  assert.equal(win.__izitestLoadWaited, true);
+  // The next step on the same page: at once, its page still loading or not.
+  assert.deepEqual(await waitPageLoaded(elementHandle(element), 5000, noSleep), { loaded: true, waitedMs: 0 });
+  // Another page (the window of another document) is waited for again.
+  const other = loadingDocument(['interactive', 'complete']);
+  assert.ok((await waitPageLoaded(elementHandle(other.element), 5000, noSleep)).waitedMs > 0);
+});
+
+test('an element whose page was replaced is told as it was: the step looks again', async () => {
+  const gone = { evaluate: async () => { throw new Error('Execution context was destroyed, most likely because of a navigation.'); } };
+  await assert.rejects(waitPageLoaded(gone, 5000, noSleep), /context was destroyed/);
+});
+
+test('a step with no element yet waits for the page itself, while it is being replaced too', async () => {
+  // An item picked by its place: the list is read once the page has loaded.
+  const { doc, win } = loadingDocument(['interactive', 'complete']);
+  globalThis.document = doc;
+  globalThis.window = win;
+  let calls = 0;
+  const page = {
+    evaluate: async (fn, ...args) => {
+      // The click before opened another page: for a moment there is no document to ask.
+      if (calls++ === 0) throw new Error('Execution context was destroyed');
+      return fn(...args);
+    },
+  };
+  const wait = await waitDocumentLoaded(page, 5000, noSleep);
+  assert.equal(wait.loaded, true);
+  assert.ok(wait.waitedMs > 0);
+  assert.equal(calls, 3);
 });

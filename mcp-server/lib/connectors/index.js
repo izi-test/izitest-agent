@@ -45,6 +45,7 @@ import { applyImport } from '../requirement-import.js';
 import { getRequirement } from '../requirements.js';
 import { getCampaign } from '../campaigns.js';
 import { getBug } from '../bugs.js';
+import { redact } from '../secrets.js';
 import { jira } from './jira.js';
 import { xray } from './xray.js';
 import { github } from './github.js';
@@ -304,7 +305,9 @@ export async function sendResults(id, campaignId, { options = {}, dryRun = true 
   if (!connector.results) throw new Error(`${connector.name} takes no campaign results`);
   const campaign = doneCampaign(campaignId, 'send it');
   const ref = refOf(id, 'campaign', campaign.id);
-  const prepared = connector.results.prepare(campaignForConnectors(campaign), options ?? {}, { ref });
+  // What leaves this machine holds no secret's value (lib/secrets.js) — nor does a run kept
+  // before its steps' labels kept the reference.
+  const prepared = redact(connector.results.prepare(campaignForConnectors(campaign), options ?? {}, { ref }));
   const summary = { connector: id, name: connector.name, what: connector.results.what, target: prepared.target, ref, updates: !!ref, items: prepared.items };
   if (dryRun) return { sent: false, ...summary, payload: prepared.payload };
   const sent = await connector.results.send(contextOf(connector, { fetch }), prepared, { ref });
@@ -327,7 +330,7 @@ export async function sendBug(id, bugId, { options = {}, dryRun = true } = {}, {
   // The project of the requirement it breaks, when that one was read from this tool.
   const fromTool = (bug.details?.requirements ?? []).map((r) => getRequirement(r.key)).find((r) => r?.source === id);
   const suggestedProject = fromTool ? fromTool.key.replace(/-\d+$/, '') : null;
-  const prepared = connector.bugs.prepare(bug, options ?? {}, { ref, suggestedProject });
+  const prepared = redact(connector.bugs.prepare(bug, options ?? {}, { ref, suggestedProject }));
   const summary = { connector: id, name: connector.name, what: connector.bugs.what, bug: bug.id, target: prepared.target, type: prepared.type ?? null, ref, updates: !!ref, title: prepared.summary, text: prepared.text };
   if (dryRun) return { sent: false, ...summary, payload: prepared.payload };
   const sent = await connector.bugs.send(contextOf(connector, { fetch }), prepared, { ref });

@@ -132,6 +132,11 @@ export function unresolvedError(errors) {
   return err;
 }
 
+/** The definition a phrase matches, with its arguments: `{ def, args }`; null when none does. */
+export function matchingDefinition(phrase, compiled, effectiveKeyword) {
+  return findMatchingDefinition(phrase, compiled, effectiveKeyword);
+}
+
 function findMatchingDefinition(phrase, compiled, effectiveKeyword) {
   // Prefer a match whose keyword aligns with the phrase's effective keyword.
   // Fall back to a match regardless of keyword if nothing aligns — user might
@@ -168,6 +173,10 @@ function buildTestSteps(def, args, phrase, startIndex, targets) {
       // and its page (its element is known by it).
       if (tpl.locators) step.locators = tpl.locators;
       if (tpl.page) step.page = tpl.page;
+      // A sub-step the page needs only sometimes (a code asked on a new device): optional in every test.
+      if (tpl.optional) step.optional = true;
+      // An item picked in a list by its place: a variable of the test, picked at that place.
+      if (tpl.variable?.listContext) step.variable = structuredClone(tpl.variable);
       return onElement(step, tpl.params, params, targets);
     });
   }

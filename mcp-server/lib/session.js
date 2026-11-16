@@ -23,6 +23,12 @@ const connectionClients = new Map(); // connection id → { name, version } the 
 // started, whose sessions the dashboard shows live (lib/live.js followRun).
 const connectionRuns = new Map();
 
+// run id → the id of the session kept for it. A conversation of the dashboard with a CLI agent
+// (lib/agent/test-chat.js) goes on over several runs of the CLI, each a connection of its own:
+// they all work in one session — its window, its refs, the actions done, which a later message
+// names (fix_test_step, add_test_step) — until the conversation's window is closed.
+const runSessions = new Map();
+
 let sessionCounter = 0;
 
 // An action history is per session, but ids must stay unique across all of them: an
@@ -209,6 +215,13 @@ export function resolveSession(connectionId, name) {
     return session;
   }
 
+  // Opened for a run that keeps one session over its connections: this one works in it.
+  const kept = sessions.get(runSessions.get(connectionRuns.get(connectionId)));
+  if (kept) {
+    kept.lastUsedAt = Date.now();
+    return kept;
+  }
+
   const existingId = connectionDefaults.get(connectionId);
   const existing = existingId && sessions.get(existingId);
   if (existing) {
@@ -265,6 +278,25 @@ export function createAdHocSession(label, { runId = null } = {}) {
   sessions.set(id, session);
   log(`Session created: ${id} (ad hoc)`);
   return session;
+}
+
+/**
+ * The one session every connection opened for `runId` (/sse?run=…) works in, whatever their
+ * number, until endRunSession: a connection that ends leaves it as it is. The caller owns it.
+ */
+export function keepRunSession(runId, { label = 'dashboard-agent' } = {}) {
+  const session = new Session({ id: `r:${runId}`, label, connectionId: null, runId });
+  sessions.set(session.id, session);
+  runSessions.set(runId, session.id);
+  log(`Session created: ${session.id} (kept over the connections of its run)`);
+  return session;
+}
+
+/** The session kept for `runId` is over: returned, or null when there was none. */
+export function endRunSession(runId) {
+  const id = runSessions.get(runId);
+  runSessions.delete(runId);
+  return id ? destroySession(id) : null;
 }
 
 export function destroySession(id) {

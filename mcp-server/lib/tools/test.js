@@ -12,6 +12,7 @@ import {
   updateTestStep, evaluateAssertion
 } from '../tests.js';
 import { setStepOptional } from '../test-store.js';
+import { testText, addTestStep, deleteTestStep, updateTestFeature } from '../test-edit.js';
 import { ORACLE_ASSERTIONS } from '../test-execute.js';
 import { DebugController, activeDebugControllers } from '../debug-controller.js';
 import { uniqueVarName, listVariable, variabilizeInput, typedJustBefore, variabilizeSuggestion, keepStepVariable, sameItemVariable } from '../variable-detection.js';
@@ -23,21 +24,25 @@ import { listRepairs, verifyRepair, applyRepair, rejectRepair, describeRepair, g
 import { usesOfStep, relocateElement } from '../element-store.js';
 import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf, rowsOfTest, rowsSource, rowLabel, shownRow } from '../datasets.js';
 import { redundantTimeWaits } from '../recorded-waits.js';
-import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from '../business-play.js';
+import { businessStepsOf, playBusinessPhrase } from '../business-play.js';
 import { elementTimeoutFor } from '../projects.js';
 import { checksRecording, recordingRequirements, recordCheck, linkRecordedChecks } from '../recorded-checks.js';
 import { windowSettings, closesAfterRun, closeWindowOf } from '../run-windows.js';
 import { nameElementsLater } from '../element-naming.js';
+import { reviewSteps, reviewText, keepPickedNames, keptNamesText } from '../recording-review.js';
+import { scenarioOf, scenarioBrief, startPhrase, markPhrases, completeScenario } from '../scenario-recording.js';
 
 // What follows a value typed or picked (a search, a suggestion: a variable at save time). "chocolat"
 // led Auchan to its aisle (?redirect_keywords=chocolat, a Kinder bar shown), "banane" to its
 // search: a check of that product failed whatever the variable. "The second result" of "lait" was
 // clicked by its name ("Ajouter AUCHAN Lait demi-écrémé … au panier"), and a total was checked
-// against the line's price instead of 3 × the product's.
+// against the line's price instead of 3 × the product's. "The second result" of another "lait" was
+// the second of LACTEL's sponsored products, above the results: gone at the next visit.
 const ANY_VALUE_CHECKS = 'A value typed or picked (a search, a suggestion) becomes a variable, replayed with other values: '
   + 'after it, act on and check what holds for any value. Check the value itself in the title, a heading or the URL, a list of '
   + 'results shown (its container, a count) — never one particular result (a product, a row) only this value brings. Act on a '
-  + 'result by its place among the others ("the second result"), not by a name only it has (a product\'s name in an '
+  + 'result by its place among the others ("the second result") in the list of results itself — not in a block a brand '
+  + 'sponsors above or beside it, which changes from one visit to the next —, not by a name only it has (a product\'s name in an '
   + 'aria-label); a name the next steps need, keep it first with capture_value and use {{name}} in their selectors. '
   + 'A computed amount (3 × a price): keep the price with capture_value, then expect "{{price * 3 | 0,00}}" (text_contains; '
   + '"6,42 €" reads as 6.42). A test that adds to a cart or creates data removes it at the end, so the next run starts the same.';
@@ -147,8 +152,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       criterion: z.number().int().optional().describe('Without a case: the criterion it checks, by its number'),
       project_id: z.number().int().optional().describe('The project the test is for: saved in it; while recording, a value of one of its datasets is {{users[1].email}} (rows numbered from 1)'),
       dataset: z.string().optional().describe('With project_id: a dataset of the project the test plays every row of. Type {{email}} (its columns): while recording, the value of its first row; the saved test is bound to it and runs once per row'),
+      scenario: z.string().optional().describe('With project_id: a Gherkin scenario to record, phrase by phrase, passed as written. The answer numbers its phrases and says how to do each; call start_phrase before the actions of each. Its new phrases join the project\'s library once the test is saved'),
     },
-    async ({ name, description, use_vrt, viewport_width, viewport_height, requirement, case_id, criterion, project_id, dataset }) => {
+    async ({ name, description, use_vrt, viewport_width, viewport_height, requirement, case_id, criterion, project_id, dataset, scenario }) => {
       const recording = getRecording();
       if (recording) {
         // Idempotent: if already recording the same test, return success
@@ -169,7 +175,10 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       const link = requirement ? { requirement, caseId: case_id ?? null, criterion: criterion ?? null } : null;
       const played = recordingDataset(project_id, dataset);
       if (played.error) return { isError: true, content: [{ type: 'text', text: played.error }] };
-      setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link, projectId: project_id ?? null, dataset: played.dataset });
+      // A scenario written first (lib/scenario-recording.js): its phrases read against the project's library.
+      const read = scenario ? scenarioOf(project_id ?? null, scenario) : null;
+      if (read?.error) return { isError: true, content: [{ type: 'text', text: `The scenario does not read: ${read.error}` }] };
+      setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link, projectId: project_id ?? null, dataset: played.dataset, ...(read && { scenario: read }) });
       // A recording keeps its own values (capture_value, call_api), with those of the project's datasets.
       sess().resetValues({ projectId: project_id, row: played.dataset?.row });
       log(`Recording started: ${name} (VRT: ${use_vrt ? 'enabled' : 'disabled'}, viewport: ${viewport ? `${viewport.width}x${viewport.height}` : 'default'})`);
@@ -200,7 +209,25 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         : '';
       const checksText = `\n\nCheck each outcome right after the action that brings it, before the next action: add_assertion(test_name: "${name}", …) records the check as the next step.`
         + ` ${ANY_VALUE_CHECKS}`;
-      return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.${recordingDatasetText(project_id, played.dataset)}${businessText}${checksText}` }] };
+      return { content: [{ type: 'text', text: `Recording started for test "${name}"${use_vrt ? ' (VRT enabled)' : ''}${viewportMsg}. A new window has been opened. Use the 'navigate' tool to go to your target URL.${recordingDatasetText(project_id, played.dataset)}${businessText}${checksText}${read ? `\n${scenarioBrief(read)}` : ''}` }] };
+    }
+  );
+
+  // --- Tool: start_phrase ---
+  server.tool(
+    'start_phrase',
+    'Recording a scenario (start_recording with scenario): call it before the actions of each phrase, with its number and the phrase. The steps recorded until the next call are that phrase\'s — a new phrase becomes a step of the project\'s library made of them.',
+    {
+      number: z.number().int().describe('The number of the phrase, as start_recording numbered them (from 1)'),
+      phrase: z.string().optional().describe('The phrase, as written in the scenario (shown to the user)'),
+    },
+    async ({ number }) => {
+      // The actions sent before it are the phrase before's.
+      await settleActions(sess());
+      const started = startPhrase(getRecording(), number);
+      return started.error
+        ? { isError: true, content: [{ type: 'text', text: started.error }] }
+        : { content: [{ type: 'text', text: started.text }] };
     }
   );
 
@@ -285,29 +312,24 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       phrase: z.string().describe('The phrase, with its values: je me déconnecte du portail'),
       project_id: z.number().optional().describe('The project of the business step. Default: the one being recorded'),
       tabId: z.number().optional(),
+      optional_step: z.number().int().optional().describe('A step of the business step the page needs only sometimes (a code asked on a new device, a banner), numbered from 1: made optional in the business step, for every test. After it stopped at that step, it goes on from there without doing again what was done'),
     },
-    async ({ phrase, project_id, tabId }) => {
+    async ({ phrase, project_id, tabId, optional_step }) => {
       const recording = getRecording();
       const projectId = project_id ?? recording?.projectId ?? null;
       if (projectId == null) {
         return { content: [{ type: 'text', text: 'Which project? Pass project_id, or start_recording with project_id.' }], isError: true };
       }
-      const found = stepsOfBusinessPhrase(projectId, phrase);
-      if (found.error) return { content: [{ type: 'text', text: found.error }], isError: true };
-
       const session = sess();
       // Its values ({{secret.…}}, a value kept) worked out as the session knows them; the steps
-      // recorded keep them as written.
-      const played = await playBusinessSteps(found, {
-        sendCommand, live: (params) => session.live(params), tabId: tabId ?? session.lastTabId, elementTimeoutMs: elementTimeoutFor(projectId),
+      // recorded keep them as written. Stopped partway, what it did is recorded (lib/business-play.js).
+      const played = await playBusinessPhrase({
+        projectId, phrase, optionalStep: optional_step ?? null, session, recording, sendCommand,
+        tabId: tabId ?? session.lastTabId, elementTimeoutMs: elementTimeoutFor(projectId),
       });
       if (played.error) return { content: [{ type: 'text', text: played.error }], isError: true };
-      if (played.tabId) session.adoptTab(played.tabId);
-      if (recording) {
-        for (const step of found.steps) recording.steps.push(structuredClone(step));
-        log(`[${session.id}] Business step played and recorded: "${found.phrase}" (${found.steps.length} steps)`);
-      }
-      return { content: [{ type: 'text', text: `Played "${found.phrase}" (${found.steps.length} steps)${recording ? ': recorded as this business step' : ''}.` }] };
+      log(`[${session.id}] ${played.text}`);
+      return { content: [{ type: 'text', text: played.text }] };
     }
   );
 
@@ -334,6 +356,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }
 
       // ─── Step cleanup: remove parasitic recovery steps ────────────
+      // Each step with the phrase of the scenario it was recorded for, before some go.
+      markPhrases(recording);
       const cleanup = cleanRecoverySteps(recording.steps);
       recording.steps = cleanup.steps;
 
@@ -395,6 +419,13 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }
       }
 
+      // The item picked by its place, named as it was in later steps: its name kept right after
+      // the pick, written {{its name}} in them (recording-review.js) — before the variables are told.
+      // A second stop_recording (after the review) finds none left: what the first did is told at the save.
+      const keptNames = keepPickedNames(recording.steps, usedVarNames);
+      recording.keptNames = [...(recording.keptNames ?? []), ...keptNames];
+      if (keptNames.length) log(`Recording "${recording.name}": ${keptNames.map((k) => `{{${k.variable}}} kept after step ${k.pick}`).join(', ')}`);
+
       // ─── Build variables summary ──────────────────────────────────
       const variables = {};
       recording.steps.forEach((step, i) => {
@@ -410,6 +441,16 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       });
       // The checks made while recording, linked to what was typed: a replay with other values checks those.
       const checks = linkRecordedChecks(recording.steps, variables, row);
+      // Read over before it is saved (lib/recording-review.js): what would pass once, then fail at the
+      // next run, told to the agent while the page is there to fix it. A second stop_recording saves.
+      if (!recording.reviewed) {
+        recording.reviewed = true;
+        const findings = reviewSteps(recording.steps);
+        if (findings.length) {
+          log(`Recording "${recording.name}" read over: ${findings.length} step(s) to fix before saving`);
+          return { content: [{ type: 'text', text: reviewText(findings, recording.steps) }] };
+        }
+      }
 
       const test = {
         name: recording.name,
@@ -428,6 +469,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
 
       let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
       if (cleanup.removed.length) summary += `\nNot kept: ${cleanup.removed.join('; ')}.`;
+      if (recording.keptNames.length) summary += `\n${keptNamesText(recording.keptNames)}`;
       for (const { step, names } of checks.linked) summary += `\nThe check of step ${step} is linked to ${names.map((n) => `{{${n}}}`).join(', ')}.`;
       summary += linkRecorded(recording);
       summary += placeRecorded(recording);
@@ -438,6 +480,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }
         summary += `\nTo run with different data: run_test("${test.name}", { variables: { ${Object.keys(variables).map(k => `"${k}": "new_value"`).join(', ')} } })`;
       }
+      // Recorded from a scenario: its new phrases join the project's library.
+      summary += completeScenario(test.name, recording);
       summary += await closeRecordingWindow();
       // The elements it acts on that nothing names, named by the agent in the background.
       nameElementsLater(test.name);
@@ -645,6 +689,13 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         const done = result ?? error;
         rememberReplay(name, done.values, result ? result.results?.findLast?.((r) => r.tabId != null)?.tabId : error.tabId);
       }
+      // The session goes on from the page the last run played ended on — where it failed, to
+      // repair the step there; where it passed, to check it —: its next action names no tab, and
+      // the run's window was not the session's (it answered "no window of its own": the agent
+      // opened the app again, and repaired the step on a page the steps before had not prepared).
+      const lastRun = outcomes.at(-1);
+      const lastTab = lastRun?.result ? lastRun.result.results?.findLast?.((r) => r.tabId != null)?.tabId : lastRun?.error?.tabId;
+      if (new_window && lastTab != null) sess().adoptTab(lastTab);
       // The window of a run that passed, closed as the user chose (Settings → Browser windows,
       // lib/run-windows.js) or as close_window says; a failed run's stays open: repaired there.
       let closedNote = '';
@@ -995,6 +1046,92 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       const step = setStepOptional(test_name, step_order, optional);
       if (!step) return { isError: true, content: [{ type: 'text', text: `No step ${step_order} in test "${test_name}".` }] };
       return { content: [{ type: 'text', text: `Step ${step_order} of "${test_name}" (${step.command}${step.intent ? `: ${step.intent}` : ''}) is ${optional ? 'optional: on a replay, its failure is told and the test goes on' : 'required again'}.` }] };
+    }
+  );
+
+  // --- Tools to read and change a saved test (lib/test-edit.js) ---
+  server.tool(
+    'get_test',
+    [
+      'Read a saved test as it is now: its steps, numbered — what each does, on what, with which value —, its variables, the',
+      'rows it plays, how its last run went and the repairs proposed. Read it before changing it: a step\'s number is the one',
+      'fix_test_step, add_test_step, delete_test_step, add_assertion (step_order) and set_step_optional take, and it moves when',
+      'a step is added or deleted before it.',
+    ].join(' '),
+    { name: z.string().describe('Name of the test') },
+    async ({ name }) => {
+      const text = testText(name);
+      if (!text) return { isError: true, content: [{ type: 'text', text: `Test "${name}" not found.` }] };
+      return { content: [{ type: 'text', text }] };
+    }
+  );
+
+  server.tool(
+    'add_test_step',
+    [
+      'Add a step to a saved test: the browser action you just did (its action_id), put at step_order — the step now there, and',
+      'those after it, move down by one. Do the action first, on the page as the steps before it leave it: where run_test',
+      'stopped, or after doing them. Without step_order it goes at the end. To replace a step that fails, use fix_test_step;',
+      'to add a check, add_assertion.',
+    ].join(' '),
+    {
+      test_name: z.string(),
+      action_id: z.string().describe('The action_id the browser tool you just used returned (e.g. "act_5")'),
+      step_order: z.number().int().optional().describe('Where it goes (1-indexed). Default: at the end.'),
+      intent: z.string().optional().describe('What the step does, in the words of the app and the language of the project\'s tests: it is how the test reads'),
+      optional: z.boolean().optional().describe('A step the app needs only sometimes (a cookie banner): its failure does not fail the test'),
+    },
+    async ({ test_name, action_id, step_order, intent, optional }) => {
+      const action = getAction(action_id);
+      if (!action) {
+        return { isError: true, content: [{ type: 'text', text: `Action ID "${action_id}" not found. Pass the action_id the browser tool you just used returned.` }] };
+      }
+      // The tab it was done in means nothing to a replay: it plays in its own.
+      const params = Object.fromEntries(Object.entries(action.params ?? {}).filter(([key, value]) => key !== 'tabId' && value !== undefined && value !== null));
+      const added = addTestStep(test_name, step_order, {
+        command: action.command, params, locators: action.locators || null, intent: intent || null,
+        ...(action.page && { page: action.page }), ...(optional ? { optional: true } : {}),
+      });
+      if (!added) return { isError: true, content: [{ type: 'text', text: `Test "${test_name}" not found.` }] };
+      log(`Step added to "${test_name}" at ${added.order} via ${action_id}: ${action.command}`);
+      const moved = added.order < added.count ? ` The steps that were ${added.order} to ${added.count - 1} are now ${added.order + 1} to ${added.count}.` : '';
+      return { content: [{ type: 'text', text: `Step ${added.order} of "${test_name}" added (${action.command}${intent ? `: ${intent}` : ''}): the test has ${added.count} steps.${moved}` }] };
+    }
+  );
+
+  server.tool(
+    'delete_test_step',
+    'Delete a step of a saved test: the steps after it move up by one. The number is the one get_test shows now — read the test again after each step added or deleted. Never delete a check to make a failing test pass: a check that fails says what the app does.',
+    {
+      test_name: z.string(),
+      step_order: z.number().int().describe('The step to delete (1-indexed)'),
+    },
+    async ({ test_name, step_order }) => {
+      const deleted = deleteTestStep(test_name, step_order);
+      if (!deleted) return { isError: true, content: [{ type: 'text', text: `No step ${step_order} in test "${test_name}".` }] };
+      log(`Step ${step_order} of "${test_name}" deleted: ${deleted.command}`);
+      return { content: [{ type: 'text', text: `Step ${step_order} of "${test_name}" deleted (${deleted.command}${deleted.intent ? `: ${deleted.intent}` : ''}). The steps after it moved up by one.` }] };
+    }
+  );
+
+  server.tool(
+    'update_test_gherkin',
+    [
+      'Rewrite a saved test from its Gherkin, edited: get_test_as_gherkin gives it; change its phrases — a value in quotes,',
+      'their order, one removed, one added — and pass it whole. A phrase left as it was keeps its step as recorded (how its',
+      'element is found, its variable); a new one must read as a phrase of the project (get_project_context lists them, its',
+      'business steps too) — one that does not is refused, and nothing is saved. A step that has to be done in the browser',
+      'to be found is added with add_test_step instead. The test must belong to a project.',
+    ].join(' '),
+    {
+      test_name: z.string(),
+      gherkin: z.string().describe('The whole feature, as get_test_as_gherkin gave it, with the changes'),
+    },
+    async ({ test_name, gherkin }) => {
+      const saved = updateTestFeature(test_name, gherkin);
+      if (saved.error) return { isError: true, content: [{ type: 'text', text: `Not saved: ${saved.error}` }] };
+      log(`"${test_name}" rewritten from its Gherkin: ${saved.step_count} steps`);
+      return { content: [{ type: 'text', text: `"${test_name}" saved from its Gherkin: ${saved.step_count} steps${saved.row_count ? `, ${saved.row_count} rows` : ''}${saved.variables_added?.length ? `; variables added: ${saved.variables_added.map((n) => `{{${n}}}`).join(', ')}` : ''}. Read it with get_test: its step numbers may have moved.` }] };
     }
   );
 

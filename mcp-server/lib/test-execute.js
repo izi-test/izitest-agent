@@ -6,7 +6,7 @@ import { loadTest, fillStepPages } from './test-store.js';
 import { computeVariables, resolveValues } from './values.js';
 import { isServerStep, keptNames, runServerStep } from './server-steps.js';
 import { rowsOfTest, rowsToPlay, rowsSource, datasetRows, rowLabel, shownRow } from './datasets.js';
-import { redact, secretValue } from './secrets.js';
+import { redact, runSecrets } from './secrets.js';
 import { readUploadFiles, uploadPathsOf } from './upload-files.js';
 import { diagnoseFailure } from './triage.js';
 import { saveRepairs } from './repairs.js';
@@ -25,6 +25,10 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ASSERTION_SCREENSHOTS_DIR = join(__dirname, '..', 'data', 'assertion-screenshots');
+
+// What of a step the browser acts with — what it types, looks for, checks: the only parts given
+// a secret's value. Its label (`intent`) and whatever else it has keep the reference.
+const ACTING = ['params', 'locators', 'assertion', 'variableResolve'];
 
 /**
  * Assertion types supported:
@@ -511,22 +515,26 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   // once for the run, in the language of the test's project (lib/values.js). One that does not
   // work out stops the run here, told: typed as it is, it would fail further on, unexplained.
   const projectData = datasetRows(test.project_id);
-  // {{secret.NAME}}: a secret of the test's project, typed, never kept in the run's record.
-  const secrets = test.project_id != null ? (key) => secretValue(test.project_id, key) : undefined;
-  const computed = computeVariables(rawVariables, { language: test.language, datasets: (key) => projectData[key], secrets });
-  const mergedVariables = computed.values;
+  // {{secret.NAME}}: a secret of the test's project, worked out in two times (lib/secrets.js).
+  // First everything else — a variable, {{today}}, a dataset's value —, the secret's reference
+  // left as written: what the run shows and keeps (`shownVariables`, a step's label). Then the
+  // references filled, in what the browser acts with only (`mergedVariables`, ACTING).
+  const secrets = runSecrets(test.project_id ?? null);
+  const computed = computeVariables(rawVariables, { language: test.language, datasets: (key) => projectData[key], secrets: secrets.references });
+  const shownVariables = computed.values;
+  const mergedVariables = secrets.fill(shownVariables);
   const valueProblems = [...computed.problems];
   // Values kept by steps of the run (capture): known by name now, given to the steps after.
   const kept = keptNames(test.steps);
-  computed.context.lookup = (key) => mergedVariables[key];
+  computed.context.lookup = (key) => shownVariables[key];
   const waiting = () => new Set([...kept].filter((key) => !(key in mergedVariables)));
-  log(`Merged variables: ${JSON.stringify(mergedVariables)}`);
+  log(`Merged variables: ${JSON.stringify(shownVariables)}`);
 
   const applySubstitutions = (str) => {
     let result = str;
-    // Filled into the step's JSON: escaped, or a value with a quote or a backslash (a
-    // password, an expected text) made it invalid and the replay crashed.
-    for (const [key, value] of Object.entries(mergedVariables)) {
+    // Filled into the step's JSON: escaped, or a value with a quote or a backslash (an
+    // expected text) made it invalid and the replay crashed.
+    for (const [key, value] of Object.entries(shownVariables)) {
       result = result.replaceAll(`{{${key}}}`, JSON.stringify(value).slice(1, -1));
     }
     if (substitutions) {
@@ -540,8 +548,15 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     return resolved.text;
   };
 
+  // A step with the values of the run: its secrets in what acts, their references in the rest.
+  const hydrate = (step) => {
+    const hydrated = JSON.parse(applySubstitutions(JSON.stringify(step)));
+    for (const part of ACTING) if (hydrated[part] != null) hydrated[part] = secrets.fill(hydrated[part]);
+    return hydrated;
+  };
+
   const hydratedSteps = test.steps.map(step => {
-    const hydratedStep = JSON.parse(applySubstitutions(JSON.stringify(step)));
+    const hydratedStep = hydrate(step);
 
     if (hydratedStep.variable && hydratedStep.variable.listContext) {
       const varName = hydratedStep.variable.name;
@@ -572,11 +587,11 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     state: {},
     rehydrate(step) {
       const before = valueProblems.length;
-      const fresh = JSON.parse(applySubstitutions(JSON.stringify(step)));
+      const fresh = hydrate(step);
       if (valueProblems.length > before) throw new Error(`Computed values that do not work out:\n${valueProblems.slice(before).join('\n')}`);
       return fresh;
     },
-    keep(key, value) { mergedVariables[key] = value; },
+    keep(key, value) { mergedVariables[key] = value; shownVariables[key] = value; },
   };
   const withServerSteps = test.steps.some(isServerStep);
 
@@ -598,7 +613,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   const execResult = db.prepare(
     `INSERT INTO test_executions (test_id, test_name, status, total_steps, variables, new_window, trigger, assertions_total, campaign_id, data_row, data_values)
      VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
-  ).get(testId, name, hydratedSteps.length, redact(JSON.stringify(mergedVariables)), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null, dataRow,
+  ).get(testId, name, hydratedSteps.length, redact(JSON.stringify(shownVariables)), new_window ? 1 : 0, trigger, assertionsTotal, options.campaignId ?? null, dataRow,
     dataValues ? redact(JSON.stringify(dataValues)) : null);
   const executionId = execResult.id;
 
@@ -609,7 +624,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   );
   for (let i = 0; i < hydratedSteps.length; i++) {
     const step = hydratedSteps[i];
-    insertStep.run(executionId, i + 1, step.command, step.intent || null);
+    insertStep.run(executionId, i + 1, step.command, redact(step.intent || null));
   }
 
   const isDebugMode = debugController !== null;
@@ -940,7 +955,8 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   import('./websocket.js').then(({ pushOverlayState }) => {
     pushOverlayState(null, {
       mode: finalStatus === 'success' ? 'success' : 'failed',
-      error: finalStatus === 'success' ? 'Sequence completed gracefully.' : (globalError || 'Assertion failed')
+      // Drawn on the page under test, so in the run's video: a typed value shows in an error.
+      error: finalStatus === 'success' ? 'Sequence completed gracefully.' : (redact(globalError) || 'Assertion failed')
     }, lastTabId);
   }).catch(() => {});
 
@@ -989,7 +1005,9 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   }
 
   if (finalStatus === 'failed') {
-    const error = new Error(globalError || 'Test execution failed');
+    // What is thrown is told further — a tool's answer, the dashboard, a campaign's notes — and
+    // holds no secret's value either: its message, its steps, the values of the run.
+    const error = new Error(redact(globalError) || 'Test execution failed');
     error.executionId = executionId;
     if (videoFrames) error.video = { frames: videoFrames };
     if (loggedOut) error.closingLogout = loggedOut;
@@ -1005,7 +1023,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
     error.assertionsTotal = assertionsTotal;
     error.assertionsPassed = assertionsPassed;
     error.assertionsFailed = assertionsFailed;
-    error.stepResults = [
+    error.stepResults = redact([
       ...stepResults.map(sr => ({
         step: sr.step,
         command: hydratedSteps[(sr.step || 1) - 1]?.command || sr.command || '?',
@@ -1014,9 +1032,9 @@ export async function executeTest(name, variables, substitutions, start_step, ne
         error: sr.error || null
       })),
       ...assertionStepResults
-    ].sort((left, right) => (left.step || 0) - (right.step || 0));
+    ].sort((left, right) => (left.step || 0) - (right.step || 0)));
     // What this replay typed, and the tab it ended in: add_assertion links on them.
-    error.values = mergedVariables;
+    error.values = shownVariables;
     error.tabId = stepResults.findLast((sr) => sr.tabId != null)?.tabId;
     if (failedStepOrder) {
       const failedStepData = hydratedSteps[failedStepOrder - 1];
@@ -1029,7 +1047,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
   // The optional steps not done on the way: told, the run passing anyway.
   const optionalNotDone = [...stepResults, ...assertionStepResults].filter((r) => r?.optional).map((r) => ({ step: r.step, error: r.error }))
     .sort((a, b) => a.step - b.step);
-  return redact({ ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: mergedVariables, ...(optionalNotDone.length ? { optionalNotDone } : {}), ...(videoFrames ? { video: { frames: videoFrames } } : {}), ...(bugsFixed?.fixed.length || bugsFixed?.changed.length ? { bugs: bugsFixed } : {}) });
+  return redact({ ...extensionResult, executionId, assertionsPassed, assertionsFailed, assertionsTotal, values: shownVariables, ...(optionalNotDone.length ? { optionalNotDone } : {}), ...(videoFrames ? { video: { frames: videoFrames } } : {}), ...(bugsFixed?.fixed.length || bugsFixed?.changed.length ? { bugs: bugsFixed } : {}) });
 }
 
 /** A business step's phrase, by its id: whether it logs out (lib/closing-logout.js). */
@@ -1142,7 +1160,9 @@ async function triageRun({ name, test, executionId, failedStepOrder, globalError
   const history = failedOnLastPass ? { ...passes, failedOnLastPass } : passes;
 
   const startedAt = Date.now();
-  const diagnosis = await diagnoseFailure({ stored: test, failed, tabId: failedTab, sendCommand, values, history, requirements: requirementsOfTest(name), appUrls: startOrigins(test.steps, test.project_id) });
+  // Kept with the run, in its repairs, in the bug made of it: a value the run typed, found on the
+  // page or in a selector, is told by its reference.
+  const diagnosis = redact(await diagnoseFailure({ stored: test, failed, tabId: failedTab, sendCommand, values, history, requirements: requirementsOfTest(name), appUrls: startOrigins(test.steps, test.project_id) }));
   const ids = saveRepairs(name, executionId, diagnosis, runOptions, test);
   const triage = { ...diagnosis, proposals: diagnosis.proposals.map((proposal, i) => ({ id: ids[i], ...proposal, change: undefined })) };
   db.prepare('UPDATE test_executions SET triage = ? WHERE id = ?').run(JSON.stringify(triage), executionId);
@@ -1446,7 +1466,8 @@ function persistStepResult(executionId, sr) {
     sr.startedAt ? new Date(sr.startedAt).toISOString() : null,
     sr.finishedAt ? new Date(sr.finishedAt).toISOString() : null,
     sr.durationMs || null,
-    sr.locator || sr.resolvedVia || null,
+    // A locator may hold a value of the run (a text it looks for), an error what was typed.
+    redact(sr.locator || sr.resolvedVia || null),
     redact(sr.error || null),
     executionId,
     sr.step

@@ -187,9 +187,31 @@ cd mcp-server && node -e "require('./lib/db.js').initDatabase()"
 1. Si l'erreur dit « not found within 10 s » et que la page met du temps à charger, augmentez le
    délai d'attente du projet : *Projects → Edit → Wait for an element* (10 s par défaut, jusqu'à
    120 s)
-2. Utilisez `fix_test_step` pour mettre à jour l'étape problématique
-3. Ajoutez une étape `wait` avant l'étape qui échoue
-4. Utilisez `add_assertion` pour vérifier l'état avant de continuer
+2. Sur la page du test, *Ask the agent* : « ce test échoue, répare-le ». L'agent relance le
+   test, refait l'étape là où il s'est arrêté, l'enregistre et confirme en le rejouant
+3. Avec votre propre agent : `fix_test_step` pour mettre à jour l'étape problématique
+4. Ajoutez une étape `wait` avant l'étape qui échoue
+5. Utilisez `add_assertion` pour vérifier l'état avant de continuer
+
+### *Ask the agent* répond « works with Claude Code for now »
+
+**Symptôme** : sur la page d'un test, la fenêtre *Ask the agent* affiche un message au lieu de
+la conversation, et la zone de saisie est grisée.
+
+**Cause** : la conversation d'un test a besoin d'un agent qui garde les outils d'IziTest d'un
+message à l'autre. Aujourd'hui c'est Claude Code. L'agent API et les autres CLI (Copilot, Gemini,
+opencode) ne le peuvent pas encore.
+
+**Solution** : *Settings → AI agent → CLI*, fournisseur *Claude Code*.
+
+### L'agent d'un test « ne se souvient plus »
+
+**Symptôme** : dans la conversation d'un test, l'agent relit le test depuis le début au lieu de
+continuer.
+
+**Cause** : chaque message reprend la session de Claude Code. Si elle a été nettoyée (ou si le
+serveur tourne sur une autre machine), l'agent repart du test tel qu'il est et de l'historique de
+la conversation. Rien n'est perdu de ce qui a été changé dans le test.
 
 ### « Cannot find context with specified id » dans une vérification
 
@@ -229,6 +251,19 @@ précis trouvé en premier attend jusqu'à 1 s un locator plus précis (CSS, tes
 accessible) encore en recherche, et c'est lui qui est pris s'il arrive. Le rapport dit par quel
 locator l'étape a été trouvée (« via css », « via text ») : un clic « via text » sur une étape qui a
 un sélecteur précis mérite un coup d'œil.
+
+### Un clic « réussit » mais rien ne s'ouvre, une exécution sur deux
+
+L'étape du clic est verte, et c'est la suivante qui échoue : la fenêtre, le menu ou le formulaire
+que le clic devait ouvrir n'est pas là (« not found within 10 s »). Sur la vidéo de l'exécution, la
+page est encore en train de se dessiner au moment du clic (images vides, panier en attente).
+
+Le clic venait juste après une action qui ouvrait cette page : le bouton était affiché, mais les
+scripts de la page n'avaient pas encore tourné, et rien ne l'écoutait. Le rejeu attend maintenant que
+la page ait fini de se charger avant d'agir (jusqu'à 15 s), puis reclique un clic resté sans aucun
+effet. Si le problème persiste, la page branche ses boutons après son chargement : ajoutez, juste
+avant le clic, la vérification d'un élément qui n'apparaît qu'une fois la page prête (onglet
+*Steps* du test) — le rejeu attend là qu'il soit affiché.
 
 ### Une vérification de fin de test échoue alors qu'elle passait à l'enregistrement
 

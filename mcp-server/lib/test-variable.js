@@ -12,6 +12,14 @@ const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // Values an assertion may check that a replay changes: what was typed (text) or chosen in
 // a <select>. A list variable's value is an index, or a label the page shows otherwise.
 const LINKABLE_TYPES = new Set(['text', 'select']);
+const URL_CHECKS = new Set(['url_contains', 'url_equals']);
+const decodedUrl = (url) => {
+  try {
+    return decodeURIComponent(String(url).replace(/\+/g, ' '));
+  } catch {
+    return url;
+  }
+};
 // A value is looked for whole, never inside a word ("25" is not in "2025"). One character
 // still turns up by chance in any text: not worth a link.
 const MIN_LINKED_LENGTH = 2;
@@ -43,7 +51,9 @@ export function linkAssertionToVariables(assertion, variables = {}, values = {})
     // Longest first: "jane.doe@example.com" before a "jane" it contains.
     .sort(([nameA, a], [nameB, b]) => shown(nameB, b).length - shown(nameA, a).length);
 
-  let expected = assertion.expected;
+  // A URL holds a typed value encoded ("pâtes" is p%C3%A2tes, "two words" two+words): read decoded,
+  // as a URL check compares it too (test-execute.js).
+  let expected = URL_CHECKS.has(assertion.type) ? decodedUrl(assertion.expected) : assertion.expected;
   const linked = [];
   const ambiguous = [];
   for (const [name, variable] of candidates) {

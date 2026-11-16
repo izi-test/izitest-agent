@@ -132,6 +132,13 @@ test("the links of the page's header are navigation: the cart link is never \"th
   assert.equal(isNavigation({ ...RESULTS, itemXpath: "div[contains(@class,'canvas-item')]" }), false);
   // A search field's suggestions in the header stay a choice.
   assert.equal(isNavigation({ ...CART, choice: true }), false);
+  // Cards are content wherever they sit: Auchan draws its products, a brand's sponsored ones too, in a <nav>.
+  const IN_NAV = { type: 'box', totalItems: 3, selectedIndex: 1, parentSelector: '#cms-slot-topFilterSlot > div > div > div > nav > div:nth-of-type(1) > article:nth-of-type(1)', itemXpath: "div/footer/div/div/button[contains(@class,'product-thumbnail__add-to-list')]", navigation: 'nav' };
+  assert.equal(isNavigation(IN_NAV), false, 'whatever the page says of the <nav> around them');
+  assert.equal(isNavigation({ type: 'list', parentSelector: 'nav > div', itemXpath: "./div[contains(@class,'product-card')]", withinXpath: './footer/button', navigation: 'nav' }), false, 'a card found around its button');
+  assert.equal(isNavigation(IN_NAV, { isList: true, variableName: 'menu_item' }), true, 'the classifier calling them a menu is still heard');
+  assert.equal(isNavigation({ type: 'list', parentSelector: 'nav > div', itemXpath: "div[contains(@class,'product-card')]" }), false);
+  assert.equal(isNavigation({ type: 'list', parentSelector: 'nav > ul', itemXpath: 'li/a' }), true, 'the links of a <nav> stay navigation');
 });
 
 test('the suggestions of a search field stay a choice: in the header\'s <nav>, or called a dropdown menu', () => {
@@ -241,7 +248,10 @@ test('the agent is told of a click found in a list — not of a menu, a suggesti
   assert.equal(sameItemStep(steps, 2, steps[2]._listContext), 2);
   assert.match(listNote(steps, 1, 'act_2', { correct: (pick) => `pick_list_item({ pick: "${pick}" })` }), /pick_list_item\(\{ pick: "none" \}\)/);
   // Not told: a menu, a suggestion picked right after typing, a value kept fixed, a click in no list.
-  assert.equal(listNote([{ command: 'click', _listContext: { ...CARD, navigation: 'nav' } }], 0, 'a'), null);
+  const MENU = { type: 'list', parentSelector: 'nav > ul', itemXpath: 'li/a', totalItems: 6, selectedIndex: 1, itemTexts: ['Home', 'Garden'], navigation: 'nav' };
+  assert.equal(listNote([{ command: 'click', _listContext: MENU }], 0, 'a'), null);
+  // Cards the page draws in a <nav> are told: not a menu.
+  assert.match(listNote([{ command: 'click', _listContext: { ...CARD, navigation: 'nav' } }], 0, 'a'), /^List: taken as item 2 of 8/);
   assert.equal(listNote([{ command: 'fill', params: { value: 'Fr' } }, { command: 'click', _listContext: CARD }], 1, 'a'), null);
   assert.equal(listNote([{ command: 'click', _listContext: CARD, _skipVariable: true }], 0, 'a'), null);
   assert.equal(listNote([{ command: 'click', _listContext: null }], 0, 'a'), null);

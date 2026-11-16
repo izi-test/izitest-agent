@@ -25,7 +25,8 @@ const SESSION_PARAM = z.string().optional().describe(
 const NOT_ACTIONS = new Set(['list_sessions', 'open_session', 'list_profiles', 'get_tabs']);
 
 // Not waited for by stop_recording: what records nothing, and what waits for the user.
-const NOT_WAITED_FOR = new Set([...NOT_ACTIONS, 'stop_recording', 'ask_user']);
+// start_phrase waits for the actions before it itself: they are the phrase before's.
+const NOT_WAITED_FOR = new Set([...NOT_ACTIONS, 'stop_recording', 'ask_user', 'start_phrase']);
 
 /**
  * The tool calls of `session` still under way, settled — at most `ms`. stop_recording waits for

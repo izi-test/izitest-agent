@@ -1,18 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from './Button';
-import { X, Wand2, Loader2, Square, FileCode, Bot } from 'lucide-react';
+import { X, Wand2, Loader2, Square, FileCode, Bot, Sparkles, Play } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { ProjectField } from './ProjectSelector';
 import { LiveScreen } from './LiveScreen';
 import { AfterRecordingSwitch } from './BrowserWindows';
 import { toolCallLine, appendLine } from '../agent-log';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
-import { useAddCaseMutation, useCreateRequirementMutation } from '../store/services/requirementsApi';
+import { useCreateRequirementMutation } from '../store/services/requirementsApi';
 import {
   testsApi,
   useAssignToProjectMutation,
-  useCreateTestMutation,
-  usePutTestFeatureMutation,
   useProposeBusinessStepsMutation,
 } from '../store/services/testsApi';
 import { AgentAskForm } from './AgentAsk';
@@ -47,26 +45,16 @@ interface CreateTestModalProps {
 
 type AgentStatus = 'idle' | 'running' | 'done' | 'error' | 'stopped';
 
-/** A first scenario to edit, in the language of the project's tests. */
-function defaultGherkinTemplate(name: string, description: string, language: 'en' | 'fr' = 'en'): string {
-  const descLines = description
-    .split('\n')
-    .map((l) => `  ${l}`)
-    .join('\n');
-  const fr = language === 'fr';
-  const feature = fr ? `# language: fr\nFonctionnalité: ${name}` : `Feature: ${name}`;
-  const header = description ? `${feature}\n${descLines}\n\n` : `${feature}\n\n`;
-  return fr
-    ? header +
-      `  Scénario: ${name}\n` +
-      `    Soit je suis sur "https://example.com"\n` +
-      `    Quand je clique sur "#submit"\n` +
-      `    Alors je vois "Bienvenue"\n`
-    : header +
-      `  Scenario: ${name}\n` +
-      `    Given I am on "https://example.com"\n` +
-      `    When I click on "#submit"\n` +
-      `    Then I should see "Welcome"\n`;
+/**
+ * A phrase of the scenario against the project's library (mcp-server/lib/scenario-recording.js):
+ * a business step, a phrase of the library, one on an element to find on the page, or new.
+ */
+interface ScenarioPhrase {
+  n: number;
+  written: string;
+  text: string;
+  kind: 'library' | 'phrase' | 'find' | 'new';
+  target?: string;
 }
 
 const VIEWPORT_PRESETS = [
@@ -98,9 +86,6 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
 
   const [assignToProject] = useAssignToProjectMutation();
   const [createRequirement] = useCreateRequirementMutation();
-  const [addCase] = useAddCaseMutation();
-  const [createTest] = useCreateTestMutation();
-  const [putTestFeature] = usePutTestFeatureMutation();
   const [proposeBusinessSteps] = useProposeBusinessStepsMutation();
 
   const [mode, setMode] = useState<CreateMode>('ai');
@@ -118,8 +103,11 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   const [ask, setAsk] = useState<AgentAsk | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gherkinDraft, setGherkinDraft] = useState('');
-  const [gherkinDraftDirty, setGherkinDraftDirty] = useState(false);
-  const [isCreatingGherkin, setIsCreatingGherkin] = useState(false);
+  // The agent writing the scenario from the description, with the project's library.
+  const [writing, setWriting] = useState(false);
+  // Each phrase of the scenario against the library, as the server reads it; or why it does not read.
+  const [phrases, setPhrases] = useState<ScenarioPhrase[]>([]);
+  const [scenarioError, setScenarioError] = useState<string | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -142,19 +130,38 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       setAsk(null);
       setError(null);
       setGherkinDraft(preset?.gherkin ?? '');
-      setGherkinDraftDirty(!!preset?.gherkin);
-      setIsCreatingGherkin(false);
+      setWriting(false);
+      setPhrases([]);
+      setScenarioError(null);
     }
   }, [isOpen, preset]);
 
-  // Keep the Gherkin draft in sync with name/description until the user edits it, in the
-  // language of the project's tests.
   const { data: projects = [] } = useGetProjectsQuery();
   const language = projects.find((p) => p.id === projectId)?.language ?? 'en';
+
+  // The scenario read against the project's library as it is written: which phrases are its
+  // steps, which are new.
   useEffect(() => {
-    if (mode !== 'gherkin' || gherkinDraftDirty) return;
-    setGherkinDraft(defaultGherkinTemplate(name.trim() || 'My test', description.trim(), language));
-  }, [mode, name, description, gherkinDraftDirty, language]);
+    if (mode !== 'gherkin' || projectId == null || !gherkinDraft.trim()) {
+      setPhrases([]);
+      setScenarioError(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/scenario/check`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gherkin: gherkinDraft }), signal: controller.signal,
+        });
+        const data = await response.json();
+        setPhrases(response.ok ? data.phrases ?? [] : []);
+        setScenarioError(response.ok ? null : data.error ?? 'The scenario does not read');
+      } catch {
+        // Typed over, or the server is away: read again at the next change.
+      }
+    }, 500);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [mode, projectId, gherkinDraft]);
 
   useEffect(() => {
     if (isOpen) {
@@ -192,19 +199,71 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       setError('Choose the project the test belongs to');
       return;
     }
+    return runAgent(buildPrompt(name.trim(), description.trim(), useVrt, viewport), { proposeSteps: true });
+  };
 
+  // The agent writes the scenario from the description, with the project's library: shown to edit.
+  const handleWriteScenario = async () => {
+    if (projectId == null) {
+      setError('A Gherkin test belongs to a project: its library is the project\'s. Pick one above.');
+      return;
+    }
+    if (!description.trim()) {
+      setError('Describe what the test should check: the agent writes its scenario from it');
+      return;
+    }
+    if (gherkinDraft.trim() && !window.confirm('Replace the scenario written here with the one the agent writes?')) return;
+    setError(null);
+    setWriting(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/scenario/write`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() || 'Test', description: description.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      setGherkinDraft(data.gherkin);
+      setPhrases(data.phrases ?? []);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setWriting(false);
+    }
+  };
+
+  // The agent records the test phrase by phrase, its output and its browser shown here.
+  const handleRecordScenario = async () => {
+    if (!name.trim()) {
+      setError('Test name is required');
+      return;
+    }
+    if (projectId == null) {
+      setError('A Gherkin test belongs to a project: its library is the project\'s. Pick one above.');
+      return;
+    }
+    if (!gherkinDraft.trim()) {
+      setError('Write the scenario first, or have it written from the description');
+      return;
+    }
+    if (scenarioError) {
+      setError(`The scenario does not read: ${scenarioError}`);
+      return;
+    }
+    return runAgent(buildScenarioPrompt(name.trim(), description.trim(), gherkinDraft, projectId, useVrt, viewport), { proposeSteps: false });
+  };
+
+  const runAgent = async (prompt: string, { proposeSteps }: { proposeSteps: boolean }) => {
     setError(null);
     setAgentStatus('running');
     setAgentOutput('');
     setLiveTabId(null);
     setAsk(null);
 
-    const prompt = buildPrompt(name.trim(), description.trim(), useVrt, viewport);
     // The request is kept as a requirement (source "prompt"), and the test the agent records is
     // linked to it: what the test is for is not lost with the conversation. A requirement's
     // case is linked to its own.
     let requirement: string | undefined = preset?.requirement;
-    if (!requirement && !preset?.bugId) {
+    if (!requirement && !preset?.bugId && description.trim()) {
       try {
         const firstLine = description.trim().split('\n')[0];
         const saved = await createRequirement({
@@ -286,9 +345,10 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
                     }
                   }
                   // The agent then proposes its business steps, in the background: the test page shows them.
-                  if (projectId) proposeBusinessSteps(name.trim());
+                  // Recorded from a scenario, its new phrases already joined the library.
+                  if (projectId && proposeSteps) proposeBusinessSteps(name.trim());
                   setAgentStatus('done');
-                  onTestCreated(name.trim(), projectId ?? null);
+                  onTestCreated(name.trim(), projectId ?? null, mode);
                 } catch {
                   setAgentStatus('error');
                   setError('Agent finished but the test was not saved. Please try again.');
@@ -317,46 +377,6 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
     }
   };
 
-  const handleCreateFromGherkin = async () => {
-    if (!name.trim()) {
-      setError('Test name is required');
-      return;
-    }
-    if (projectId == null) {
-      setError('A project is required to use Gherkin. Pick one below.');
-      return;
-    }
-    if (!gherkinDraft.trim()) {
-      setError('Gherkin content is empty');
-      return;
-    }
-
-    setError(null);
-    setIsCreatingGherkin(true);
-    try {
-      await createTest({
-        name: name.trim(),
-        description: description.trim() || undefined,
-      }).unwrap();
-
-      await assignToProject({ testName: name.trim(), projectId }).unwrap();
-      await putTestFeature({ testName: name.trim(), feature: gherkinDraft }).unwrap();
-      if (preset?.requirement) await addCase({ ref: preset.requirement, test_name: name.trim(), case_id: preset.caseId }).unwrap();
-
-      dispatch(testsApi.util.invalidateTags([{ type: 'TestList', id: 'LIST' }]));
-      onTestCreated(name.trim(), projectId, 'gherkin');
-    } catch (err) {
-      const body = (err as { data?: { error?: string; errors?: string[] } })?.data;
-      if (body?.errors?.length) {
-        setError(body.errors.join('\n'));
-      } else {
-        setError(body?.error || (err as Error).message || 'Failed to create test');
-      }
-    } finally {
-      setIsCreatingGherkin(false);
-    }
-  };
-
   // While its agent works, the dock of this page leaves other runs' questions to their windows.
   useRunWindow(isOpen && agentStatus === 'running');
 
@@ -364,10 +384,12 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
 
   const isRunning = agentStatus === 'running';
   const showOutput = agentStatus !== 'idle';
-  const isBusy = isRunning || isCreatingGherkin;
+  const isBusy = isRunning || writing;
   // While the agent works, and once it is done, the browser and the agent's output take the
   // room: the form gives way to a line saying what was asked. It comes back to try again.
-  const watching = mode === 'ai' && (isRunning || agentStatus === 'done');
+  const watching = isRunning || agentStatus === 'done';
+  const count = (kind: ScenarioPhrase['kind']) => phrases.filter((p) => p.kind === kind).length;
+  const newPhrases = phrases.filter((p) => p.kind === 'new');
 
   return (
     // Closed by its buttons only (✕, Cancel / Close): a click beside it closed it, losing what was
@@ -375,7 +397,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
     <div className="modal">
       <div className="modal-overlay" />
       <div
-        className={`modal-content create-wf-modal ${showOutput ? 'create-wf-modal--expanded' : ''} ${mode === 'ai' && showOutput ? 'create-wf-modal--live' : ''}`}
+        className={`modal-content create-wf-modal ${showOutput ? 'create-wf-modal--expanded' : ''} ${showOutput ? 'create-wf-modal--live' : ''}`}
       >
         <div className="modal-header">
           <h3>{mode === 'gherkin' ? 'Create test from Gherkin' : 'Create test with AI'}</h3>
@@ -429,7 +451,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               <FileCode size={16} />
               <div className="create-mode-btn__text">
                 <strong>Gherkin</strong>
-                <span>Write the scenario yourself</span>
+                <span>Its scenario first, with the project's steps</span>
               </div>
             </button>
           </div>
@@ -454,39 +476,27 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
           </div>
 
           <div className="field-group">
-            <label>{mode === 'gherkin' ? 'Description' : 'What should the test check?'}</label>
+            <label>What should the test check?</label>
             <textarea
               className="create-wf-textarea"
               value={description}
               onChange={e => setDescription(e.target.value)}
-              placeholder="Describe what the test should verify step by step. The AI agent will use the browser to record the actions and add assertions.&#10;&#10;Example: Go to google.com, search for 'React documentation', verify the results page contains 'react.dev'."
-              disabled={isRunning}
+              placeholder={mode === 'gherkin'
+                ? "Describe what the test should check. The agent writes its scenario with the project's steps, and proposes new ones where none says it.\n\nExample: search a product, add the second result to the cart three times, check the cart total is three times its price."
+                : "Describe what the test should verify step by step. The AI agent will use the browser to record the actions and add assertions.\n\nExample: Go to google.com, search for 'React documentation', verify the results page contains 'react.dev'."}
+              disabled={isBusy}
               rows={4}
             />
+            {mode === 'gherkin' && (
+              <div className="create-wf-write">
+                <Button size="sm" variant="secondary" icon={writing ? Loader2 : Sparkles} onClick={handleWriteScenario}
+                  disabled={isBusy || projectId == null || !description.trim()}>
+                  {writing ? 'Writing the scenario…' : 'Generate Gherkin'}
+                </Button>
+                <span className="create-wf-hint">With the steps of the project's library first; what none says, as a new step.</span>
+              </div>
+            )}
           </div>
-
-          {mode === 'ai' && (
-            <>
-              <div className="create-options">
-                <label className="switch">
-                  <input type="checkbox" checked={useVrt} onChange={e => setUseVrt(e.target.checked)} disabled={isRunning} />
-                  <span className="switch__text">Visual regression (VRT)<span className="switch__hint">Keep a screenshot to compare the next runs against.</span></span>
-                </label>
-                <label className="field">
-                  <span className="field__label">Window size</span>
-                  <select value={viewportToString(viewport)} onChange={(e) => setViewport(parseViewportString(e.target.value))} disabled={isRunning}>
-                    {VIEWPORT_PRESETS.map(preset => (
-                      <option key={preset.value} value={preset.value}>{preset.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="create-options__after">
-                <AfterRecordingSwitch hint="Once the agent has saved the test, the window it recorded it in closes — for every recording (Settings → Browser windows)." />
-              </div>
-            </>
-          )}
-          </>)}
 
           {mode === 'gherkin' && (
             <div className="field-group">
@@ -494,22 +504,63 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               <textarea
                 className="gherkin-textarea gherkin-textarea--modal"
                 value={gherkinDraft}
-                onChange={(e) => { setGherkinDraft(e.target.value); setGherkinDraftDirty(true); }}
+                onChange={(e) => setGherkinDraft(e.target.value)}
+                placeholder={language === 'fr'
+                  ? '# language: fr\nFonctionnalité: …\n\n  Scénario: …\n    Soit je suis sur "…"\n    Quand …\n    Alors …'
+                  : 'Feature: …\n\n  Scenario: …\n    Given I am on "…"\n    When …\n    Then …'}
                 spellCheck={false}
                 disabled={isBusy}
                 rows={12}
               />
-              <p className="create-wf-hint">
-                Edit the template to match your scenario. It will be validated against the project's step definitions on save.
-              </p>
+              {scenarioError ? (
+                <p className="create-wf-hint create-wf-hint--error">It does not read yet: {scenarioError}</p>
+              ) : phrases.length > 0 ? (
+                <div className="scenario-steps">
+                  {/* The project's business steps apart from the generic phrases every project has: only those say its app. */}
+                  <p className="create-wf-hint">
+                    Of its {phrases.length} steps: <strong>{count('library')} business step{count('library') === 1 ? '' : 's'}</strong> of the project
+                    {' · '}<strong>{count('phrase') + count('find')} generic phrase{count('phrase') + count('find') === 1 ? '' : 's'}</strong> every project has (go to, click, see…
+                    {count('find') > 0 && <>; {count('find')} on an element to find on the page, named as written</>})
+                    {' · '}<strong>{newPhrases.length} new</strong>{newPhrases.length > 0 && <> — the agent finds how to do {newPhrases.length === 1 ? 'it' : 'them'} on the page, and {newPhrases.length === 1 ? 'it joins' : 'they join'} the library once the test is recorded</>}.
+                  </p>
+                  {(count('library') > 0 || newPhrases.length > 0) && (
+                    <ul className="scenario-steps__new">
+                      {phrases.filter((p) => p.kind === 'library').map((p) => <li key={p.n}><span className="tag tag--green">business step</span> {p.written} {p.text}</li>)}
+                      {newPhrases.map((p) => <li key={p.n}><span className="tag tag--blue">new</span> {p.written} {p.text}</li>)}
+                    </ul>
+                  )}
+                </div>
+              ) : (
+                <p className="create-wf-hint">Generate it from the description, or write it. At <em>Create test</em>, the agent records it in the browser, phrase by phrase.</p>
+              )}
             </div>
           )}
+
+          {/* The recording's options, whichever way it is made. */}
+          <div className="create-options">
+            <label className="switch">
+              <input type="checkbox" checked={useVrt} onChange={e => setUseVrt(e.target.checked)} disabled={isRunning} />
+              <span className="switch__text">Visual regression (VRT)<span className="switch__hint">Keep a screenshot to compare the next runs against.</span></span>
+            </label>
+            <label className="field">
+              <span className="field__label">Window size</span>
+              <select value={viewportToString(viewport)} onChange={(e) => setViewport(parseViewportString(e.target.value))} disabled={isRunning}>
+                {VIEWPORT_PRESETS.map(preset => (
+                  <option key={preset.value} value={preset.value}>{preset.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="create-options__after">
+            <AfterRecordingSwitch hint="Once the agent has saved the test, the window it recorded it in closes — for every recording (Settings → Browser windows)." />
+          </div>
+          </>)}
 
           {error && (
             <div className="create-wf-error" style={{ whiteSpace: 'pre-wrap' }}>{error}</div>
           )}
 
-          {mode === 'ai' && showOutput && (
+          {showOutput && (
             <div className="create-wf-run">
             <LiveScreen tabId={liveTabId} running={isRunning} waiting="Waiting for the agent to open a page…" />
             <div className="create-wf-run__log">
@@ -544,7 +595,7 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               Stop Agent
             </Button>
           ) : (
-            <Button variant="cancel" onClick={handleClose} disabled={isCreatingGherkin}>
+            <Button variant="cancel" onClick={handleClose} disabled={writing}>
               {agentStatus === 'done' || agentStatus === 'stopped' ? 'Close' : 'Cancel'}
             </Button>
           )}
@@ -558,20 +609,49 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               {isRunning ? 'Generating…' : 'Generate test'}
             </Button>
           )}
-          {mode === 'gherkin' && (
+          {mode === 'gherkin' && agentStatus !== 'done' && agentStatus !== 'stopped' && (
             <Button
               variant="primary"
-              icon={isCreatingGherkin ? Loader2 : FileCode}
-              onClick={handleCreateFromGherkin}
-              disabled={isCreatingGherkin || !name.trim() || projectId == null}
+              icon={isRunning ? Loader2 : Play}
+              onClick={handleRecordScenario}
+              disabled={isBusy || !name.trim() || projectId == null || !gherkinDraft.trim() || !!scenarioError}
+              title="The agent records it in the browser, phrase by phrase: its output and its browser show here"
             >
-              {isCreatingGherkin ? 'Creating...' : 'Create & Edit Gherkin'}
+              {isRunning ? 'Recording…' : 'Create test'}
             </Button>
           )}
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * What the agent recording a test from its scenario is told: start_recording with it, as written —
+ * its answer numbers the phrases and says how to do each (mcp-server/lib/scenario-recording.js).
+ */
+function buildScenarioPrompt(name: string, description: string, gherkin: string, projectId: number, useVrt: boolean, viewport: { width: number; height: number } | null): string {
+  const options = [
+    `name "${name}"`,
+    description ? `description ${JSON.stringify(description)}` : null,
+    `project_id ${projectId}`,
+    useVrt ? 'use_vrt true' : null,
+    viewport ? `viewport_width ${viewport.width}, viewport_height ${viewport.height}` : null,
+  ].filter(Boolean).join(', ');
+  return `You are a browser test automation assistant. Record the test below from its Gherkin scenario, phrase by phrase, in the browser.
+
+1. Call "start_recording" with ${options}, and scenario: the feature below, exactly as written. Its answer numbers the phrases and says how to do each.
+2. For each phrase, in order: call "start_phrase" with its number and the phrase, then do it in the browser — a business step of the project with "play_business_step", any other with the browser tools (navigate, snapshot, click, fill, select…), a Then phrase with "add_assertion" (test_name "${name}") right after the actions before it. Do only what the phrase says; values in quotes are the values to type, pick or expect.
+3. Use "snapshot" to find on the page what a phrase names before acting on it. If a step fails, try another way to do the same thing; never change what the phrase checks.
+4. When every phrase is done, call "stop_recording": the new phrases join the project's library.
+
+The scenario:
+
+\`\`\`gherkin
+${gherkin.trim()}
+\`\`\`
+
+Begin now.`;
 }
 
 function buildPrompt(name: string, description: string, useVrt: boolean, viewport: { width: number; height: number } | null): string {

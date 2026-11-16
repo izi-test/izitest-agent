@@ -11,7 +11,8 @@ data looks like. Tests, requirements, datasets and campaigns belong to a project
 
 Its **secrets** (*Edit → Secrets*): the passwords and API keys its tests type, kept encrypted on
 this machine. A step writes `{{secret.NAME}}`; IziTest types the value, and the agent only ever knows
-the name.
+the name. A run shows and keeps the reference too: a step's label — in the bar a run draws on the
+page, in its video, in its report — reads `{{secret.NAME}}`, never the value.
 
 ## 2. Requirements
 
@@ -57,8 +58,25 @@ A planned case becomes a test in one of two ways:
 
 Without a requirement, *New test* does the same from a description (*AI Agent*) or from Gherkin.
 The window the agent records in stays open once the test is saved, unless you check *Close the
-window once the test is saved* (in *New test → AI Agent*, or in *Settings → Browser windows*): then
-it closes as soon as the test is saved, for every recording, yours and your agent's.
+window once the test is saved* (in *New test*, or in *Settings → Browser windows*): then it closes
+as soon as the test is saved, for every recording, yours and your agent's.
+
+**From Gherkin**, the scenario comes first:
+1. Describe what the test should check, then *Generate Gherkin*. The agent writes the scenario
+   with the project's **library**: its business steps wherever one does what the test needs, its
+   phrases with the elements of the app by name. What no step says, it writes as a **new step**, in
+   the words of the domain ("Quand j'ajoute le premier produit trouvé au panier").
+   An account or a password is one of the project's secrets or a value of its datasets, never an
+   invented one: when none fits, the value is left empty (`""`), and the agent asks you for it while
+   recording.
+2. The scenario shows below, to edit as you like. Under it, its steps are counted three ways: the
+   project's **business steps** it uses (listed), the **generic phrases** every project has (go to,
+   click, see…), and the **new** ones (listed).
+3. *Create test*: the agent records it in your Chrome, phrase by phrase, its console and its
+   browser shown in the window. Once the test is saved, each new step **joins the library**, made of
+   the actions the agent recorded for it, its values in quotes its parameters. The next scenarios
+   can use it. An element the scenario names is the one the step acts on, under that name, so the
+   saved test reads as the scenario was written.
 With your own agent, ask it — for instance in Claude Code:
 
 > Design the tests of REQ-12 with design_tests, then record the first scenario.
@@ -69,6 +87,13 @@ page does otherwise, the test reports a **non-conformity** rather than adapting 
 When the agent needs something nobody gave it — an account to log in with, its password — it
 **asks you** instead of making it up: the question shows beside its browser, you answer, it goes
 on. A password you give is kept in the project's secrets; the agent gets its name, not its value.
+
+Before a recording is saved, it is **read over** for what would pass once, then fail at the next
+run. A product picked by its place ("the second result"), then named as it was in a later step —
+removed from the list as "Lait demi-écrémé UHT" — is fixed by itself: its name is kept right after
+it is picked, and the later steps use that name, whatever product a replay picks. What cannot be
+fixed that way (a value typed, written as it was further on) is told to the agent, which fixes it
+while the page is still open.
 
 What the tests click, fill and check are the project's **elements**, listed page by page under
 *Elements* with the tests using each. An element has a name the Gherkin uses ("When I fill
@@ -103,6 +128,11 @@ the project's **wait for an element**: 10 s by default, set in *Projects → Edi
 tests fail on pages still loading (a slow test server, a company laptop, the browser without
 windows); a test that passes is not slowed down.
 
+A step also waits for **its page to have loaded** before it acts, up to 15 s: a button is drawn
+before the page's scripts listen to it, and a click made right after the click that opened the
+page did nothing — the step passed, and the one after it failed, one run in two. A click that
+still has no effect at all is made once more.
+
 A failing run is **triaged**: the test drifted from the page, the page was late, a value changed,
 the application regressed, the requirement is not met, the environment failed. When it can, IziTest
 proposes a **repair** — another locator, a wait — that you verify on a replay before applying it,
@@ -113,6 +143,44 @@ that finds the element another way says "also used by 3 steps in 2 tests", and a
 them while *Apply the repair to them too* stays checked. Editing a step by hand (its selector, its
 locators) shows the same list, with a box to give them the new locators as well — unchecked, since
 an edited step may now aim at another element. Each step keeps what it types and what it checks.
+
+### Ask the agent, on the test's page
+
+*Ask the agent*, beside *Run*, opens a conversation about the test: on the left the browser the
+agent works in, live; on the right what you ask and what it answers. Ask in your own words, in
+your language:
+
+> Ce test échoue, répare-le.
+>
+> Ajoute une étape qui coche « Remember me » juste avant le clic sur Sign in.
+>
+> Run it and tell me what it checks.
+
+- **Repair**: it runs the test and, where a step fails, looks at the page as the run left it,
+  does the step by hand and saves how it found the element. Then it runs the test again and says
+  whether it passes.
+- **Change**: it adds a step (an action it does in the browser, put at its place in the test),
+  deletes one, adds a check, makes a step optional, rewrites a phrase or a value of the scenario.
+  It never removes or loosens a check to make a failing test pass: when the application itself is
+  wrong, it says so and changes nothing.
+- It **answers, then waits** for your next message, and goes on from there: it remembers what
+  was said and done, and its browser is where it left it. When a request reads two ways, or would
+  delete steps you did not name, it asks before acting.
+- Under each answer, *N actions* lists what it did, in plain words. The red button **stops** it;
+  what it already changed in the test stays.
+- The conversation is **the test's**: closed and opened again — the next day, after a restart —
+  it is there. *Start over* forgets it; it is deleted with the test. The test's steps, runs and
+  Gherkin on the page behind are refreshed after each answer.
+- The agent works in a window of your Chrome, opened without taking the focus, or in the
+  **headless** browser when *Headless* is on (the switch under the live view, the same as in *Run
+  options*): nothing opens on your screen, you follow it in the conversation's window only. The
+  choice is made when the conversation's window opens its browser; closing that window closes the
+  agent's browser window too, and one left open without a message for 30 minutes gives it back.
+- **Never type a password in a message**: the agent asks for it in a form beside the
+  conversation, and it is kept in the project's secrets. A value of one of the project's secrets
+  typed anyway is replaced by its name before the message is kept or sent to the agent.
+- It needs **Claude Code** as the agent (*Settings → AI agent → CLI*). The API agent and the
+  other CLIs cannot hold this conversation yet: the window says so.
 
 ## 6. With data
 

@@ -17,12 +17,12 @@ import {
   openAssertionModal,
   closeAssertionModal,
 } from '../store/slices/testDetailSlice';
-import { executeTest, executeAgent, closeLiveModal, stopExecution, sendDebugAction, toggleBreakpoint } from '../store/slices/executionSlice';
+import { executeTest, executeAgent, closeLiveModal, stopExecution, sendDebugAction, toggleBreakpoint, incrementRefreshTrigger } from '../store/slices/executionSlice';
 import {
-  useGetTestQuery, useUpdateTestMutation, useDeleteTestMutation, useDeleteStepMutation, useReorderStepsMutation, useGetTestCampaignsQuery,
+  testsApi, useGetTestQuery, useUpdateTestMutation, useDeleteTestMutation, useDeleteStepMutation, useReorderStepsMutation, useGetTestCampaignsQuery,
   useBindDatasetMutation, useSetStepOptionalMutation,
 } from '../store/services/testsApi';
-import { useGetExecutionsQuery, useGetLastRunQuery } from '../store/services/executionsApi';
+import { executionsApi, useGetExecutionsQuery, useGetLastRunQuery } from '../store/services/executionsApi';
 import { useGetProjectsQuery, useGetDatasetsQuery } from '../store/services/projectsApi';
 import { useStartCampaignMutation } from '../store/services/campaignsApi';
 import { useGetTestRequirementsQuery } from '../store/services/requirementsApi';
@@ -36,6 +36,7 @@ import { Button } from './Button';
 import { ExecutionHistory } from './ExecutionHistory';
 import { rowValuesText, rowsVerdict } from '../rows';
 import { LiveExecutionModal } from './LiveExecutionModal';
+import { TestAgentModal } from './TestAgentModal';
 import { GherkinEditor } from './GherkinEditor';
 import { BusinessStepProposals, BusinessStepsNotice } from './BusinessStepProposals';
 import { ComputedHint } from './ComputedValues';
@@ -50,7 +51,7 @@ import { Card, EmptyState, KeyChip, Menu, ProjectChip, ResultBar, StatusPill } f
 import { dateTime, formatDuration, relativeTime } from '../format';
 import {
   ArrowLeft, Play, Save, Trash2, List, History, ChevronUp, ChevronDown, Pencil, Plus, Database, ShieldCheck, Monitor, FileCode, Code,
-  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight, MousePointerClick, Table, CircleDashed,
+  Layers, FolderInput, Loader2, Undo2, Clock, ChevronRight, MousePointerClick, Table, CircleDashed, Bot,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -155,6 +156,8 @@ export function TestDetail({ testName }: TestDetailProps) {
   const [viewport, setViewport] = useState<{ width: number; height: number } | null>(null);
   const [runOptionsOpen, setRunOptionsOpen] = useState(false);
   const [moving, setMoving] = useState(false);
+  // The test's conversation with the agent (TestAgentModal): repair it, change it.
+  const [agentOpen, setAgentOpen] = useState(false);
   const [syncedWith, setSyncedWith] = useState<string | null>(null);
   const runOptionsRef = useRef<HTMLDivElement>(null);
 
@@ -423,6 +426,9 @@ CRITICAL RULES:
             <input className="inline-edit inline-edit--sub" value={editDescription} onChange={e => dispatch(setEditDescription(e.target.value))} placeholder="Add a description…" aria-label="Description" />
           </div>
           <div className="detail-head__actions">
+            <Button variant="secondary" icon={Bot} onClick={() => setAgentOpen(true)} title="Ask the agent to repair this test, to change it, or to say what it does: its browser shows live beside the conversation">
+              Ask the agent
+            </Button>
             <div className="split-button" ref={runOptionsRef}>
               <Button icon={isExecuting ? Loader2 : Play} onClick={handleExecute} disabled={isExecuting}>
                 {isExecuting ? 'Running…' : useAgent ? 'Run with agent' : useDebug ? 'Debug' : runHeadless ? 'Run headless' : 'Run'}
@@ -837,6 +843,19 @@ CRITICAL RULES:
           }}
         />
       )}
+
+      <TestAgentModal
+        testName={test.name}
+        isOpen={agentOpen}
+        onClose={() => setAgentOpen(false)}
+        lastRunFailed={(lastOfRows?.status ?? lastRun?.status) === 'failed'}
+        onAnswered={(changed) => {
+          // It ran the test, maybe changed it: its runs, its steps, its Gherkin are read again.
+          dispatch(incrementRefreshTrigger());
+          dispatch(executionsApi.util.invalidateTags([{ type: 'ExecutionList', id: test.name }]));
+          if (changed) dispatch(testsApi.util.invalidateTags([{ type: 'Test', id: test.name }, { type: 'TestList', id: 'LIST' }]));
+        }}
+      />
 
       <LiveExecutionModal
         isOpen={isLiveModalOpen}

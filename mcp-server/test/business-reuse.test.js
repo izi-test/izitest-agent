@@ -90,13 +90,14 @@ test('played, its actions go to the browser one by one with the session\'s value
     return { results: [{ status: 'success', tabId: 9 }] };
   };
   const live = (params) => JSON.parse(JSON.stringify(params).replace(/\{\{secret\.(\w)\}\}/g, 'value-$1'));
-  assert.deepEqual(await playBusinessSteps(found, { sendCommand, live, tabId: 9, elementTimeoutMs: 1000 }), { tabId: 9 });
+  assert.deepEqual(await playBusinessSteps(found, { sendCommand, live, tabId: 9, elementTimeoutMs: 1000 }), { tabId: 9, notDone: [] });
   assert.deepEqual(sent.map((s) => s.params.value ?? null), ['value-U', 'value-P', null]);
   assert.equal(found.steps[0].params.value, '{{secret.U}}', 'what is recorded keeps the reference');
 
   const failing = async () => ({ results: [{ status: 'failed', error: 'All 2 locators failed' }] });
   const played = await playBusinessSteps(found, { sendCommand: failing, live, tabId: 9, elementTimeoutMs: 1000 });
   assert.match(played.error, /stopped at its step 1 of 3 \(fill.*All 2 locators failed/);
+  assert.equal(played.failedAt, 1);
 });
 
 test('inserted in a test, its steps keep the link and the test reads as the phrase', () => {

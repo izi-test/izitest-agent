@@ -23,20 +23,20 @@ import {
   deleteStepDefinition,
 } from './gherkin/step-definition-store.js';
 import { serializeTestToFeature } from './gherkin/serialize.js';
-import { stepsForEditedFeature } from './gherkin/reconcile.js';
 import { withElementNames, elementTargets, listElements, renameElement, deleteElement, usesOfStep, relocateElement, elementsToName } from './element-store.js';
 import { nameElements } from './element-naming.js';
+import { writeScenario, scenarioOf } from './scenario-recording.js';
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { languageOf } from './gherkin/language.js';
 import { createProject, elementTimeoutOf } from './projects.js';
 import { computeVariables } from './values.js';
 import { listDatasets, getDataset, saveDataset, deleteDataset, bindDataset, datasetRows, rowLabel, datasetLines, rowsOfTest, testRows, saveTestRows, codeData, shownRow, datasetOfTest } from './datasets.js';
-import { withExamples, rowsFromExamples } from './gherkin/outline.js';
+import { withExamples } from './gherkin/outline.js';
 import { lastRunOfTest } from './test-status.js';
-import { examplesOf } from './gherkin/parse.js';
 import { listSecrets, saveSecret, deleteSecret, secretLines, secretValue } from './secrets.js';
 import { pendingAsks, answerAsk, cancelAsk, cancelAsksOfRun, followAsks } from './asks.js';
-import { loadTest, saveTest, insertTestStep } from './test-store.js';
+import { loadTest, insertTestStep } from './test-store.js';
+import { projectDefinitions, updateTestFeature, deleteTestStep } from './test-edit.js';
 import { stepsOfBusinessPhrase, businessStepsOf } from './business-play.js';
 import { listRepairs, repairsById, getRepair, verifyRepair, applyRepair, rejectRepair, repairDiff, repairUses } from './repairs.js';
 import { listBugs, getBug, updateBug, reportBug, reproBrief, adoptReproTest, listExplorations, getExploration, runExploration, recordRunBug } from './bugs.js';
@@ -58,6 +58,7 @@ import { followRun } from './live.js';
 import { windowSettings, setWindowSettings, closesAfterRun } from './run-windows.js';
 import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless, holdHeadless, setIdleMinutes } from './headless.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
+import { testConversation, sendTestMessage, stopTestAgent, closeTestConversation, forgetTestConversation } from './agent/test-chat.js';
 
 // How long to wait for a reloaded extension to register again. A reload drops the socket
 // and the service worker reconnects after ~1s; this leaves room for a slow restart.
@@ -71,18 +72,6 @@ const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 function json(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
-}
-
-/** A project's step definitions, in the order the Gherkin parser and serializer read them. */
-function projectDefinitions(projectId) {
-  return db
-    .prepare('SELECT * FROM step_definitions WHERE project_id = ?')
-    .all(projectId)
-    .map((r) => ({
-      ...r,
-      params_template: parseJson(r.params_template) || {},
-      steps_template: parseJson(r.steps_template) || null,
-    }));
 }
 
 async function readBody(req) {
@@ -298,52 +287,12 @@ export async function apiRouter(req, res, url) {
       return res.end(feature);
     }
 
-    // ── PUT /api/tests/:name/feature — parse Gherkin and replace test_steps ──
+    // ── PUT /api/tests/:name/feature — parse Gherkin and replace test_steps (lib/test-edit.js) ──
     if (method === 'PUT' && params) {
       const body = await readBody(req);
-      const featureText = body.feature;
-      if (typeof featureText !== 'string') return json(res, 400, { error: 'feature (string) is required' });
-
-      const existing = loadTest(params.name);
-      if (!existing) return json(res, 404, { error: 'Test not found' });
-      const projectId = existing.project_id;
-      if (!projectId) return json(res, 400, { error: 'Test is not assigned to a project; assign it first to use Gherkin' });
-
-      let steps;
-      let examples;
-      try {
-        // Unchanged phrases keep their steps whole: list variables, intents, locators.
-        // A name of an element reads back as that element.
-        steps = stepsForEditedFeature(featureText, projectDefinitions(projectId), withElementNames(existing), { targets: elementTargets(projectId) });
-        examples = examplesOf(featureText);
-      } catch (err) {
-        if (err.code === 'GHERKIN_UNRESOLVED') {
-          return json(res, 422, { error: err.message, errors: err.errors });
-        }
-        return json(res, 400, { error: err.message });
-      }
-      // The Examples of a Scenario Outline are the rows it plays: its own, saved with it. Bound
-      // to a dataset, they are the dataset's: changed there, not here.
-      const bound = datasetOfTest(existing.name);
-      const own = testRows(existing.name);
-      let rows = null;
-      if (examples) {
-        rows = rowsFromExamples(examples, bound ? bound.rows : own);
-        const shown = (i, column) => String(bound?.rows[i]?.[column] ?? existing.variables?.[column]?.defaultValue ?? '');
-        if (bound && (rows.length !== bound.rows.length || rows.some((row, i) => Object.entries(row).some(([column, value]) => value !== shown(i, column))))) {
-          return json(res, 400, { error: `Its rows are those of the dataset "${bound.name}": change them in Datasets, or unbind it (Data tab) to type rows of the test's own` });
-        }
-      }
-
-      saveTest({ ...existing, steps });
-      let saved = { rows: own, added: [] };
-      if (!bound) {
-        // A Scenario, from an Outline: its rows are gone. One row is shown as a Scenario: kept.
-        if (examples) saved = saveTestRows(existing.name, rows, { addVariables: true });
-        else if (own.length > 1) saved = saveTestRows(existing.name, []);
-        if (saved.error) return json(res, saved.status, { error: `Steps saved, not the rows: ${saved.error}` });
-      }
-      return json(res, 200, { success: true, step_count: steps.length, row_count: saved.rows?.length ?? 0, ...(saved.added?.length ? { variables_added: saved.added } : {}) });
+      const saved = updateTestFeature(params.name, body.feature);
+      if (saved.error) return json(res, saved.status, { error: saved.error, ...(saved.errors ? { errors: saved.errors } : {}) });
+      return json(res, 200, { success: true, ...saved });
     }
 
     // ── POST /api/values/preview — { values: { name: "{{today | dd/MM/yyyy}}" }, language }: what
@@ -1270,30 +1219,11 @@ export async function apiRouter(req, res, url) {
       return json(res, 200, { ...parseRow(result, 'params', 'locators', 'variable', 'assertion'), relocated });
     }
 
-    // DELETE /api/tests/:name/steps/:stepOrder — delete step & renumber
+    // DELETE /api/tests/:name/steps/:stepOrder — delete step & renumber (lib/test-edit.js)
     params = matchRoute(path, '/api/tests/:name/steps/:stepOrder');
     if (method === 'DELETE' && params) {
-      const test = db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name);
-      if (!test) return json(res, 404, { error: 'Test not found' });
-
-      const testId = test.id;
-      const stepOrder = parseInt(params.stepOrder);
-
-      const deleteAndReorder = db.transaction(() => {
-        const del = db.prepare(
-          'DELETE FROM test_steps WHERE test_id = ? AND step_order = ?'
-        ).run(testId, stepOrder);
-        if (del.changes === 0) return false;
-
-        db.prepare(
-          'UPDATE test_steps SET step_order = step_order - 1 WHERE test_id = ? AND step_order > ?'
-        ).run(testId, stepOrder);
-        db.prepare("UPDATE tests SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(testId);
-        return true;
-      });
-
-      const deleted = deleteAndReorder();
-      if (!deleted) return json(res, 404, { error: 'Step not found' });
+      if (!db.prepare('SELECT id FROM tests WHERE name = ?').get(params.name)) return json(res, 404, { error: 'Test not found' });
+      if (!deleteTestStep(params.name, parseInt(params.stepOrder, 10))) return json(res, 404, { error: 'Step not found' });
       return json(res, 200, { success: true });
     }
 
@@ -1516,6 +1446,32 @@ export async function apiRouter(req, res, url) {
       if (!db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)) return json(res, 404, { error: 'Project not found' });
       // `to_name`: those nothing on the page names, the agent can name (lib/element-naming.js).
       return json(res, 200, { elements: listElements(projectId), to_name: elementsToName(projectId).elements.map((e) => e.id) });
+    }
+
+    // ── POST /api/projects/:id/scenario/write { name, description } — the agent writes the test's
+    // scenario with the project's library (lib/scenario-recording.js): { gherkin, phrases } ──
+    params = matchRoute(path, '/api/projects/:id/scenario/write');
+    if (method === 'POST' && params) {
+      const projectId = parseInt(params.id, 10);
+      if (!db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)) return json(res, 404, { error: 'Project not found' });
+      const body = await readBody(req);
+      if (!String(body.description ?? '').trim()) return json(res, 400, { error: 'Describe what the test should check' });
+      const abort = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) abort.abort(); });
+      try {
+        return json(res, 200, await writeScenario(projectId, { name: String(body.name ?? '').trim() || 'Test', description: body.description, complete, signal: abort.signal }));
+      } catch (err) {
+        return json(res, 502, { error: err.message });
+      }
+    }
+
+    // ── POST /api/projects/:id/scenario/check { gherkin } — each phrase against the library:
+    // library, phrase, find (an element to find on the page), new ──
+    params = matchRoute(path, '/api/projects/:id/scenario/check');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      const read = scenarioOf(parseInt(params.id, 10), body.gherkin);
+      return read.error ? json(res, 400, { error: read.error }) : json(res, 200, read);
     }
 
     // ── POST /api/projects/:id/elements/name — the elements nothing names, named by the agent ──
@@ -1923,6 +1879,8 @@ export async function apiRouter(req, res, url) {
           'get_project_context', 'ask_user',
           // A business step of the project played as one: the test reads as its phrase.
           'play_business_step',
+          // A scenario written first, recorded phrase by phrase (lib/scenario-recording.js).
+          'start_phrase',
           // A step only needed sometimes (a cookie banner): its failure does not fail the test.
           'set_step_optional'
         ].map(dashboardToolName).join(',');
@@ -2057,6 +2015,56 @@ export async function apiRouter(req, res, url) {
       });
 
       return;
+    }
+
+    // ── The conversation a test page opens with the agent about its test (lib/agent/test-chat.js) ──
+    // GET: whether the agent set can hold one, its messages so far. DELETE: start over.
+    params = matchRoute(path, '/api/tests/:name/agent');
+    if (method === 'GET' && params) {
+      const conversation = testConversation(params.name);
+      if (!conversation) return json(res, 404, { error: 'Test not found' });
+      return json(res, 200, conversation);
+    }
+    if (method === 'DELETE' && params) {
+      if (!await forgetTestConversation(params.name, { sendCommand })) return json(res, 404, { error: 'Test not found' });
+      return json(res, 200, { success: true });
+    }
+
+    // POST …/agent/messages { message, headless } — a message, and the agent's answer streamed
+    // as it works (SSE). The page going away, or its Stop, stops the agent.
+    params = matchRoute(path, '/api/tests/:name/agent/messages');
+    if (method === 'POST' && params) {
+      const body = await readBody(req);
+      const abort = new AbortController();
+      let started = false;
+      const send = (event) => {
+        if (!started) {
+          started = true;
+          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+        }
+        if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+      res.on('close', () => { if (!res.writableEnded) abort.abort(); });
+      try {
+        await sendTestMessage(params.name, body.message, { headless: body.headless === true, send, signal: abort.signal });
+      } catch (err) {
+        if (!started) return json(res, err.status ?? 500, { error: err.message });
+        send({ type: 'done', status: 'error', error: err.message });
+      }
+      if (!res.writableEnded) res.end();
+      return;
+    }
+
+    // POST …/agent/stop — the agent at work is stopped: its answer so far ends the message's stream.
+    params = matchRoute(path, '/api/tests/:name/agent/stop');
+    if (method === 'POST' && params) {
+      return json(res, 200, { stopped: stopTestAgent(params.name) });
+    }
+
+    // POST …/agent/close — its window was closed: the agent's browser window closes, the conversation stays.
+    params = matchRoute(path, '/api/tests/:name/agent/close');
+    if (method === 'POST' && params) {
+      return json(res, 200, { closed: await closeTestConversation(params.name, { sendCommand }) });
     }
 
     // ── POST /api/agent/chat — conversational agent for test creation ──

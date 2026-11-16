@@ -38,11 +38,13 @@ import { LIVE_ACTIONS } from './live.js';
 import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from './datasets.js';
 import { redact, recordedPassword } from './secrets.js';
 import { redundantTimeWaits, TIME_WAIT_NOTE } from './recorded-waits.js';
-import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from './business-play.js';
+import { businessStepsOf, playBusinessPhrase } from './business-play.js';
 import { elementTimeoutFor } from './projects.js';
 import { askUser, cancelAsk, ASK_USER_DESCRIPTION, ASK_FIELD_DESCRIPTION } from './asks.js';
 import { windowSettings, closeWindowOf } from './run-windows.js';
 import { nameElementsLater } from './element-naming.js';
+import { reviewSteps, reviewText, keepPickedNames, keptNamesText } from './recording-review.js';
+import { scenarioOf, scenarioBrief, startPhrase, markPhrases, completeScenario } from './scenario-recording.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
 
@@ -483,21 +485,17 @@ function buildTools(sendCommand) {
       description: 'Play a business step of the project (a phrase standing for several steps: logging in, logging out…) as one action, its values in double quotes (a secret as {{secret.NAME}}). While recording, its steps are recorded linked to it, and the test reads as the phrase. Use it instead of doing again what a business step does; start_recording lists them.',
       inputSchema: z.object({
         phrase: z.string().describe('The phrase, with its values'),
+        optional_step: z.number().int().optional().describe('A step of the business step the page needs only sometimes (a code asked on a new device, a banner), numbered from 1: made optional in the business step, for every test. After it stopped at that step, it goes on from there without doing again what was done'),
       }),
-      execute: async ({ phrase }) => {
+      execute: async ({ phrase, optional_step }) => {
         const session = sess();
         const projectId = getRecording()?.projectId ?? session.projectId ?? null;
         if (projectId == null) return 'No project: business steps belong to a project.';
-        const found = stepsOfBusinessPhrase(projectId, phrase);
-        if (found.error) return found.error;
-        const played = await playBusinessSteps(found, {
-          sendCommand, live: (params) => session.live(params), tabId: session.lastTabId, elementTimeoutMs: elementTimeoutFor(projectId),
+        const played = await playBusinessPhrase({
+          projectId, phrase, optionalStep: optional_step ?? null, session, recording: getRecording(), sendCommand,
+          tabId: session.lastTabId, elementTimeoutMs: elementTimeoutFor(projectId),
         });
-        if (played.error) return played.error;
-        if (played.tabId) session.adoptTab(played.tabId);
-        const recording = getRecording();
-        if (recording) for (const step of found.steps) recording.steps.push(structuredClone(step));
-        return `Played "${found.phrase}" (${found.steps.length} steps)${recording ? ': recorded as this business step' : ''}.`;
+        return played.error ?? played.text;
       },
     }),
 
@@ -583,8 +581,9 @@ function buildTools(sendCommand) {
         viewport_height: z.number().optional(),
         project_id: z.number().optional().describe('The project the test is for (by default, the one of this run): a value of one of its datasets is {{users[1].email}}'),
         dataset: z.string().optional().describe('A dataset of the project the test plays every row of: type {{email}} (its columns), the value of its first row while recording; the test is bound to it'),
+        scenario: z.string().optional().describe('A Gherkin scenario to record, phrase by phrase, passed as written. The answer numbers its phrases and says how to do each; call start_phrase before the actions of each'),
       }),
-      execute: async ({ name, description, use_vrt, viewport_width, viewport_height, project_id, dataset }) => {
+      execute: async ({ name, description, use_vrt, viewport_width, viewport_height, project_id, dataset, scenario }) => {
         const recording = getRecording();
         if (recording) {
           if (recording.name === name) return `Recording already in progress for "${name}".`;
@@ -594,8 +593,11 @@ function buildTools(sendCommand) {
         const projectId = project_id ?? sess().projectId ?? null;
         const played = recordingDataset(projectId, dataset);
         if (played.error) return played.error;
+        // A scenario written first (lib/scenario-recording.js): its phrases read against the project's library.
+        const read = scenario ? scenarioOf(projectId, scenario) : null;
+        if (read?.error) return `The scenario does not read: ${read.error}`;
         // A run of the dashboard's "Create Test with AI" links its test to the request it was given.
-        setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link: sess().requirementLink ?? null, projectId, dataset: played.dataset });
+        setRecording({ name, description: description || '', steps: [], startedAt: Date.now(), use_vrt: use_vrt || false, viewport, link: sess().requirementLink ?? null, projectId, dataset: played.dataset, ...(read && { scenario: read }) });
         sess().resetValues({ projectId, row: played.dataset?.row });
         log(`[Agent] Recording started: ${name}`);
 
@@ -615,7 +617,19 @@ function buildTools(sendCommand) {
         const businessText = business.length
           ? `\n\nThe project's business steps — play one with play_business_step instead of doing its steps again:\n${business.map((b) => `- ${b.keyword} ${b.pattern} (${b.steps} steps)`).join('\n')}`
           : '';
-        return `Recording started for "${name}"${use_vrt ? ' (VRT enabled)' : ''}. Navigate to your target URL now.${recordingDatasetText(projectId, played.dataset)}${businessText}`;
+        return `Recording started for "${name}"${use_vrt ? ' (VRT enabled)' : ''}. Navigate to your target URL now.${recordingDatasetText(projectId, played.dataset)}${businessText}${read ? `\n${scenarioBrief(read)}` : ''}`;
+      },
+    }),
+
+    start_phrase: tool({
+      description: 'Recording a scenario (start_recording with scenario): call it before the actions of each phrase, with its number and the phrase. The steps recorded until the next call are that phrase\'s — a new phrase becomes a step of the project\'s library made of them.',
+      inputSchema: z.object({
+        number: z.number().int().describe('The number of the phrase, as start_recording numbered them (from 1)'),
+        phrase: z.string().optional().describe('The phrase, as written in the scenario (shown to the user)'),
+      }),
+      execute: async ({ number }) => {
+        const started = startPhrase(getRecording(), number);
+        return started.error ?? started.text;
       },
     }),
 
@@ -637,6 +651,8 @@ function buildTools(sendCommand) {
           return 'Recording cancelled — no steps were recorded.';
         }
 
+        // Each step with the phrase of the scenario it was recorded for, before some go.
+        markPhrases(recording);
         recording.steps = cleanRecoverySteps(recording.steps);
         log(`[Agent] Batch variable detection for ${recording.steps.length} steps...`);
 
@@ -683,6 +699,10 @@ function buildTools(sendCommand) {
           }
         }
 
+        // The item picked by its place, named as it was in later steps: its name kept right after
+        // the pick, written {{its name}} in them (recording-review.js).
+        recording.keptNames = [...(recording.keptNames ?? []), ...keepPickedNames(recording.steps, usedVarNames)];
+
         const variables = {};
         recording.steps.forEach((step, i) => {
           // A variable several steps share (one card picked): told by the first of them.
@@ -697,6 +717,16 @@ function buildTools(sendCommand) {
         });
         // The checks made while recording, linked to what was typed: a replay with other values checks those.
         const checks = linkRecordedChecks(recording.steps, variables, row);
+        // Read over before it is saved (lib/recording-review.js): what would pass once, then fail at the
+        // next run, told to the agent while the page is there to fix it. A second stop_recording saves.
+        if (!recording.reviewed) {
+          recording.reviewed = true;
+          const findings = reviewSteps(recording.steps);
+          if (findings.length) {
+            log(`Recording "${recording.name}" read over: ${findings.length} step(s) to fix before saving`);
+            return reviewText(findings, recording.steps);
+          }
+        }
 
         const test = {
           name: recording.name, description: recording.description,
@@ -713,6 +743,7 @@ function buildTools(sendCommand) {
         setRecording(null);
 
         let summary = `Test "${test.name}" saved with ${stepCount} steps (id: ${testId})`;
+        if (recording.keptNames.length) summary += `\n${keptNamesText(recording.keptNames)}`;
         for (const { step, names } of checks.linked) summary += `\nThe check of step ${step} is linked to ${names.map((n) => `{{${n}}}`).join(', ')}.`;
         summary += linkRecorded(recording);
         summary += placeRecorded(recording);
@@ -727,6 +758,8 @@ function buildTools(sendCommand) {
         if (tabId !== undefined && windowSettings().after_recording && await closeWindowOf(sendCommand, tabId)) {
           summary += '\nIts window was closed, as the user chose (Settings → Browser windows): the next navigate opens a new one.';
         }
+        // Recorded from a scenario: its new phrases join the project's library.
+        summary += completeScenario(test.name, recording);
         // The elements it acts on that nothing names, named by the agent in the background.
         nameElementsLater(test.name);
         return summary;

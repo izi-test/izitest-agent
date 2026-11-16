@@ -3,7 +3,7 @@ import { getPage, detachBrowser } from '../puppeteer-client';
 import { resolveTabId, delay, TOP_FRAME } from '../helpers';
 import { clickViaLocator, clickToggleViaHandle, focusViaLocator, clearAndType, isStaleContextError, toggleStateOf } from './page-helpers';
 import { findElementWithLocators, DEFAULT_LOCATOR_TIMEOUT_MS, type ElementCondition } from './locators';
-import { waitActionable, watchClick, untilReady, isLeftThePage } from './actionable';
+import { waitActionable, watchClick, untilReady, isLeftThePage, waitPageLoaded, waitDocumentLoaded, stillLoadingDetail, type LoadWait } from './actionable';
 import { resolveVariableElement, type ReplayStep } from './variable-resolver';
 import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdUpload, cmdDrag, cmdKeyboard, cmdScroll, wantedChecked } from './actions';
 import { dragElements } from './drag';
@@ -42,6 +42,17 @@ const DEFAULT_STEP_DELAY_MS = 50;
 // After a click that did nothing, how long before the second one.
 const LEFT_PAGE_RETRIES = 3;
 const RECLICK_DELAY_MS = 500;
+// Played through their selector, they act on an element of the page too. A click, a fill and
+// a select wait for their page in their own command (actions.ts), as the agent's do.
+const DIRECT_ELEMENT_COMMANDS = new Set(['upload', 'drag', 'keyboard']);
+
+/** What a step waited for its page to load, for the console of the extension. */
+function logLoadWait(wait: LoadWait): void {
+  if (!wait.waitedMs) return;
+  console.log(wait.loaded
+    ? `  ⏳ The page was still loading: waited ${wait.waitedMs} ms for it`
+    : `  ⏳ The page was still loading after ${wait.waitedMs} ms: going on`);
+}
 
 const COMMAND_DISPATCH: Record<string, (params: any) => Promise<any>> = {
   navigate: cmdNavigate,
@@ -163,19 +174,42 @@ export async function cmdReplaySequence(
         const page = await getPage(resolvedTab);
         currentTabId = resolvedTab;
 
+        // The list read once its page has loaded: still being drawn, it has fewer items than it
+        // will, and buttons nothing listens to yet.
+        const loadWait = await waitDocumentLoaded(page);
+        logLoadWait(loadWait);
         const varResult = await resolveVariableElement(page, resolvedTab, step.variableResolve);
 
         if (varResult) {
           try {
             const skip = await alreadySet(varResult.handle);
+            let pickedAgain = false;
             if (!skip) {
               console.log(`  🖱️ Clicking variable-resolved element...`);
+              const watch = await watchClick(page, varResult.handle).catch(() => null);
               await varResult.handle.click();
+              if (watch && !(await watch.hadEffect())) {
+                // As a click found by its locators: nothing at all happened, the page was not
+                // listening yet. The item is looked up again, and clicked once more.
+                console.log('  🔁 The click had no effect: clicking once more');
+                await delay(RECLICK_DELAY_MS);
+                const again = await resolveVariableElement(page, resolvedTab, step.variableResolve, { waitMs: DEFAULT_LOCATOR_TIMEOUT_MS });
+                if (again) {
+                  pickedAgain = await again.handle.click().then(() => true, () => false);
+                  await again.handle.dispose().catch(() => {});
+                }
+              }
             }
             await varResult.handle.dispose();
             console.log(`  ✅ Step ${i + 1} completed via variable resolve (${varResult.description})`);
+            const notes = [
+              varResult.description,
+              ...(skip ? [alreadyDetail] : []),
+              ...(pickedAgain ? ['clicked twice: the first click had no effect (the page was not listening yet)'] : []),
+              ...(stillLoadingDetail(loadWait) ? [stillLoadingDetail(loadWait)] : []),
+            ];
             const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt,
-              { resolvedVia: 'variable', detail: skip ? `${varResult.description}, ${alreadyDetail}` : varResult.description, tabId: currentTabId });
+              { resolvedVia: 'variable', detail: notes.join(', '), tabId: currentTabId });
             results.push(stepResult);
             onProgress?.({ type: 'step_complete', stepResult });
             resolvedViaVariable = true;
@@ -218,6 +252,7 @@ export async function cmdReplaySequence(
 
         let skippedClick = false;
         let clickedAgain = false;
+        let stillLoading: string | null = null;
         const waitMs = elementTimeoutMs ?? DEFAULT_LOCATOR_TIMEOUT_MS;
         // An element replaced by the page between being found and clicked (a menu drawn again
         // as it opens) was not clicked: it is looked up again, a few times.
@@ -233,10 +268,21 @@ export async function cmdReplaySequence(
           }
         };
         const executeOnce = async (page: Page) => {
-          const { result, errors } = await findElementWithLocators(page, step.locators!, elementCondition, elementTimeoutMs);
-          if (!result) throw new Error(`All ${step.locators!.length} locators failed:\n${errors.join('\n')}`);
+          let found = await findElementWithLocators(page, step.locators!, elementCondition, elementTimeoutMs);
+          if (!found.result) throw new Error(`All ${step.locators!.length} locators failed:\n${found.errors.join('\n')}`);
+          // Found on a page still loading: the page is waited for — a button is drawn before the
+          // scripts that listen to it have run —, then the element looked up again, the page
+          // having drawn itself meanwhile.
+          const loadWait = await waitPageLoaded(found.result.handle);
+          if (loadWait.waitedMs) {
+            logLoadWait(loadWait);
+            stillLoading = stillLoadingDetail(loadWait);
+            await found.result.handle.dispose().catch(() => {});
+            found = await findElementWithLocators(page, step.locators!, elementCondition, elementTimeoutMs);
+            if (!found.result) throw new Error(`All ${step.locators!.length} locators failed:\n${found.errors.join('\n')}`);
+          }
 
-          const { locatorUsed, locatorValue, handle } = result;
+          const { locatorUsed, locatorValue, handle } = found.result;
 
           try {
             if (step.command === 'click' && await alreadySet(handle)) {
@@ -376,7 +422,7 @@ export async function cmdReplaySequence(
 
         console.log(`  ✅ Step ${i + 1} completed successfully (via ${locatorUsed})`);
         const stepResult = makeStepResult(i + 1, step.command, step.intent, 'success', stepStartedAt,
-          { locator: locatorUsed, tabId: currentTabId, ...(skippedClick ? { detail: alreadyDetail } : clickedAgain ? { detail: 'clicked twice: the first click had no effect (the page was not listening yet)' } : {}) });
+          { locator: locatorUsed, tabId: currentTabId, ...(skippedClick ? { detail: alreadyDetail } : clickedAgain ? { detail: 'clicked twice: the first click had no effect (the page was not listening yet)' } : stillLoading ? { detail: stillLoading } : {}) });
         results.push(stepResult);
         onProgress?.({ type: 'step_complete', stepResult });
       } else {
@@ -385,6 +431,12 @@ export async function cmdReplaySequence(
         const handler = COMMAND_DISPATCH[step.command];
         if (!handler) throw new Error(`Unsupported command in sequence: ${step.command}`);
 
+        // Acting on an element, through its selector or its text: its page has to have loaded
+        // too. A step that opens its own tab has no page yet.
+        if (currentTabId && DIRECT_ELEMENT_COMMANDS.has(step.command)) {
+          const page = await resolveTabId(baseParams.tabId, sessionId).then(getPage).catch(() => null);
+          if (page) logLoadWait(await waitDocumentLoaded(page));
+        }
         // Its element not there yet, or under a loading veil: tried again until it can take it.
         const res = await untilReady(() => handler(baseParams), elementTimeoutMs ?? DEFAULT_LOCATOR_TIMEOUT_MS);
         if (res && res.tabId) currentTabId = res.tabId;
