@@ -4,6 +4,7 @@ import { X, Wand2, Loader2, Square, FileCode, Bot } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { ProjectField } from './ProjectSelector';
 import { LiveScreen } from './LiveScreen';
+import { AfterRecordingSwitch } from './BrowserWindows';
 import { toolCallLine, appendLine } from '../agent-log';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
 import { useAddCaseMutation, useCreateRequirementMutation } from '../store/services/requirementsApi';
@@ -479,6 +480,9 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
                     ))}
                   </select>
                 </label>
+              </div>
+              <div className="create-options__after">
+                <AfterRecordingSwitch hint="Once the agent has saved the test, the window it recorded it in closes — for every recording (Settings → Browser windows)." />
               </div>
             </>
           )}

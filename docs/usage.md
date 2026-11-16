@@ -56,6 +56,9 @@ A planned case becomes a test in one of two ways:
   page what its steps say in plain words. The dashboard shows its browser live.
 
 Without a requirement, *New test* does the same from a description (*AI Agent*) or from Gherkin.
+The window the agent records in stays open once the test is saved, unless you check *Close the
+window once the test is saved* (in *New test → AI Agent*, or in *Settings → Browser windows*): then
+it closes as soon as the test is saved, for every recording, yours and your agent's.
 With your own agent, ask it — for instance in Claude Code:
 
 > Design the tests of REQ-12 with design_tests, then record the first scenario.
@@ -79,6 +82,15 @@ buttons a person reads differently ("Next", "Finish") stay two.
 On a test, *Run*. Its options (*Run options*): in a new window of your Chrome or **headless**,
 **let the agent fix failures**, or **debug step by step** with breakpoints. The run is shown live,
 step by step.
+
+Once a run is over, its window stays open by default, so you can look at the page it ended on. To
+have it closed, choose in *Run options → After the run, its window* (or in *Settings → Browser
+windows*): **Closes when the test passes** (a failed run's window stays open, to be looked at), or
+**Always closes** (a failed run keeps its screenshot and its video under *Runs*). The choice is the
+same for every run, the dashboard's and an agent's, and stays until you change it. Only a window
+IziTest opened is ever closed, never one of yours, nor your own tab when *Open in a new window* is
+off. A debug run keeps its window, and so does a run an agent is repairing: the agent fixes the
+step there. In the headless browser and in a campaign, each test's window is closed anyway.
 
 Each step waits for the button or field it acts on, and each check for what it expects, up to
 the project's **wait for an element**: 10 s by default, set in *Projects → Edit*. Raise it when

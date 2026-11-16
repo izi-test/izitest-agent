@@ -86,7 +86,10 @@ Quand un agent se déconnecte, l'état de sa session est libéré mais **sa fen�
 ouverte** : une reconnexion SSE arrive avec un nouvel identifiant, donc fermer
 automatiquement détruirait une fenêtre de travail au moindre incident réseau. C'est
 `close_window` (ou `close_session` pour une session nommée) qui ferme, explicitement, en
-fin de tâche. Le serveur log les fenêtres laissées ouvertes.
+fin de tâche. Le serveur log les fenêtres laissées ouvertes. Si l'utilisateur l'a choisi
+(**Settings → Browser windows**), la fenêtre d'un enregistrement est aussi fermée quand
+`stop_recording` a sauvé le test, et celle d'un `run_test` réussi à la fin de l'exécution
+(voir [mcp-tools.md](mcp-tools.md), « Les fenêtres après une exécution ou un enregistrement »).
 
 ## Le serveur est unique et partagé
 

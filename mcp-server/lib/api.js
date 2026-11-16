@@ -54,6 +54,7 @@ import { selectTests } from './regression.js';
 import { generateTestCode } from './codegen/index.js';
 import { listSessions } from './session.js';
 import { followRun } from './live.js';
+import { windowSettings, setWindowSettings, closesAfterRun } from './run-windows.js';
 import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless, holdHeadless, setIdleMinutes } from './headless.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 
@@ -454,6 +455,12 @@ export async function apiRouter(req, res, url) {
       const run = headless ? inHeadless(sendCommand) : sendCommand;
       const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
       const closeWindow = (tabId) => run(undefined, 'close_window', { tabId, liveSessions: listSessions().map((s) => s.id) }).catch(() => {});
+      const newWindow = headless || (body.new_window !== undefined ? body.new_window : true);
+      // In sight, as the user chose (Settings → Browser windows, lib/run-windows.js): after a
+      // run that passed, or after any. Not a debug run — it is watched —, nor one played in a
+      // tab of the user's: only the window the run opened.
+      const afterRun = windowSettings();
+      const closesInSight = (passed) => !body.debug && newWindow && closesAfterRun(passed, afterRun);
       // A test with rows (lib/datasets.js) plays every row, a run each, one after the other —
       // or the row asked; debugged or resumed at a step, one row (the first unless told).
       // The dashboard gone (Stop, the page closed): the rows not played yet are not.
@@ -485,14 +492,14 @@ export async function apiRouter(req, res, url) {
           });
         }
         // Headless, nobody looks at its window; in sight, a row that passed leaves its window
-        // to the next one — a failed one stays open, to be looked at.
-        if (tabId && (headless || (several && !event.last && result))) closeWindow(tabId);
+        // to the next one — a failed one stays open, to be looked at, unless the user chose
+        // to close every run's.
+        if (tabId && (headless || (several && !event.last && result) || closesInSight(!!result))) closeWindow(tabId);
       };
       // Not stopped for being idle while it runs: between two rows, a step that waits.
       const release = headless ? holdHeadless() : () => {};
       try {
         if (headless) await ensureHeadless();
-        const newWindow = headless || (body.new_window !== undefined ? body.new_window : true);
         const { rows, outcomes } = await executeRows(params.name, { row: body.row, one: !!(body.debug || body.start_step), stopped: () => gone, onRow },
           (row) => executeTest(params.name, body.variables, body.substitutions, body.start_step, newWindow, run, 'manual', onProgress, debugController, { ...(row ? { row } : {}), recordVideo: body.record_video === true }));
         if (rows.length > 1) {
@@ -1648,6 +1655,22 @@ export async function apiRouter(req, res, url) {
         return json(res, 409, { error: err.message, headless: await headlessStatus() });
       }
       return json(res, 200, { headless: await headlessStatus() });
+    }
+
+    // GET /api/settings/windows — what becomes of a run's or a recording's window once it is
+    // over (lib/run-windows.js): { after_run: 'keep'|'passed'|'always', after_recording }
+    if (method === 'GET' && path === '/api/settings/windows') {
+      return json(res, 200, windowSettings());
+    }
+
+    // PUT /api/settings/windows { after_run?, after_recording? } — what is not given stays as it was
+    if (method === 'PUT' && path === '/api/settings/windows') {
+      const body = await readBody(req);
+      try {
+        return json(res, 200, setWindowSettings({ after_run: body.after_run, after_recording: body.after_recording }));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
     }
 
     // ── GET /api/settings/agent ──

@@ -41,6 +41,7 @@ import { redundantTimeWaits, TIME_WAIT_NOTE } from './recorded-waits.js';
 import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from './business-play.js';
 import { elementTimeoutFor } from './projects.js';
 import { askUser, cancelAsk, ASK_USER_DESCRIPTION, ASK_FIELD_DESCRIPTION } from './asks.js';
+import { windowSettings, closeWindowOf } from './run-windows.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
 
@@ -719,6 +720,11 @@ function buildTools(sendCommand) {
           for (const [name, info] of Object.entries(variables)) {
             summary += `  - {{${name}}} — ${info.type}, default: "${info.defaultValue}"\n`;
           }
+        }
+        // Its window, closed when the user chose so (Settings → Browser windows, lib/run-windows.js).
+        const tabId = sess().lastTabId;
+        if (tabId !== undefined && windowSettings().after_recording && await closeWindowOf(sendCommand, tabId)) {
+          summary += '\nIts window was closed, as the user chose (Settings → Browser windows): the next navigate opens a new one.';
         }
         return summary;
       },

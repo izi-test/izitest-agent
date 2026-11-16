@@ -43,6 +43,8 @@ import { COMPUTED_HELP, useComputedPreview } from '../values';
 import { CodePanel } from './CodePanel';
 import { TestRows } from './TestRows';
 import { HeadlessSwitch } from './HeadlessSwitch';
+import { AfterRunField } from './BrowserWindows';
+import { useGetWindowSettingsQuery } from '../store/services/settingsApi';
 import { useRunHeadless } from '../headless';
 import { Card, EmptyState, KeyChip, Menu, ProjectChip, ResultBar, StatusPill } from './ui';
 import { dateTime, formatDuration, relativeTime } from '../format';
@@ -87,6 +89,7 @@ export function TestDetail({ testName }: TestDetailProps) {
   const back = useBack('/tests', 'Tests');
   const scope = useAppSelector(state => state.ui.selectedProjectId);
   const runHeadless = useRunHeadless();
+  const { data: windows } = useGetWindowSettingsQuery();
 
   // Redux state
   const {
@@ -394,7 +397,9 @@ CRITICAL RULES:
   const project = projects.find((p) => p.id === projectId) ?? null;
   const lastRun = runs[0];
   const headlessRun = runHeadless && !useDebug && !useAgent;
-  const optionsChanged = headlessRun || !executeNewWindow || useAgent || useDebug || recordVideo || !!viewport;
+  // The window closed after the run, as chosen for every run (Settings → Browser windows).
+  const closesWindow = !headlessRun && !useDebug && executeNewWindow && !!windows && windows.after_run !== 'keep';
+  const optionsChanged = headlessRun || !executeNewWindow || useAgent || useDebug || recordVideo || !!viewport || closesWindow;
   const withSide = activeTab === 'steps' || activeTab === 'data';
 
   const tabs: Array<{ id: typeof activeTab; label: string; icon: typeof List; count?: number }> = [
@@ -452,6 +457,9 @@ CRITICAL RULES:
                     <input type="checkbox" checked={executeNewWindow || (runHeadless && !useDebug && !useAgent)} disabled={runHeadless && !useDebug && !useAgent} onChange={e => dispatch(setExecuteNewWindow(e.target.checked))} />
                     <span className="switch__text">Open in a new window<span className="switch__hint">Without the focus: the window you are in keeps it.</span></span>
                   </label>
+                  <AfterRunField disabledReason={headlessRun ? 'Headless: its window closes anyway.'
+                    : useDebug ? 'A debug run keeps its window: you follow it step by step.'
+                      : !executeNewWindow ? 'Played in your own tab: it is never closed.' : undefined} />
                   <label className="switch">
                     <input type="checkbox" checked={useAgent} onChange={e => dispatch(setUseAgent(e.target.checked))} />
                     <span className="switch__text">Let the agent fix failures<span className="switch__hint">Use Agent: a failed step is redone and repaired.</span></span>
@@ -519,6 +527,7 @@ CRITICAL RULES:
               {useAgent && <span className="tag tag--blue">agent</span>}
               {useDebug && <span className="tag tag--amber">debug</span>}
               {recordVideo && <span className="tag">video</span>}
+              {closesWindow && <span className="tag">{windows?.after_run === 'passed' ? 'window closes if passed' : 'window closes'}</span>}
               {viewport && <span className="tag">{viewportToString(viewport)}</span>}
             </span>
           )}

@@ -26,6 +26,7 @@ import { redundantTimeWaits } from '../recorded-waits.js';
 import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from '../business-play.js';
 import { elementTimeoutFor } from '../projects.js';
 import { checksRecording, recordingRequirements, recordCheck, linkRecordedChecks } from '../recorded-checks.js';
+import { windowSettings, closesAfterRun, closeWindowOf } from '../run-windows.js';
 
 // What follows a value typed or picked (a search, a suggestion: a variable at save time). "chocolat"
 // led Auchan to its aisle (?redirect_keywords=chocolat, a Kinder bar shown), "banane" to its
@@ -119,6 +120,16 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
   const setRecording = (value) => { sess().recording = value; };
   const getAction = (id) => sess().getAction(id);
   const saveActionToHistory = (...args) => recordAction(sess(), ...args);
+
+  // The window a test was recorded in, closed once the test is saved when the user chose so
+  // (Settings → Browser windows, lib/run-windows.js) — the agent told: its next navigate opens a new one.
+  const closeRecordingWindow = async () => {
+    const tabId = sess().lastTabId;
+    if (tabId === undefined || !windowSettings().after_recording) return '';
+    return (await closeWindowOf(sendCommand, tabId))
+      ? '\nIts window was closed, as the user chose (Settings → Browser windows): the next navigate opens a new one.'
+      : '';
+  };
 
   // --- Tool: start_recording ---
   server.tool(
@@ -426,6 +437,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         }
         summary += `\nTo run with different data: run_test("${test.name}", { variables: { ${Object.keys(variables).map(k => `"${k}": "new_value"`).join(', ')} } })`;
       }
+      summary += await closeRecordingWindow();
       return { content: [{ type: 'text', text: summary }] };
     }
   );
@@ -467,8 +479,9 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       breakpoints: z.array(z.number()).optional().describe('Step numbers (1-indexed) to pause at. Only used when debug=true. If empty, pauses at every step.'),
       row: z.number().optional().describe('For a test with rows (its own, or those of the dataset it is bound to): the one row to play, numbered from 1. Without it, every row is played, a run each — one row only (the first) with debug or start_step.'),
       record_video: z.boolean().optional().describe('Keep the video of the run even if it passes (a failed run keeps its video anyway): watched in the dashboard, the run\'s steps beside it'),
+      close_window: z.boolean().optional().describe('Close the window of a run that passed. Default: as the user chose in Settings → Browser windows. false keeps it open — to add_assertion on the page it ended on. A failed run\'s window always stays open: repair the step there.'),
     },
-    async ({ name, variables, substitutions, start_step, new_window, debug, breakpoints, row, record_video }) => {
+    async ({ name, variables, substitutions, start_step, new_window, debug, breakpoints, row, record_video, close_window }) => {
       // Debug mode: run asynchronously and return immediately with execution ID
       if (debug) {
         const debugController = new DebugController(breakpoints || [], 'step');
@@ -629,9 +642,22 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         const done = result ?? error;
         rememberReplay(name, done.values, result ? result.results?.findLast?.((r) => r.tabId != null)?.tabId : error.tabId);
       }
+      // The window of a run that passed, closed as the user chose (Settings → Browser windows,
+      // lib/run-windows.js) or as close_window says; a failed run's stays open: repaired there.
+      let closedNote = '';
+      if (new_window && (close_window ?? closesAfterRun(true))) {
+        let closed = 0;
+        for (const { result } of outcomes) {
+          if (result && await closeWindowOf(sendCommand, result.results?.findLast?.((r) => r.tabId != null)?.tabId)) closed++;
+        }
+        if (closed) {
+          closedNote = `\n\n${closed > 1 ? `The windows of the ${closed} runs that passed were` : 'Its window was'} closed (${close_window ? 'close_window' : 'as the user chose: Settings → Browser windows'}). ` +
+            'To add an assertion on the page it ended on, run it again with close_window: false.';
+        }
+      }
       if (rows.length === 1) {
         const [{ row: n, result, error }] = outcomes;
-        return { content: [{ type: 'text', text: result ? `${succeeded(result, n)}\n\n${JSON.stringify(result.results, null, 2)}` : failed(error, n) }] };
+        return { content: [{ type: 'text', text: result ? `${succeeded(result, n)}${closedNote}\n\n${JSON.stringify(result.results, null, 2)}` : failed(error, n) }] };
       }
       // Every row: each told; a failed one in full — repaired in place when it is the last played.
       const failures = outcomes.filter((o) => o.error);
@@ -648,6 +674,7 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
       }
       const lastPlayed = outcomes.at(-1);
       for (const o of failures) lines.push('', failed(o.error, o.row, { inPlace: o === lastPlayed }));
+      if (closedNote) lines.push(closedNote);
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     }
   );

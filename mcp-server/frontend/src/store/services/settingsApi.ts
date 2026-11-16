@@ -55,10 +55,21 @@ export interface HeadlessStatus {
   idle_minutes: number;
 }
 
+/**
+ * What becomes of the window a run or a recording opened, once it is over
+ * (mcp-server/lib/run-windows.js): only a window IziTest opened is ever closed.
+ */
+export interface WindowSettings {
+  /** keep: it stays open; passed: it closes when the test passed; always: it closes. */
+  after_run: 'keep' | 'passed' | 'always';
+  /** The window a test was recorded in closes once the test is saved. */
+  after_recording: boolean;
+}
+
 export const settingsApi = createApi({
   reducerPath: 'settingsApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
-  tagTypes: ['AgentConfig', 'Connectors', 'Headless'],
+  tagTypes: ['AgentConfig', 'Connectors', 'Headless', 'Windows'],
   endpoints: (builder) => ({
 
     getAgentConfig: builder.query<AgentConfig, void>({
@@ -107,6 +118,23 @@ export const settingsApi = createApi({
       query: (minutes) => ({ url: 'api/headless/settings', method: 'PUT', body: { idle_minutes: minutes } }),
       invalidatesTags: ['Headless'],
     }),
+    getWindowSettings: builder.query<WindowSettings, void>({
+      query: () => 'api/settings/windows',
+      providesTags: ['Windows'],
+    }),
+    // What is not given stays as it was; shown changed at once, put back if the server refuses it.
+    setWindowSettings: builder.mutation<WindowSettings, Partial<WindowSettings>>({
+      query: (body) => ({ url: 'api/settings/windows', method: 'PUT', body }),
+      async onQueryStarted(changes, { dispatch, queryFulfilled }) {
+        const patch = dispatch(settingsApi.util.updateQueryData('getWindowSettings', undefined, (draft) => { Object.assign(draft, changes); }));
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(settingsApi.util.upsertQueryData('getWindowSettings', undefined, data));
+        } catch {
+          patch.undo();
+        }
+      },
+    }),
     getModels: builder.query<OpenRouterModel[], void>({
       query: () => 'api/models',
       transformResponse: (response: { models: OpenRouterModel[] }) => response.models,
@@ -126,4 +154,6 @@ export const {
   useGetHeadlessQuery,
   useHeadlessActionMutation,
   useSetHeadlessIdleMutation,
+  useGetWindowSettingsQuery,
+  useSetWindowSettingsMutation,
 } = settingsApi;

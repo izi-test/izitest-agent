@@ -117,7 +117,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `create_project` | Creates a project: `name` (unique), `base_url`, `language` (`en`, `fr`), `description`, `context`, `project_type`. A name taken answers with the project that has it; another project of the same app is pointed out. Its id is the `project_id` of the tools below. |
 | `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Jeux de données). |
 | `record_step` | Optional: steps record themselves. Names the variable of the step an action recorded (`action_id`, `variable_name`: what a fill typed becomes `{{email}}` instead of a name taken from its field), keeps its value fixed (`skip_variable`), changes its intent, makes it optional (`optional`), removes it (`remove`: an `execute_js` that only looked at the page, an action done by mistake), or says how a click found in a list is meant (`pick`: `none`, `by_place`, `by_text` — the click's result says what it was taken as). |
-| `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. It first waits for the actions still under way (up to 30 s), so one sent in the same message is recorded. A last `wait` for an element is kept: it checks what the test did (before, every wait at the end was dropped as an artifact). One of a time only, at the end, is not, and the answer says what was not kept. |
+| `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. It first waits for the actions still under way (up to 30 s), so one sent in the same message is recorded. A last `wait` for an element is kept: it checks what the test did (before, every wait at the end was dropped as an artifact). One of a time only, at the end, is not, and the answer says what was not kept. When the user chose so (**Settings → Browser windows**), the window the test was recorded in is closed once it is saved, and the answer says so. |
 | `list_tests` | Lists all saved tests, their variables, and how many rows each plays. |
 | `run_test` | Executes a saved test autonomously in the browser. Supports variable overrides. A test with rows (its own, or those of the dataset it is bound to) plays every row, a run each, and says how each did; `row` plays one (see Test data: the rows of a test). A failure is diagnosed on the spot, with a repair proposed when the test broke (see below). |
 | `save_test_rows` | Saves the rows of a test — the table of its Data tab: a row per run, a value per variable by its name; `rows: []` removes them (see Test data: the rows of a test). |
@@ -1109,6 +1109,7 @@ valeurs gardées ne sont pas des colonnes de l'Outline.
 | `substitutions` | object | Remplacement textuel brut dans tous les paramètres (clé → valeur) |
 | `start_step` | number | Reprendre l'exécution à une étape spécifique (1-indexed) |
 | `new_window` | boolean | Si `true`, exécute dans une nouvelle fenêtre au lieu d'un nouvel onglet |
+| `close_window` | boolean | Ferme la fenêtre d'une exécution réussie. Par défaut, comme l'utilisateur l'a choisi dans **Settings → Browser windows** ; `false` la laisse ouverte, pour un `add_assertion` sur la page où le test s'est arrêté. La fenêtre d'une exécution en échec reste toujours ouverte : l'agent y répare l'étape. Jamais un onglet de l'utilisateur (`new_window: false`) |
 | `row` | number | Pour un test qui a des lignes (les siennes, ou celles de son jeu de données) : la seule ligne à jouer, numérotée à partir de 1. Sans `row`, toutes les lignes sont jouées, une exécution chacune ; avec `start_step` ou `debug`, la première seulement |
 
 ### Exigences : de quoi un test est la preuve
@@ -1615,6 +1616,31 @@ ordinaire (sans « HeadlessChrome » dans le user agent).
   `idle_minutes`), `POST /api/headless/install|start|stop`, `PUT /api/headless/settings { idle_minutes }`
   (minutes entières, 0 à 1440) ; `headless: true` dans `POST /api/tests/:name/execute` et `POST
   /api/campaigns`.
+
+#### Les fenêtres après une exécution ou un enregistrement
+
+Dans le Chrome de l'utilisateur, la fenêtre qu'IziTest a ouverte pour une exécution ou un enregistrement
+reste ouverte par défaut une fois le travail fini. L'utilisateur choisit de la faire fermer dans **Settings →
+Browser windows**, dans le menu du bouton Run d'un test (« After the run, its window ») ou dans la fenêtre
+**New test → AI Agent** (« Close the window once the test is saved ») ; c'est un seul réglage pour tout le
+monde, gardé par le serveur (`lib/run-windows.js`) :
+
+- `after_run` : `keep` (elle reste ouverte, par défaut), `passed` (elle se ferme quand le test passe ; celle
+  d'un échec reste ouverte, pour être regardée), `always` (elle se ferme, réussie ou en échec : un échec
+  garde sa capture et sa vidéo dans *Runs*). Pour les exécutions du tableau de bord et `run_test` ; avec
+  `run_test`, une exécution en échec garde toujours sa fenêtre, puisque l'agent y répare l'étape, et
+  `close_window` décide pour cet appel. Jamais une exécution en debug, qui se suit pas à pas, ni un
+  onglet de l'utilisateur (« Open in a new window » décoché, `new_window: false`).
+- `after_recording` : la fenêtre où le test a été enregistré se ferme dès que `stop_recording` l'a
+  sauvé (pas un enregistrement annulé faute d'étape) ; la réponse le dit à l'agent, et son prochain
+  `navigate` ouvre une nouvelle fenêtre.
+
+Seule une fenêtre ouverte par IziTest est fermée (`close_window` refuse toute autre), avec les popups
+que ses pages ont ouvertes. Une campagne ferme déjà la fenêtre de chaque test à la fin du test, et le
+Chrome sans fenêtre celle de chaque exécution.
+
+- **API** : `GET /api/settings/windows` → `{ after_run, after_recording }` ; `PUT /api/settings/windows
+  { after_run?, after_recording? }` (ce qui n'est pas donné ne change pas ; une valeur fausse → 400).
 
 Son profil est le sien : cookies, sessions et stockage ne sont pas ceux du Chrome de l'utilisateur. Un
 test d'une appli derrière une connexion se connecte lui-même.

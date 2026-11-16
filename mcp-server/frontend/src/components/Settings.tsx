@@ -4,10 +4,11 @@ import { useAppDispatch } from '../store/hooks';
 import { showToast } from '../store/slices/uiSlice';
 import { useGetAgentConfigQuery, useUpdateAgentConfigMutation, useTestAgentMutation, useTestApiKeyMutation, useGetModelsQuery } from '../store/services/settingsApi';
 import type { AgentConfig } from '../store/services/settingsApi';
-import { useGetConnectorsQuery, useGetHeadlessQuery } from '../store/services/settingsApi';
+import { useGetConnectorsQuery, useGetHeadlessQuery, useGetWindowSettingsQuery } from '../store/services/settingsApi';
 import { Button } from './Button';
 import { ConnectorSettings } from './ConnectorSettings';
 import { HeadlessSettings } from './HeadlessSettings';
+import { BrowserWindowsSettings } from './BrowserWindows';
 import { Card, PageHeader } from './ui';
 import { Save, Play, Check, X, Terminal, Cloud, Search, Bot } from 'lucide-react';
 
@@ -49,6 +50,7 @@ export function Settings() {
   const dispatch = useAppDispatch();
   const { data: connectors = [] } = useGetConnectorsQuery();
   const { data: headless } = useGetHeadlessQuery();
+  const { data: windows } = useGetWindowSettingsQuery();
   const location = useLocation();
   const [section, setSection] = useState(location.hash.slice(1) || 'agent');
 
@@ -145,6 +147,7 @@ export function Settings() {
     // The tools requirements are read from and results written to (mcp-server/lib/connectors).
     ...connectors.map((c) => ({ id: c.id, label: c.name, on: !!c.config })),
     { id: 'headless', label: 'Headless browser', on: !!headless?.installed },
+    { id: 'windows', label: 'Browser windows', on: !!windows && (windows.after_run !== 'keep' || windows.after_recording) },
   ];
 
   return (
@@ -406,6 +409,7 @@ export function Settings() {
 
       {connectors.map((c) => <ConnectorSettings key={c.id} connector={c} />)}
       <HeadlessSettings />
+      <BrowserWindowsSettings />
         </div>
       </div>
     </>
