@@ -22,7 +22,7 @@ export function generatePlaywrightCucumber(test, definitions, { valuesJs = null 
   const datasets = datasetsUsed(test);
   const rows = test.dataset ? datasets[test.dataset] ?? null : null;
   const outline = toScenarioOutline(
-    serializeTestToFeatureWith(test, definitions, { singleStep: withStableTarget }),
+    serializeTestToFeatureWith(test, definitions, { singleStep: withStableTarget, foldTimeWaits: false }),
     rows ? { ...Object.fromEntries(Object.keys(rows[0] ?? {}).map((column) => [column, { defaultValue: '' }])), ...test.variables } : test.variables,
     test.language,
     rows

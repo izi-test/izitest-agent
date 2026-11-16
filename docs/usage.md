@@ -72,7 +72,13 @@ on. A password you give is kept in the project's secrets; the agent gets its nam
 
 What the tests click, fill and check are the project's **elements**, listed page by page under
 *Elements* with the tests using each. An element has a name the Gherkin uses ("When I fill
-"E-mail"…"); rename it there and every test reads the new name. The same field recorded twice is
+"E-mail"…"); rename it there and every test reads the new name. The name is what a person reads on
+it (a label, the text of a button). An element nothing on the page names, like the total a check
+reads, is named by the agent once the test is recorded, from what the test does with it ("Cart
+total"), so the Gherkin never shows a selector. Each name is the element's own: one that looks like
+an element of another page gets a name that tells them apart. For elements recorded before, *Name
+them* on the *Elements* page does the same. A name you gave is never changed. A wait of a few seconds
+the agent added is kept in the test but is no line of its Gherkin. The same field recorded twice is
 one element, even when one test kept its id and another its label or placeholder: two steps of a
 page sharing its id, test ID, `name` or placeholder are merged, under the name you gave it. Two
 buttons a person reads differently ("Next", "Finish") stay two.

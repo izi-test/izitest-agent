@@ -14,7 +14,7 @@
 
 import { db, parseJson } from './db.js';
 import { log } from './logger.js';
-import { elementKey, marksOf, nameInKey, baseName, uniqueName, selectorOf, foundLike, findsDifferently } from './elements.js';
+import { elementKey, marksOf, nameInKey, baseName, uniqueName, takenNames, selectorOf, foundLike, findsDifferently } from './elements.js';
 
 const isMark = (identity, page) => identity.slice(page.length + 1).startsWith('~');
 
@@ -22,7 +22,7 @@ const isMark = (identity, page) => identity.slice(page.length + 1).startsWith('~
 function loadIndex(projectId) {
   return {
     projectId,
-    elements: new Map(db.prepare('SELECT id, key, name, page, renamed FROM elements WHERE project_id = ?').all(projectId).map((row) => [row.id, row])),
+    elements: new Map(db.prepare('SELECT id, key, name, page, renamed, agent_named FROM elements WHERE project_id = ?').all(projectId).map((row) => [row.id, row])),
     elementOf: new Map(db.prepare('SELECT key, element_id FROM element_keys WHERE project_id = ?').all(projectId).map((row) => [row.key, row.element_id])),
   };
 }
@@ -78,16 +78,17 @@ function attach(index, step, joined = []) {
     for (const other of hits) if (other !== id) merge(index, other, id);
     // Known by a selector alone until now, and not named by the user: named after what a
     // person reads on it, as if this step had been recorded first.
+    // A name the agent gave stays (element-naming.js): it says what the element is for.
     const row = index.elements.get(id);
     if (!row.renamed && byCss(row) && nameInKey(key, step.page)) {
-      const taken = new Set([...index.elements.values()].filter((other) => other.id !== id).map((other) => other.name));
-      const name = uniqueName(baseName(step), step.page, taken);
+      const taken = takenNames([...index.elements.values()].filter((other) => other.id !== id).map((other) => other.name));
+      const name = row.agent_named ? row.name : uniqueName(baseName(step), step.page, taken);
       db.prepare('UPDATE elements SET key = ?, name = ? WHERE id = ?').run(key, name, id);
       Object.assign(row, { key, name });
     }
   } else {
-    const taken = new Set([...index.elements.values()].map((row) => row.name));
-    const row = db.prepare('INSERT INTO elements (project_id, key, name, page) VALUES (?, ?, ?, ?) RETURNING id, key, name, page, renamed')
+    const taken = takenNames([...index.elements.values()].map((row) => row.name));
+    const row = db.prepare('INSERT INTO elements (project_id, key, name, page) VALUES (?, ?, ?, ?) RETURNING id, key, name, page, renamed, agent_named')
       .get(index.projectId, key, uniqueName(baseName(step), step.page, taken), step.page);
     index.elements.set(row.id, row);
     id = row.id;
@@ -231,14 +232,85 @@ export function listElements(projectId) {
     }));
 }
 
+// ── Elements to name ─────────────────────────────────────────────────────────────────────
+// An element nothing on the page names — found by a selector or a test ID alone — is named in
+// words drawn from its selector ("Shop cart total"), or after another element of the same name
+// with its page added ("Save (profile)"). The agent names those better, from what the tests do
+// with them (element-naming.js), unless the user named them.
+
+// The page added to a name another element already had (elements.js uniqueName).
+const PAGE_ADDED = /\s\([^()]+\)(?: \d+)?$/;
+const toName = (row) => !row.renamed && !row.agent_named
+  && (byCss(row) || row.key.slice(row.page.length + 1).startsWith('testid ') || PAGE_ADDED.test(row.name) || /[#[\]>=]/.test(row.name));
+
+/**
+ * The elements of `projectId` the agent should name — only those `testName` acts on, when
+ * given —, each with what the tests do with it (`uses`, its test's steps first, 3 at most),
+ * and the names the project's other elements have (`taken`, with their page).
+ */
+export function elementsToName(projectId, { testName = null } = {}) {
+  const steps = projectSteps(projectId);
+  const { index, elementOfStep } = elementsOfSteps(projectId, steps);
+  const uses = new Map();
+  for (const step of steps) {
+    const id = elementOfStep(step);
+    if (!id) continue;
+    if (!uses.has(id)) uses.set(id, []);
+    uses.get(id).push(step);
+  }
+  const wanted = [...index.elements.values()]
+    .filter((row) => toName(row) && uses.has(row.id) && (!testName || uses.get(row.id).some((step) => step.test === testName)));
+  const ids = new Set(wanted.map((row) => row.id));
+  return {
+    elements: wanted.map((row) => ({
+      id: row.id,
+      name: row.name,
+      page: row.page,
+      target: row.key.slice(row.page.length + 1),
+      uses: [...uses.get(row.id)].sort((a, b) => Number(b.test === testName) - Number(a.test === testName)).slice(0, 3)
+        .map((step) => ({
+          test: step.test,
+          command: step.command,
+          ...(step.intent && { intent: step.intent }),
+          ...(step.assertion && { assertion: step.assertion }),
+          ...(step.params?.value !== undefined && { value: step.params.value }),
+        })),
+    })),
+    taken: [...index.elements.values()].filter((row) => !ids.has(row.id)).map((row) => ({ name: row.name, page: row.page })),
+  };
+}
+
+/**
+ * The names the agent gave (`names`: [{ id, name }]), kept on elements still to name: one a
+ * project's element already has, whatever its case, gets its page added. The names changed:
+ * [{ id, from, to }].
+ */
+export function nameElementsAs(projectId, names) {
+  return db.transaction(() => {
+    const index = loadIndex(projectId);
+    const changed = [];
+    for (const { id, name } of names) {
+      const row = index.elements.get(id);
+      if (!row || !toName(row)) continue;
+      const taken = takenNames([...index.elements.values()].filter((other) => other.id !== id).map((other) => other.name));
+      const to = uniqueName(name, row.page, taken);
+      db.prepare('UPDATE elements SET name = ?, agent_named = 1 WHERE id = ?').run(to, id);
+      if (to !== row.name) changed.push({ id, from: row.name, to });
+      Object.assign(row, { name: to, agent_named: 1 });
+    }
+    return changed;
+  })();
+}
+
 /** Renames an element; `{ error, status }` when the name is empty or another element has it. */
 export function renameElement(id, name) {
   const wanted = String(name ?? '').replace(/\s+/g, ' ').trim();
   if (!wanted) return { error: 'A name is required', status: 400 };
   const element = db.prepare('SELECT id, project_id FROM elements WHERE id = ?').get(id);
   if (!element) return { error: 'Element not found', status: 404 };
-  const other = db.prepare('SELECT id FROM elements WHERE project_id = ? AND name = ? AND id != ?').get(element.project_id, wanted, id);
-  if (other) return { error: `Another element of this project is named "${wanted}"`, status: 409 };
+  // Whatever its case: "save" is the "Save" of another page.
+  const other = db.prepare('SELECT id, name, page FROM elements WHERE project_id = ? AND name = ? COLLATE NOCASE AND id != ?').get(element.project_id, wanted, id);
+  if (other) return { error: `Another element of this project is named "${other.name}" (${other.page}): give this one a name that tells them apart`, status: 409 };
   db.prepare('UPDATE elements SET name = ?, renamed = 1 WHERE id = ?').run(wanted, id);
   return { name: wanted };
 }

@@ -9,7 +9,7 @@ import { cmdNavigate, cmdClick, cmdFill, cmdSelect, cmdUpload, cmdDrag, cmdKeybo
 import { dragElements } from './drag';
 import { cmdExecuteJs, cmdWait } from './queries';
 import { setPickedValue } from '../dom/picked-input';
-import { actsOnPage } from '../page-url';
+import { actsOnPage, pageKnownAfter } from '../page-url';
 import { recordRun } from '../live';
 import { missedWait } from '../wait-outcome';
 import { fileInputOf, putFiles } from '../dom/file-input';
@@ -108,7 +108,7 @@ export async function cmdReplaySequence(
     const stepStartedAt = Date.now();
     // The page the step runs on: a step recorded before steps kept theirs gets it (server's
     // fillStepPages).
-    const pageUrl = currentTabId && actsOnPage(step.command)
+    const pageUrl = currentTabId && actsOnPage(step.command) && !pageKnownAfter(step.command)
       ? await chrome.tabs.get(currentTabId).then((tab) => tab.url, () => undefined)
       : undefined;
 
@@ -428,7 +428,11 @@ export async function cmdReplaySequence(
     }
 
     const done = results[results.length - 1];
-    if (pageUrl && done?.step === i + 1 && done.status === 'success') done.pageUrl = pageUrl;
+    // A wait: the page the element showed on, once it is over.
+    const pageOfStep = pageUrl ?? (currentTabId && pageKnownAfter(step.command)
+      ? await chrome.tabs.get(currentTabId).then((tab) => tab.url, () => undefined)
+      : undefined);
+    if (pageOfStep && done?.step === i + 1 && done.status === 'success') done.pageUrl = pageOfStep;
 
     const delayMs = STEP_DELAY_MS[step.command] ?? DEFAULT_STEP_DELAY_MS;
     console.log(`  ⏳ Waiting ${delayMs}ms...`);

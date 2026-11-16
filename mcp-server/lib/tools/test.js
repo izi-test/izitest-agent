@@ -27,6 +27,7 @@ import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from '../bu
 import { elementTimeoutFor } from '../projects.js';
 import { checksRecording, recordingRequirements, recordCheck, linkRecordedChecks } from '../recorded-checks.js';
 import { windowSettings, closesAfterRun, closeWindowOf } from '../run-windows.js';
+import { nameElementsLater } from '../element-naming.js';
 
 // What follows a value typed or picked (a search, a suggestion: a variable at save time). "chocolat"
 // led Auchan to its aisle (?redirect_keywords=chocolat, a Kinder bar shown), "banane" to its
@@ -438,6 +439,8 @@ export function registerTestTools(server, { sendCommand: dispatch }) {
         summary += `\nTo run with different data: run_test("${test.name}", { variables: { ${Object.keys(variables).map(k => `"${k}": "new_value"`).join(', ')} } })`;
       }
       summary += await closeRecordingWindow();
+      // The elements it acts on that nothing names, named by the agent in the background.
+      nameElementsLater(test.name);
       return { content: [{ type: 'text', text: summary }] };
     }
   );

@@ -223,8 +223,8 @@ test('an assertion checks an element of its page: named in the Gherkin, read bac
   assert.equal(elementKey(containsCheck('#result-profile', 'x', 'shop.test/notes')) === elementKey(t.steps[1]), false, 'another page, another element');
 
   const shown = withElementNames(t);
-  assert.equal(shown.steps[1].element, '#result-profile');
-  renameElement(listElements(project).find((e) => e.name === '#result-profile').id, 'Profile result');
+  assert.equal(shown.steps[1].element, 'Result profile', 'in words drawn from its selector, never the selector');
+  renameElement(listElements(project).find((e) => e.name === 'Result profile').id, 'Profile result');
   const feature = serializeTestToFeatureWith(withElementNames(t), DEFAULTS);
   assert.match(feature, /Then "Profile result" should contain "Saved"\n/);
 
@@ -263,7 +263,7 @@ test('the agent writing Gherkin is told the elements of the app, page by page, b
     containsCheck('#welcome', 'Hello', 'told.test/home'),
   ]);
   assert.deepEqual(elementLines(project), [
-    '- told.test/home: "#welcome" (css #welcome)',
+    '- told.test/home: "Welcome" (css #welcome)',
     '- told.test/login: "E-mail" (field), "Sign in" (button)',
   ]);
   const brief = designBrief({ key: 'REQ-1', title: 'Sign in', description: '', criteria: [], cases: [], project_id: project });

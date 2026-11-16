@@ -76,7 +76,7 @@ test('what tells an element apart for sure: its id, its test ID; a field\'s name
 test('the same field recorded three ways is one element, under the name the user gave it', () => {
   const project = projectNamed('Arena');
   const first = saved('Country picked among suggestions', project, [typedBySelector(), checked('#country-input', '{{country}}')]);
-  assert.equal(withElementNames(first).steps[0].element, '#country-input');
+  assert.equal(withElementNames(first).steps[0].element, 'Country input', 'named in words drawn from its selector, never the selector');
   const [element] = listElements(project);
   assert.deepEqual(renameElement(element.id, 'Country'), { name: 'Country' });
 

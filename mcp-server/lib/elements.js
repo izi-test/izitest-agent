@@ -15,8 +15,9 @@
 import { isFragileSelector, isPositionalSelector, lastTag, unescapeCss } from './codegen/locators.js';
 
 // The commands that act on an element of the page; drag, on the one it moves; an assertion,
-// on the one it checks (ELEMENT_ASSERTIONS); a capture, on the one it reads.
-const TARGET_COMMANDS = new Set(['click', 'fill', 'select', 'upload', 'drag', 'assert', 'capture']);
+// on the one it checks (ELEMENT_ASSERTIONS); a capture, on the one it reads; a wait, on the one
+// it waits for (a wait of a time only has none).
+const TARGET_COMMANDS = new Set(['click', 'fill', 'select', 'upload', 'drag', 'assert', 'capture', 'wait']);
 const FIELD_COMMANDS = new Set(['fill', 'select', 'upload']);
 const NAME_LOCATORS = ['label', 'aria'];
 // The assertions that check an element, named by their selector. text_contains without one
@@ -192,17 +193,81 @@ export function foundLike(step, source) {
   return { ...step, params: { ...step.params, selector }, ...(locators !== undefined && { locators }) };
 }
 
-/** What a person reads on the element: its name, its label, its placeholder, its test ID. */
+/**
+ * What a person reads on the element: its name, its label, the text of what is clicked, its
+ * placeholder, its test ID — else words drawn from its selector ("Shop cart total" for
+ * #shop-cart-total), never the selector itself: it says how the element is found, not what it is.
+ */
 export function baseName(step) {
   if (step.variable?.suggestionOf && step.variable.field) return `Suggestion of "${step.variable.fieldName ?? step.variable.field}"`.slice(0, 60);
   const locators = step.locators ?? [];
+  // The text of a button or a link clicked — not of an item picked from a list: that one changes.
+  const text = !step.variable && step.command !== 'fill' ? locators.find((l) => l.type === 'text' && readableText(l.value))?.value : null;
   const named = locators.find((l) => l.type === 'role' && l.name)?.name
     ?? locators.find((l) => NAME_LOCATORS.includes(l.type) && l.value)?.value
+    ?? text
     ?? locators.find((l) => l.type === 'placeholder' && l.value)?.value
-    ?? locators.find((l) => l.type === 'testid' && l.value)?.value
+    ?? words(locators.find((l) => l.type === 'testid' && l.value)?.value)
+    ?? readableSelector(dataOf(step).selector)
     ?? dataOf(step).selector
     ?? 'element';
   return String(named).replace(/\s+/g, ' ').trim().slice(0, 60) || 'element';
+}
+
+// A text that names a button or a link: short, no {{value}}, not a number or a price alone.
+const readableText = (value) => typeof value === 'string' && value.trim().length > 1 && value.length <= 40
+  && !value.includes('{{') && /\p{L}/u.test(value) && !/^[\d\s.,:%€$£-]+\p{L}{0,3}$/u.test(value.trim());
+
+/** "shop-cart-total", "flashMessage", "note_submit" as words: "Shop cart total", "Flash message". */
+export function words(value) {
+  if (typeof value !== 'string') return null;
+  const parts = value.replace(/\{\{[^}]*\}\}/g, ' ')
+    .split(/[-_\s.:/]+|(?<=[a-z])(?=[A-Z])/)
+    .map((w) => w.toLowerCase())
+    .filter((w) => w && !/^\d+$/.test(w))
+    .filter((w, i, all) => w !== all[i - 1]);
+  // A letter alone ("j_username", "#shop-q") says nothing beside other words.
+  const said = parts.length > 1 ? parts.filter((w) => w.length > 1) : parts;
+  if (!said.length) return null;
+  parts.splice(0, parts.length, ...said);
+  const text = parts.join(' ');
+  return text[0].toUpperCase() + text.slice(1);
+}
+
+// What a tag is, said in words, when nothing else names the element.
+const TAG_WORDS = {
+  a: 'link', button: 'button', input: 'field', textarea: 'field', select: 'list', option: 'option', img: 'image',
+  h1: 'heading', h2: 'heading', h3: 'heading', h4: 'heading', h5: 'heading', h6: 'heading', label: 'label',
+  li: 'item', ul: 'list', ol: 'list', tr: 'row', td: 'cell', th: 'column', table: 'table', form: 'form', nav: 'menu',
+  dialog: 'dialog', article: 'card', section: 'section', header: 'header', footer: 'footer', main: 'main content', p: 'text',
+};
+const ATTRIBUTE = (name) => new RegExp(`\\[${name}\\s*[~|^$*]?=\\s*(?:"((?:[^"\\\\]|\\\\.)*)"|'((?:[^'\\\\]|\\\\.)*)'|([^\\]\\s]+))\\s*\\]`, 'i');
+const attribute = (part, name) => { const m = ATTRIBUTE(name).exec(part); return m ? unescapeCss(m[1] ?? m[2] ?? m[3]) : null; };
+
+/**
+ * A name in words drawn from a CSS selector, from the part that picks the element itself (the
+ * last one): its aria-label as written, else the words of its test ID, its id, its name, its
+ * placeholder, its last class, else what its tag is. Null when it says nothing.
+ */
+export function readableSelector(selector) {
+  if (typeof selector !== 'string' || !selector.trim()) return null;
+  const last = selector.trim().split(/\s*[>+~]\s*|\s+(?![^[]*\])/).filter(Boolean).at(-1) ?? '';
+  const label = attribute(last, 'aria-label');
+  if (label && readableText(label)) return label;
+  const fromWords = words(attribute(last, 'data-(?:testid|test-id|test|qa|cy)'))
+    ?? words(/#((?:\\.|[\w-])+)/.exec(last)?.[1] && unescapeCss(/#((?:\\.|[\w-])+)/.exec(last)[1]))
+    ?? words(attribute(last, 'name'))
+    ?? words(attribute(last, 'placeholder'))
+    ?? words([...last.matchAll(/\.((?:\\.|[\w-])+)/g)].at(-1)?.[1]);
+  if (fromWords) return fromWords;
+  const tag = /^[a-z][a-z0-9]*/i.exec(last)?.[0]?.toLowerCase();
+  return tag && TAG_WORDS[tag] ? TAG_WORDS[tag][0].toUpperCase() + TAG_WORDS[tag].slice(1) : null;
+}
+
+/** Names already given in a project, told apart whatever their case: "Save" is "save". */
+export function takenNames(names) {
+  const lower = new Set([...names].map((name) => String(name).toLowerCase()));
+  return { has: (name) => lower.has(String(name).toLowerCase()), add: (name) => lower.add(String(name).toLowerCase()) };
 }
 
 // The last part of a page's path that is no id: "notes" for localhost:5180/notes/*.

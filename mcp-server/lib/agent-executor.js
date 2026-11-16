@@ -42,6 +42,7 @@ import { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } from './bus
 import { elementTimeoutFor } from './projects.js';
 import { askUser, cancelAsk, ASK_USER_DESCRIPTION, ASK_FIELD_DESCRIPTION } from './asks.js';
 import { windowSettings, closeWindowOf } from './run-windows.js';
+import { nameElementsLater } from './element-naming.js';
 
 // ─── Provider factory (OpenRouter) ────────────────────────────────
 
@@ -726,6 +727,8 @@ function buildTools(sendCommand) {
         if (tabId !== undefined && windowSettings().after_recording && await closeWindowOf(sendCommand, tabId)) {
           summary += '\nIts window was closed, as the user chose (Settings → Browser windows): the next navigate opens a new one.';
         }
+        // The elements it acts on that nothing names, named by the agent in the background.
+        nameElementsLater(test.name);
         return summary;
       },
     }),

@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Check, FolderKanban, MousePointerClick, Pencil, Search, Trash2, X } from 'lucide-react';
-import { useAppSelector } from '../store/hooks';
-import { useDeleteElementMutation, useGetElementsQuery, useGetProjectsQuery, useRenameElementMutation } from '../store/services/projectsApi';
+import { Check, FolderKanban, Loader2, MousePointerClick, Pencil, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { showToast } from '../store/slices/uiSlice';
+import { useDeleteElementMutation, useGetElementsQuery, useGetProjectsQuery, useNameElementsMutation, useRenameElementMutation } from '../store/services/projectsApi';
 import { useGo, useUrlState } from '../navigation';
 import { Button } from './Button';
 import { Card, EmptyState, KeyChip, PageHeader, Pill } from './ui';
@@ -21,6 +22,16 @@ export function ElementsPage() {
   const go = useGo();
   const [search, setSearch] = useUrlState('q');
   const { data: elements = [], isLoading } = useGetElementsQuery(scope ?? 0, { skip: scope == null });
+  const dispatch = useAppDispatch();
+  const [nameThem, { isLoading: naming, error: namingError }] = useNameElementsMutation();
+  const toName = elements.filter((e) => e.to_name).length;
+  const askNames = async () => {
+    if (scope == null) return;
+    const result = await nameThem(scope).unwrap().catch(() => null);
+    if (!result) return;
+    const named = result.changed.length;
+    dispatch(showToast({ message: named ? `${named} element${named === 1 ? '' : 's'} named${result.left ? `; ${result.left} left as they were` : ''}` : 'The agent gave no new name' }));
+  };
 
   if (scope == null) {
     return (
@@ -52,6 +63,18 @@ export function ElementsPage() {
         </div>
         <span className="muted">{elements.length} element{elements.length === 1 ? '' : 's'} on {new Set(elements.map((e) => e.page)).size} page{new Set(elements.map((e) => e.page)).size === 1 ? '' : 's'}</span>
       </div>
+
+      {toName > 0 && (
+        <div className="alert alert--info elements-to-name">
+          <span>
+            <strong>{toName} element{toName === 1 ? '' : 's'}</strong> {toName === 1 ? 'has' : 'have'} no name on the page — found by a selector alone, or
+            named like another one —: the Gherkin reads {toName === 1 ? 'its' : 'their'} selector in words. The agent can name {toName === 1 ? 'it' : 'them'} from
+            what the tests do, each with a name of its own. A name you gave is never changed.
+          </span>
+          <Button size="sm" icon={naming ? Loader2 : Sparkles} disabled={naming} onClick={askNames}>{naming ? 'Naming…' : 'Name them'}</Button>
+          {namingError && <span className="field__error">{errorOf(namingError)}</span>}
+        </div>
+      )}
 
       {isLoading ? (
         <Card><p className="empty-state">Loading…</p></Card>
@@ -129,6 +152,7 @@ function ElementRow({ element }: { element: PageElement }) {
         ) : (
           <div className="element-name">
             <span className="cell-title">{element.name}</span>
+            {element.to_name && <Pill tone="amber" title="Nothing on the page names it: the agent can, or rename it yourself">no name on the page</Pill>}
             <button className="icon-button" title="Rename" aria-label={`Rename ${element.name}`} onClick={() => setEditing(true)}><Pencil size={14} /></button>
           </div>
         )}

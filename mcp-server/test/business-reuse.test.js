@@ -16,8 +16,8 @@ const { initDatabase, db } = await import('../lib/db.js');
 initDatabase();
 const { createProject } = await import('../lib/projects.js');
 const { saveTest, loadTest, insertTestStep } = await import('../lib/test-store.js');
-const { createStepDefinition } = await import('../lib/gherkin/step-definition-store.js');
-const { serializeTestToFeature } = await import('../lib/gherkin/serialize.js');
+const { createStepDefinition, listStepDefinitions } = await import('../lib/gherkin/step-definition-store.js');
+const { serializeTestToFeature, scenarioPhrases } = await import('../lib/gherkin/serialize.js');
 const { buildBusinessStep } = await import('../lib/gherkin/business-step.js');
 const { stepsOfBusinessPhrase, businessStepsOf, playBusinessSteps } = await import('../lib/business-play.js');
 const { listElements } = await import('../lib/element-store.js');
@@ -52,12 +52,14 @@ test('made now, a business step leaves its waits of a time only out', () => {
   assert.deepEqual(withWaits.steps_template.map((s) => s.command), ['fill', 'fill', 'click']);
 });
 
-test('a test holding the login with a wait of its own after it reads as the business step', () => {
+test('a test holding the login with a wait of its own after it reads as the business step, the wait no phrase but kept with it', () => {
   saveTest({ name: 'user_access', variables: {}, steps: [{ command: 'navigate', params: { url: 'https://portal.test/ECM/' } }, field('#username', 'Username', '{{j_username}}'), field('input[name="j_password"]', 'Password', '{{j_password}}'), login, time(4000), { command: 'click', params: { selector: '#start' }, locators: [{ type: 'css', value: '#start' }] }] });
   db.prepare('UPDATE tests SET project_id = ? WHERE name = ?').run(project.id, 'user_access');
   const phrases = phrasesOf('user_access');
   assert.ok(phrases.some((p) => p.includes("je me connecte au portail avec l'identifiant \"{{j_username}}\" et le mot de passe \"{{j_password}}\"")), phrases.join('\n'));
-  assert.ok(phrases.some((p) => /4 secondes|4 seconds/.test(p)), 'its own wait still reads');
+  assert.ok(!phrases.some((p) => /4 secondes|4 seconds/.test(p)), 'a wait of a time only says how the test runs, not what it does: no phrase');
+  const business = scenarioPhrases(loadTest('user_access'), listStepDefinitions(project.id)).find((p) => p.business);
+  assert.deepEqual(business.steps.map((s) => s.command), ['fill', 'fill', 'click', 'wait'], 'it goes with the phrase before it');
 });
 
 test('a wait between the sub-steps does not keep it from reading as the business step', () => {

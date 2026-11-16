@@ -39,8 +39,12 @@ export function serializeTestToFeatureWith(test, definitions, options = {}) {
  * unchanged phrase back its steps (see reconcile.js).
  * `singleStep(step)` gives the step a phrase is rendered from when no business step groups
  * it — the Cucumber export puts a stable target in its selector there.
+ * A wait of a time only ("I wait 4 seconds") says how the test runs, not what it does: it is no
+ * phrase of its own but goes with the phrase before it — the first one's, at the start —, kept
+ * with it when the feature is saved. The Cucumber export, which plays the phrases, shows them
+ * (`foldTimeWaits: false`).
  */
-export function scenarioPhrases(test, definitions, { singleStep = (step) => step, language } = {}) {
+export function scenarioPhrases(test, definitions, { singleStep = (step) => step, language, foldTimeWaits = true } = {}) {
   // A phrase of the catalogue in another language than the test's comes after its own.
   const lang = languageOf(language ?? test.language);
   const foreign = (d) => Number(!!d.language && d.language !== lang);
@@ -65,21 +69,30 @@ export function scenarioPhrases(test, definitions, { singleStep = (step) => step
 
   const steps = test.steps || [];
   const phrases = [];
+  // Time waits before the first phrase: they go with it.
+  const leading = [];
+  const fold = foldTimeWaits && steps.some((step) => !isTimeWait(step));
   let i = 0;
 
   while (i < steps.length) {
+    if (fold && isTimeWait(steps[i])) {
+      if (phrases.length) phrases.at(-1).steps.push(steps[i]); else leading.push(steps[i]);
+      i++;
+      continue;
+    }
+
     // Try composite match first — check if next N steps match a composite definition.
     const composite = tryMatchComposite(steps, i, sortedComposites);
     if (composite) {
       // `business`: the business step it reads as (business-steps.js tells its proposals apart by it).
-      phrases.push({ keyword: composite.keyword, phrase: composite.phrase, steps: steps.slice(i, i + composite.consumed), business: composite.id });
+      phrases.push({ keyword: composite.keyword, phrase: composite.phrase, steps: [...leading.splice(0), ...steps.slice(i, i + composite.consumed)], business: composite.id });
       i += composite.consumed;
       continue;
     }
 
     // Fall back to single-step matching.
     const rendered = renderStepPhrase(singleStep(steps[i]), sortedSingles);
-    phrases.push({ keyword: rendered.keyword, phrase: rendered.phrase, steps: [steps[i]] });
+    phrases.push({ keyword: rendered.keyword, phrase: rendered.phrase, steps: [...leading.splice(0), steps[i]] });
     i++;
   }
 

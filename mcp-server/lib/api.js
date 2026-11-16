@@ -24,7 +24,8 @@ import {
 } from './gherkin/step-definition-store.js';
 import { serializeTestToFeature } from './gherkin/serialize.js';
 import { stepsForEditedFeature } from './gherkin/reconcile.js';
-import { withElementNames, elementTargets, listElements, renameElement, deleteElement, usesOfStep, relocateElement } from './element-store.js';
+import { withElementNames, elementTargets, listElements, renameElement, deleteElement, usesOfStep, relocateElement, elementsToName } from './element-store.js';
+import { nameElements } from './element-naming.js';
 import { proposalsOf, startProposals, acceptProposal, dismissProposal } from './business-steps.js';
 import { languageOf } from './gherkin/language.js';
 import { createProject, elementTimeoutOf } from './projects.js';
@@ -1513,7 +1514,20 @@ export async function apiRouter(req, res, url) {
     if (method === 'GET' && params) {
       const projectId = parseInt(params.id, 10);
       if (!db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)) return json(res, 404, { error: 'Project not found' });
-      return json(res, 200, { elements: listElements(projectId) });
+      // `to_name`: those nothing on the page names, the agent can name (lib/element-naming.js).
+      return json(res, 200, { elements: listElements(projectId), to_name: elementsToName(projectId).elements.map((e) => e.id) });
+    }
+
+    // ── POST /api/projects/:id/elements/name — the elements nothing names, named by the agent ──
+    params = matchRoute(path, '/api/projects/:id/elements/name');
+    if (method === 'POST' && params) {
+      const projectId = parseInt(params.id, 10);
+      if (!db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)) return json(res, 404, { error: 'Project not found' });
+      try {
+        return json(res, 200, await nameElements(projectId, { complete }));
+      } catch (err) {
+        return json(res, 502, { error: err.message });
+      }
     }
 
     // ── PATCH /api/elements/:id — rename; DELETE — one no step acts on any more ──

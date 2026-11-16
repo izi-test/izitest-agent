@@ -12,7 +12,7 @@ import { log } from './logger.js';
 import { loadTest } from './test-store.js';
 import { withElementNames } from './element-store.js';
 import { buildBusinessStep } from './gherkin/business-step.js';
-import { scenarioPhrases, serializeTestToFeatureWith } from './gherkin/serialize.js';
+import { scenarioPhrases, serializeTestToFeatureWith, isTimeWait } from './gherkin/serialize.js';
 import { listStepDefinitions, createStepDefinition } from './gherkin/step-definition-store.js';
 import { keywordsOf } from './gherkin/language.js';
 
@@ -68,7 +68,8 @@ export function proposalBrief(test, definitions) {
       lines.push(`${range}. ${words[phrase.keyword]} ${phrase.phrase}   [already a business step of the project]`);
       continue;
     }
-    const step = test.steps[phrase.from - 1];
+    // Its first step that does something: a time wait goes with the phrase before it.
+    const step = test.steps.slice(phrase.from - 1, phrase.to).find((s) => !isTimeWait(s)) ?? test.steps[phrase.from - 1];
     const about = [step.intent && step.intent !== phrase.phrase ? step.intent : null, step.page ? `on ${step.page}` : null].filter(Boolean).join(' — ');
     lines.push(`${range}. ${words[phrase.keyword]} ${phrase.phrase}${about ? `   (${about})` : ''}`);
   }

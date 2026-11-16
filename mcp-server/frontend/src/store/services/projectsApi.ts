@@ -46,8 +46,20 @@ export const projectsApi = createApi({
     // The elements its steps act on (mcp-server/lib/element-store.js).
     getElements: builder.query<PageElement[], number>({
       query: (projectId) => `api/projects/${projectId}/elements`,
-      transformResponse: (response: { elements: PageElement[] }) => response.elements ?? [],
+      transformResponse: (response: { elements: PageElement[]; to_name?: number[] }) =>
+        (response.elements ?? []).map((element) => ({ ...element, to_name: (response.to_name ?? []).includes(element.id) })),
       providesTags: ['Elements'],
+    }),
+
+    // Those nothing on the page names, named by the agent from what the tests do with them
+    // (mcp-server/lib/element-naming.js): the Gherkin of every test using them reads the new names.
+    nameElements: builder.mutation<{ changed: { id: number; from: string; to: string }[]; left: number }, number>({
+      query: (projectId) => ({ url: `api/projects/${projectId}/elements/name`, method: 'POST' }),
+      invalidatesTags: ['Elements'],
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        await queryFulfilled.catch(() => null);
+        dispatch(testsApi.util.invalidateTags(['Test']));
+      },
     }),
 
     // Renamed, an element reads under its new name in the Gherkin of every test using it.
@@ -124,6 +136,7 @@ export const {
   useDeleteProjectMutation,
   useGetElementsQuery,
   useRenameElementMutation,
+  useNameElementsMutation,
   useDeleteElementMutation,
   useGetDatasetsQuery,
   useGetDatasetQuery,

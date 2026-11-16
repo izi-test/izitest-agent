@@ -254,6 +254,12 @@ L'onglet Gherkin du tableau de bord, lui, nomme les éléments (ci-dessous) au l
 sélecteur ; une étape sans élément garde le sélecteur enregistré. Un argument qui contient des
 guillemets doubles s'écrit entre guillemets simples.
 
+Une attente d'un temps seul (« I wait 4 seconds ») dit comment le test s'exécute, pas ce qu'il fait :
+elle n'est pas une phrase de l'onglet Gherkin, ni de `get_test_as_gherkin`. Elle reste dans le test
+(onglet *Steps*), rejouée, et va avec la phrase qui la précède — la première, au début du test : un
+Gherkin sauvé la garde, même si cette phrase est reformulée, et la supprime avec elle. L'export Cucumber,
+qui joue ses phrases, les montre. Une attente d'un élément reste une phrase, qui le nomme.
+
 ### La langue des tests d'un projet
 
 Chaque projet a une langue, `en` ou `fr`, choisie à sa création (« Tests written in », par défaut celle
@@ -275,7 +281,8 @@ du navigateur) et modifiable ensuite : c'est celle de ses tests, pas celle du ta
 
 ### Les éléments d'un projet
 
-Chaque étape qui agit sur un élément de la page (`click`, `fill`, `select`, `upload`, `drag`), et
+Chaque étape qui agit sur un élément de la page (`click`, `fill`, `select`, `upload`, `drag`, et `wait` quand elle
+attend un élément), et
 chaque assertion qui vérifie un élément par son sélecteur, garde la page où elle a été faite : l'hôte et le chemin, sans la requête ni le fragment, chaque partie du chemin
 qui contient un chiffre (un identifiant, un slug avec un identifiant) remplacée par `*` —
 `notes.test/notes/*` pour la note 42 comme pour la 43. L'extension renvoie l'URL de la page avec le
@@ -333,9 +340,31 @@ remplacées (`superseded`). Appliquée à son étape seule, une réparation gard
 nouvelle clé s'ajoute aux siennes, son nom ne change pas. Une étape sans page (enregistrée avant que les
 étapes gardent la leur) n'est pas comptée : elle la reçoit à sa prochaine exécution réussie.
 
-Chaque élément a un nom, unique dans son projet, pris de ce qu'une personne lit dessus (« Save
-profile », « E-mail ») ; déjà pris, il reçoit sa page (« Save (profile) »). L'onglet Gherkin dit ce nom
-à la place du sélecteur :
+Chaque élément a un nom, unique dans son projet quelle que soit la casse (« save » est le « Save »
+d'une autre page), pris de ce qu'une personne lit dessus : son rôle et son nom accessible, son libellé,
+le texte du bouton ou du lien cliqué (« Accept all cookies » ; pas un prix ni l'élément d'une liste choisi
+par une variable), son placeholder, son test ID. Un élément que rien ne nomme — une vérification n'a que
+son sélecteur — reçoit des mots tirés de la partie du sélecteur qui le désigne, jamais le sélecteur
+lui-même : `#shop-cart-total` → « Shop cart total », `[data-testid=flash-message]` → « Flash message »,
+`button[aria-label="Empty the cart"]` → « Empty the cart ». Un nom déjà pris reçoit sa page
+(« Save (profile) »).
+
+**L'agent nomme les éléments que rien ne nomme.** Ceux trouvés par un sélecteur ou un test ID seul, ou
+nommés comme un autre avec leur page ajoutée, sont nommés par l'agent d'après ce que les tests en font
+(l'intention de chaque étape, ce que vérifie une assertion) : « Total du panier », « Message de
+confirmation », dans la langue du projet. Il reçoit les noms des autres éléments du projet, avec leur page,
+et donne à chacun un nom à lui : un élément qui ressemble à celui d'une autre page est nommé par ce qui
+l'en distingue (« Rechercher un produit », « Rechercher un utilisateur »), jamais le même nom avec un
+numéro. Un nom qu'il donne quand même déjà pris reçoit sa page ; une réponse qui n'est pas un nom (un
+sélecteur, un id) est ignorée. Un nom que l'utilisateur a donné n'est jamais changé ; un nom donné par
+l'agent reste quand une étape plus tardive lit un libellé sur l'élément, et l'agent ne le redemande pas
+(colonne `agent_named`). L'agent le fait :
+- à la fin de chaque enregistrement (`stop_recording`, du MCP comme de l'agent du tableau de bord), pour
+  les éléments du test sauvé, en arrière-plan : la réponse à l'agent qui enregistre n'attend pas ;
+- dans la page **Elements**, pour tous ceux du projet : « N elements have no name on the page… », bouton
+  **Name them** ; chacun porte « no name on the page » dans la liste.
+
+L'onglet Gherkin dit ce nom à la place du sélecteur :
 
 ```gherkin
 When I fill "E-mail" with "{{email}}"
@@ -361,8 +390,9 @@ plus s'y supprime. Les étapes d'un test montrent le nom de leur
 
 | Route | Rôle |
 | :--- | :--- |
-| `GET /api/projects/:id/elements` | Les éléments du projet, avec leur page, ce qu'ils sont, et les étapes qui les utilisent |
-| `PATCH /api/elements/:id` | Renomme un élément (`{ name }`) ; 409 si un autre élément du projet a ce nom |
+| `GET /api/projects/:id/elements` | Les éléments du projet, avec leur page, ce qu'ils sont, et les étapes qui les utilisent ; `to_name` : les ids de ceux que rien ne nomme |
+| `POST /api/projects/:id/elements/name` | L'agent nomme les éléments que rien ne nomme (`to_name` de `GET …/elements`) : `{ changed: [{ id, from, to }], left }` ; 502 si l'agent ne répond pas |
+| `PATCH /api/elements/:id` | Renomme un élément (`{ name }`) ; 409 si un autre élément du projet a ce nom, quelle que soit la casse |
 | `DELETE /api/elements/:id` | Supprime un élément qu'aucune étape n'utilise ; 409 sinon |
 
 ### Étapes métier : `create_business_step`

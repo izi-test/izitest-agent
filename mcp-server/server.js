@@ -33,6 +33,8 @@ import { purgeRunVideos } from './lib/run-video.js';
 import { trustSystemCertificates } from './lib/system-ca.js';
 import { seedAllProjectsStepDefinitions } from './lib/gherkin/step-definition-store.js';
 import { registerAllElements } from './lib/element-store.js';
+import { setElementNamer } from './lib/element-naming.js';
+import { complete } from './lib/agent/complete.js';
 import { apiRouter } from './lib/api.js';
 import { parseAllowedOrigins, refuseBrowserRequest } from './lib/origin-guard.js';
 import { cookieAuthorized, wantsSignIn, signInPage, signInCookie, signOutCookie, safeNext, fromOwnOrigin, overHttps } from './lib/dashboard-auth.js';
@@ -122,6 +124,8 @@ try {
 } catch (err) {
   log(`Elements not registered at start: ${err.message}`);
 }
+// Once a test is saved, the elements it acts on that nothing names are named by the agent.
+setElementNamer(complete);
 startWebSocketServer(WS_PORT);
 initLive();
 // Runs' videos (lib/run-video.js): those older than their days, of runs deleted, or left half

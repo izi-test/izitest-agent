@@ -2,10 +2,18 @@
 // URL of the tab when the action began goes back with its result, as `pageUrl`.
 
 const PAGE_COMMANDS = new Set(['click', 'fill', 'select', 'upload', 'drag']);
+// A wait for an element is on the page the element shows on: read once it is over — the click
+// before it may have opened another page, still loading when the wait began.
+const PAGE_AFTER_COMMANDS = new Set(['wait']);
 
 /** Whether a command acts on an element of the page, so says where. */
 export function actsOnPage(command: string): boolean {
-  return PAGE_COMMANDS.has(command);
+  return PAGE_COMMANDS.has(command) || PAGE_AFTER_COMMANDS.has(command);
+}
+
+/** Whether its page is the one the tab is on once it is over, rather than when it began. */
+export function pageKnownAfter(command: string): boolean {
+  return PAGE_AFTER_COMMANDS.has(command);
 }
 
 /** The result of an action with the URL of its page; anything else as it is. */

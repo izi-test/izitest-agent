@@ -12,7 +12,7 @@
 // target did not change, it keeps the locators, intent and list variable of the step it
 // replaces.
 
-import { scenarioPhrases } from './serialize.js';
+import { scenarioPhrases, isTimeWait } from './serialize.js';
 import { featurePhrases, compileDefinitions, effectiveKeyword, stepsForPhrase, unresolved, unresolvedError } from './parse.js';
 
 // Parameters a phrase cannot say, set by recording: kept on an edited step with the same target.
@@ -52,7 +52,7 @@ export function stepsForEditedFeature(featureText, definitions, test, { targets 
     // The phrase it most likely replaces: the next one of `before` not kept as it was.
     const replaced = before[previous + 1] && !keptBefore.has(previous + 1) ? before[previous + 1] : null;
     if (replaced) previous += 1;
-    steps.push(...(replaced ? carryOver(replaced.steps, parsed.steps) : parsed.steps));
+    steps.push(...(replaced ? withItsWaits(replaced.steps, parsed.steps) : parsed.steps));
     lastKeyword = parsed.keyword;
   }
 
@@ -86,6 +86,23 @@ function commonPhrases(before, after) {
     }
   }
   return matched;
+}
+
+/**
+ * The steps of an edited phrase, with the time waits that went with the phrase it replaces
+ * (serialize.js shows none): the user did not see them, rewording the phrase keeps them where
+ * they were — before it, or after it.
+ */
+function withItsWaits(oldSteps, newSteps) {
+  const first = oldSteps.findIndex((step) => !isTimeWait(step));
+  if (first === -1) return newSteps;
+  const last = oldSteps.findLastIndex((step) => !isTimeWait(step));
+  const core = oldSteps.slice(first, last + 1);
+  return [
+    ...oldSteps.slice(0, first).map((step) => structuredClone(step)),
+    ...carryOver(core, newSteps),
+    ...oldSteps.slice(last + 1).map((step) => structuredClone(step)),
+  ];
 }
 
 const targetOf = (step) => step.params?.selector ?? step.params?.label ?? step.params?.url ?? null;

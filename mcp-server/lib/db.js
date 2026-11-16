@@ -478,6 +478,9 @@ export function initDatabase() {
       const mark = db.prepare('UPDATE elements SET renamed = 1 WHERE id = ?');
       for (const row of db.prepare('SELECT id, key, name, page FROM elements').all()) if (!generated(row)) mark.run(row.id);
     }
+    // Named by the agent from what the tests do with it (lib/element-naming.js): not asked again,
+    // and kept when a later step reads a label on it.
+    if (!elementCols.includes('agent_named')) db.exec('ALTER TABLE elements ADD COLUMN agent_named INTEGER NOT NULL DEFAULT 0');
   } catch (err) {
     log(`Migration warning (element keys): ${err.message}`);
   }

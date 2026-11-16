@@ -102,6 +102,8 @@ export interface PageElement {
   also?: string[];
   created_at: string;
   used_by: { test: string; steps: number[] }[];
+  /** Nothing on its page names it: named after its selector for now, the agent can name it. */
+  to_name?: boolean;
 }
 
 /** A step of a test, by its order. */

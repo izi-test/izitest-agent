@@ -646,6 +646,8 @@ textarea { resize: vertical; line-height: 1.5; }
 .alert--warning { color: #92400E; background: var(--amber-bg); border-color: var(--amber-border); }
 .alert--info { color: var(--primary-navy); background: var(--primary-tint); border-color: var(--primary-tint-border); }
 .alert--success { color: #166534; background: var(--green-bg); border-color: var(--green-border); }
+.elements-to-name { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; white-space: normal; }
+.elements-to-name > span:first-child { flex: 1 1 320px; }
 .repair-error { color: var(--red-muted); background: var(--red-bg); border: 1px solid var(--red-border); border-radius: var(--radius); padding: 8px 12px; font-size: 13px; }
 .repair-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .help { color: var(--text-secondary); font-size: 13px; }

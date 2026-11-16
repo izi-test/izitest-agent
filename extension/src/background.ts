@@ -14,7 +14,7 @@ import { cmdConsoleMessages, cmdCheckLinks, cmdRunAxe } from './commands/checks'
 
 import { restoreOwnedWindows } from './owned-windows';
 import { HEADLESS_PROFILE, isHeadless, profileOfStartPage } from './headless';
-import { actsOnPage, withPageUrl } from './page-url';
+import { actsOnPage, withPageUrl, pageKnownAfter } from './page-url';
 import { cmdLiveCapture, cmdLiveStart, cmdLiveStop, cmdLiveStopAll, cmdLiveRecordStart, cmdLiveRecordStop, cmdLiveRecordList, recordRun, setLiveSink } from './live';
 
 // Importing puppeteer-client to register its lifecycle listeners
@@ -108,15 +108,19 @@ function isAboutBlankError(error: unknown): boolean {
   return msg.includes('about:blank') && msg.includes('Cannot access contents');
 }
 
-/** The URL of the tab an action is about to act in, for an action on an element of the page. */
-async function pageUrlBefore(command: string, params: Record<string, unknown>): Promise<string | undefined> {
-  if (!actsOnPage(command)) return undefined;
+/** The URL of the tab a command acts in. */
+async function tabUrl(params: Record<string, unknown>): Promise<string | undefined> {
   try {
     const tabId = await resolveTabId(params.tabId as number | undefined, params.sessionId as string | undefined);
     return (await chrome.tabs.get(tabId)).url || undefined;
   } catch {
     return undefined;
   }
+}
+
+/** The URL of the tab an action is about to act in, for an action on an element of the page. */
+async function pageUrlBefore(command: string, params: Record<string, unknown>): Promise<string | undefined> {
+  return actsOnPage(command) && !pageKnownAfter(command) ? tabUrl(params) : undefined;
 }
 
 async function executeCommand(command: string, params: Record<string, unknown>, onProgress?: (data: any) => void): Promise<unknown> {
@@ -134,8 +138,10 @@ async function executeCommand(command: string, params: Record<string, unknown>, 
 
   // The page the action is done on: the step recording it keeps it.
   const pageUrl = await pageUrlBefore(command, params);
+  // A wait: the page it ended on.
+  const withPage = async (result: unknown) => withPageUrl(result, pageKnownAfter(command) ? await tabUrl(params) : pageUrl);
   try {
-    return withPageUrl(await handler(params, onProgress), pageUrl);
+    return await withPage(await handler(params, onProgress));
   } catch (error) {
     if (!isAboutBlankError(error)) throw error;
 
@@ -161,7 +167,7 @@ async function executeCommand(command: string, params: Record<string, unknown>, 
         // Tab might have been removed — let the retry fail naturally
       }
 
-      return withPageUrl(await handler(params, onProgress), pageUrl);
+      return await withPage(await handler(params, onProgress));
     }
 
     throw error;

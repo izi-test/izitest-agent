@@ -21,9 +21,12 @@ async function load() {
 }
 
 test('an action on an element says its page; navigating or reading the page does not', async () => {
-  const { actsOnPage } = await load();
-  for (const command of ['click', 'fill', 'select', 'upload', 'drag']) assert.equal(actsOnPage(command), true, command);
+  const { actsOnPage, pageKnownAfter } = await load();
+  for (const command of ['click', 'fill', 'select', 'upload', 'drag', 'wait']) assert.equal(actsOnPage(command), true, command);
   for (const command of ['navigate', 'keyboard', 'snapshot', 'screenshot']) assert.equal(actsOnPage(command), false, command);
+  // A wait for an element: the page it showed on, once it is over — the click before may have opened another.
+  assert.equal(pageKnownAfter('wait'), true);
+  for (const command of ['click', 'fill']) assert.equal(pageKnownAfter(command), false, command);
 });
 
 test('the page goes back with the result of the action, and nothing else changes', async () => {
