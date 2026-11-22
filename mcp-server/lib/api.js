@@ -1799,7 +1799,10 @@ export async function apiRouter(req, res, url) {
         req.on('close', () => { try { adoptReproTest(`bug_${reportedBug.id}_repro`); } catch { /* no test recorded */ } });
       }
       // The requirement the test is for (the dashboard saves the request as one): linked when recorded.
-      const requirementLink = body.requirement ? { requirement: String(body.requirement), caseId: body.case_id ?? null, criterion: null } : null;
+      // Without a case, the criterion picked for it (New test → an existing requirement), by its number.
+      const requirementLink = body.requirement
+        ? { requirement: String(body.requirement), caseId: body.case_id ?? null, criterion: body.case_id == null && Number.isInteger(body.criterion) ? body.criterion : null }
+        : null;
 
       // Load agent config
       const settingsRow = db.prepare("SELECT value FROM settings WHERE key = 'agent'").get();
@@ -1813,7 +1816,7 @@ export async function apiRouter(req, res, url) {
       // records through the MCP tools, and is told to link there; the internal one links by itself.
       const linkedRequirement = requirementLink && getRequirement(requirementLink.requirement);
       if (linkedRequirement) {
-        body.prompt += `\n\n${recordingBrief(linkedRequirement, requirementLink.caseId, { viaMcp: agentConfig.mode !== 'api' })}`;
+        body.prompt += `\n\n${recordingBrief(linkedRequirement, requirementLink.caseId, { viaMcp: agentConfig.mode !== 'api', criterion: requirementLink.criterion })}`;
       }
       // The app the test is for: where it is and what to know of it, as the project says.
       const project = body.project_id ? db.prepare('SELECT id, name, base_url, context, language FROM projects WHERE id = ?').get(body.project_id) : null;

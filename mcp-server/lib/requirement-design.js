@@ -364,15 +364,19 @@ function otherRequirementLines(requirement) {
 /**
  * What the agent recording a test for a requirement is told: what the requirement expects,
  * and that the expected results come from it — the app doing otherwise is a non-conformity.
- * `viaMcp`: it records through the MCP tools, and links the test there.
+ * `viaMcp`: it records through the MCP tools, and links the test there. `criterion`: without a
+ * case, the criterion the test checks (its number), when the person picked one.
  */
-export function recordingBrief(requirement, caseId = null, { viaMcp = false } = {}) {
+export function recordingBrief(requirement, caseId = null, { viaMcp = false, criterion: chosen = null } = {}) {
   const planned = caseId != null ? requirement.cases.find((c) => c.id === Number(caseId)) : null;
   const criterion = planned?.criterion_id ? requirement.criteria.find((c) => c.id === planned.criterion_id) : null;
+  // Without a case, the criterion the person picked for the test (New test → an existing requirement).
+  const picked = !planned && chosen != null ? requirement.criteria.find((c) => c.position === Number(chosen)) : null;
   const lines = [`This test checks requirement ${requirement.key} — ${requirement.title}${planned ? `: case #${planned.id} (${planned.kind}), "${planned.title}"` : ''}.`];
   if (requirement.criteria.length) {
     lines.push('Its acceptance criteria:', ...requirement.criteria.map((c) => `${c.position}. ${c.text}`));
     if (criterion) lines.push(`This case checks criterion ${criterion.position}.`);
+    if (picked) lines.push(`This test checks criterion ${picked.position}.`);
   }
   if (planned?.gherkin) {
     lines.push('Its scenario — follow it in the browser; a step written in plain words is yours to find on the page:', planned.gherkin.trim());
@@ -381,7 +385,7 @@ export function recordingBrief(requirement, caseId = null, { viaMcp = false } = 
     'The expected results come from the requirement, not from what the app shows. When the page does not show what it',
     'expects — once you checked that the steps before did what they should — add the assertion with the expected value',
     'of the requirement and non_conformity: true: the test reports the non-conformity. Tell the user.');
-  if (viaMcp) lines.push(`Pass requirement: "${requirement.key}"${planned ? `, case_id: ${planned.id}` : ''} to start_recording.`);
+  if (viaMcp) lines.push(`Pass requirement: "${requirement.key}"${planned ? `, case_id: ${planned.id}` : picked ? `, criterion: ${picked.position}` : ''} to start_recording.`);
   return lines.join('\n');
 }
 

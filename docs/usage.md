@@ -57,6 +57,12 @@ A planned case becomes a test in one of two ways:
   page what its steps say in plain words. The dashboard shows its browser live.
 
 Without a requirement, *New test* does the same from a description (*AI Agent*) or from Gherkin.
+Its **Requirement** field says what the test is for:
+- *A new one, from what you describe below* (by default): what you describe is kept as a
+  requirement of the project, and the test is linked to it.
+- **A requirement of the project**, picked in the list: the test is linked to it and no new
+  requirement is made. When it has acceptance criteria, pick the one the test checks, or leave
+  *The requirement as a whole*. The agent is told its criteria: expected results come from them.
 The window the agent records in stays open once the test is saved, unless you check *Close the
 window once the test is saved* (in *New test*, or in *Settings → Browser windows*): then it closes
 as soon as the test is saved, for every recording, yours and your agent's.

@@ -201,6 +201,12 @@ test('what the agent recording a case is told: the criteria, its own, and where 
   assert.match(brief, /non_conformity: true/);
   assert.match(brief, new RegExp(`Pass requirement: "SHOP-7", case_id: ${third.id} to start_recording\\.$`));
   assert.doesNotMatch(recordingBrief(requirement), /case #|start_recording/, 'the internal agent links by itself');
+  // Without a case, the criterion picked in New test → an existing requirement: told, and passed on.
+  const picked = recordingBrief(requirement, null, { viaMcp: true, criterion: 4 });
+  assert.match(picked, /4\. Après 3 échecs le compte est bloqué\nThis test checks criterion 4\./);
+  assert.match(picked, /Pass requirement: "SHOP-7", criterion: 4 to start_recording\.$/);
+  assert.match(recordingBrief(requirement, null, { viaMcp: true, criterion: 99 }), /Pass requirement: "SHOP-7" to start_recording\.$/, 'a criterion it does not have is not passed on');
+  assert.doesNotMatch(recordingBrief(requirement, third.id, { viaMcp: true, criterion: 1 }), /This test checks criterion/, 'a case says its own');
 });
 
 test('what the agent recording a test is told of the app: its project, where to start, its context, to ask for what it lacks, and to stop when it cannot', () => {

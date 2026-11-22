@@ -7,7 +7,7 @@ import { LiveScreen } from './LiveScreen';
 import { AfterRecordingSwitch } from './BrowserWindows';
 import { toolCallLine, appendLine } from '../agent-log';
 import { useGetProjectsQuery } from '../store/services/projectsApi';
-import { useCreateRequirementMutation } from '../store/services/requirementsApi';
+import { requirementsApi, useCreateRequirementMutation, useGetRequirementsQuery } from '../store/services/requirementsApi';
 import {
   testsApi,
   useAssignToProjectMutation,
@@ -102,6 +102,10 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
   // A question the agent asks while it works (ask_user): answered here, beside its browser.
   const [ask, setAsk] = useState<AgentAsk | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What the test is for: a requirement of the project it is linked to — '' for a new one, made
+  // of what is described — and the criterion of it the test checks (null: the requirement whole).
+  const [requirementKey, setRequirementKey] = useState('');
+  const [criterion, setCriterion] = useState<number | null>(null);
   const [gherkinDraft, setGherkinDraft] = useState('');
   // The agent writing the scenario from the description, with the project's library.
   const [writing, setWriting] = useState(false);
@@ -129,6 +133,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       setLiveTabId(null);
       setAsk(null);
       setError(null);
+      setRequirementKey('');
+      setCriterion(null);
       setGherkinDraft(preset?.gherkin ?? '');
       setWriting(false);
       setPhrases([]);
@@ -138,6 +144,11 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
 
   const { data: projects = [] } = useGetProjectsQuery();
   const language = projects.find((p) => p.id === projectId)?.language ?? 'en';
+  // Asked when the test is not already a requirement's case, nor a bug's: the requirements of
+  // its project, to link it to one instead of keeping the request as a new one.
+  const picksRequirement = !preset?.requirement && !preset?.bugId;
+  const { data: requirements = [] } = useGetRequirementsQuery(projectId ?? undefined, { skip: !isOpen || !picksRequirement || projectId == null });
+  const chosen = (picksRequirement && projectId != null && requirements.find((r) => r.key === requirementKey && r.project_id === projectId)) || null;
 
   // The scenario read against the project's library as it is written: which phrases are its
   // steps, which are new.
@@ -261,8 +272,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
 
     // The request is kept as a requirement (source "prompt"), and the test the agent records is
     // linked to it: what the test is for is not lost with the conversation. A requirement's
-    // case is linked to its own.
-    let requirement: string | undefined = preset?.requirement;
+    // case is linked to its own, and so is a test for a requirement picked here.
+    let requirement: string | undefined = preset?.requirement ?? chosen?.key;
     if (!requirement && !preset?.bugId && description.trim()) {
       try {
         const firstLine = description.trim().split('\n')[0];
@@ -283,7 +294,10 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
       const response = await fetch('/api/agent/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, requirement, case_id: preset?.caseId, bug_id: preset?.bugId, project_id: projectId ?? null }),
+        body: JSON.stringify({
+          prompt, requirement, case_id: preset?.caseId, bug_id: preset?.bugId, project_id: projectId ?? null,
+          ...(chosen && criterion != null ? { criterion } : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -335,6 +349,8 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
                     continue;
                   }
                   dispatch(testsApi.util.invalidateTags([{ type: 'TestList', id: 'LIST' }]));
+                  // The requirement it is linked to is covered by one more test.
+                  dispatch(requirementsApi.util.invalidateTags(['Requirements', 'TestRequirements', ...(requirement ? [{ type: 'Requirement' as const, id: requirement }] : [])]));
 
                   if (projectId) {
                     try {
@@ -418,6 +434,11 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
               {preset.mode === 'ai' && ' The agent is told the requirement\'s criteria: expected results come from them.'}
             </p>
           )}
+          {watching && chosen && (
+            <p className="create-wf-hint create-wf-hint--linked">
+              For {chosen.key}{criterion != null ? `, criterion ${criterion}` : ''}: the test is linked to it. The agent is told what it expects.
+            </p>
+          )}
           {watching && (
             <p className="create-wf-asked">
               <strong>{name.trim()}</strong>
@@ -458,10 +479,39 @@ export function CreateTestModal({ isOpen, onClose, onTestCreated, preset = null 
 
           <ProjectField
             value={projectId}
-            onChange={setProjectId}
+            onChange={(id) => { setProjectId(id); setRequirementKey(''); setCriterion(null); }}
             allowNone={mode !== 'gherkin'}
-            hint={mode === 'gherkin' ? 'Its phrases come from the project: a Gherkin test needs one.' : 'The request is kept as a requirement of this project, the test too.'}
+            hint={mode === 'gherkin' ? 'Its phrases come from the project: a Gherkin test needs one.' : 'The test is saved in this project.'}
           />
+
+          {picksRequirement && (
+            <div className="field">
+              <label className="field__label" htmlFor="create-test-requirement">Requirement</label>
+              <select id="create-test-requirement" value={chosen ? chosen.key : ''} disabled={isBusy}
+                onChange={(e) => { setRequirementKey(e.target.value); setCriterion(null); }}>
+                <option value="">A new one, from what you describe below</option>
+                {projectId != null && requirements.length > 0 && (
+                  <optgroup label="A requirement of the project">
+                    {requirements.map((r) => <option key={r.key} value={r.key}>{r.key} — {r.title}</option>)}
+                  </optgroup>
+                )}
+              </select>
+              {chosen && chosen.criteria.length > 0 && (
+                <select aria-label="The criterion the test checks" value={criterion ?? ''} disabled={isBusy}
+                  onChange={(e) => setCriterion(e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">The requirement as a whole</option>
+                  {chosen.criteria.map((c) => <option key={c.id} value={c.position}>Criterion {c.position} — {c.text}</option>)}
+                </select>
+              )}
+              <span className="field__hint">
+                {chosen
+                  ? `The test is linked to ${chosen.key}${criterion != null ? `, criterion ${criterion}` : ''}: no new requirement is made.${chosen.criteria.length ? ' The agent is told its acceptance criteria: expected results come from them, not from what the app shows.' : ''}`
+                  : projectId == null ? 'What you describe is kept as a requirement, and the test is linked to it. In a project, it can be linked to one of its requirements instead.'
+                    : requirements.length ? 'What you describe is kept as a new requirement of the project, and the test is linked to it. Or pick the requirement the test checks.'
+                      : 'What you describe is kept as a requirement of the project, and the test is linked to it. The project has no requirement to pick yet.'}
+              </span>
+            </div>
+          )}
 
           <div className="field-group">
             <label>Test name</label>
