@@ -134,6 +134,12 @@ the project's **wait for an element**: 10 s by default, set in *Projects → Edi
 tests fail on pages still loading (a slow test server, a company laptop, the browser without
 windows); a test that passes is not slowed down.
 
+A step that waits for an element (*I wait for "…"*) waits as long too. What takes longer than any
+other step's element — an export built, a report computed — gets its own time instead of a longer
+wait for the whole project: write *I wait for "the report link" up to 90 seconds* (in French,
+*j'attends "le lien du rapport" jusqu'à 90 secondes*), or open the step and set **Wait at most**,
+from 1 s to 5 min. The step keeps it and replays it.
+
 A step also waits for **its page to have loaded** before it acts, up to 15 s: a button is drawn
 before the page's scripts listen to it, and a click made right after the click that opened the
 page did nothing — the step passed, and the one after it failed, one run in two. A click that

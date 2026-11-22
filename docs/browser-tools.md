@@ -89,7 +89,8 @@ Options utiles pour `snapshot` :
 ```
 "Attends 2 secondes"
 "Attends que l'élément .loading disparaisse"
-"Attends que #results apparaisse (max 10s)"
+"Attends que #results apparaisse (le délai du projet, 10 s par défaut)"
+"Attends que #export-ready apparaisse, jusqu'à 2 minutes"
 ```
 
 ---

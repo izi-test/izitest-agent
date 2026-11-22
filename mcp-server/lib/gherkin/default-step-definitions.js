@@ -44,6 +44,8 @@ export const DEFAULT_STEP_DEFINITIONS = [
   // Waits
   { keyword: 'When',  pattern: 'I wait {int} seconds',   command: 'wait', params_template: { ms: '{0}000' } },
   { keyword: 'When',  pattern: 'I wait for {string}',    command: 'wait', params_template: { selector: '{0}' } },
+  // What takes longer than any step's element (an export built): its own time, kept with the step.
+  { keyword: 'When',  pattern: 'I wait for {string} up to {int} seconds', command: 'wait', params_template: { selector: '{0}', timeout: '{1}000' } },
 
   // Assertions
   { keyword: 'Then',  pattern: 'I should see {string}',                  command: 'assert', params_template: { type: 'text_contains', expected: '{0}' } },
@@ -99,6 +101,7 @@ const FRENCH_PATTERNS = {
   'I call {word} {string} with {string}': "j'appelle {word} {string} avec {string}",
   'I wait {int} seconds': "j'attends {int} secondes",
   'I wait for {string}': "j'attends {string}",
+  'I wait for {string} up to {int} seconds': "j'attends {string} jusqu'à {int} secondes",
   'I should see {string}': 'je vois {string}',
   'I should not see {string}': 'je ne vois pas {string}',
   '{string} should be visible': '{string} est visible',

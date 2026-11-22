@@ -13,3 +13,16 @@ export function missedWait(command: string, result: unknown): string | null {
   const time = waited.waitedMs ? `${Math.round(waited.waitedMs / 1000)} s` : 'its time';
   return `Waited ${time} for ${waited.selector}: not found`;
 }
+
+// How long a wait for an element waits when it says no time of its own (params.timeout), and
+// its replay none either (the project's wait for an element, ReplaySequenceParams.elementTimeoutMs).
+const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+// The longest it waits, however its time was written (a Gherkin phrase is not checked as the
+// step editor and the agents' tool are: mcp-server/lib/recorded-waits.js).
+const MAX_WAIT_TIMEOUT_MS = 300_000;
+
+/** How long a wait for an element waits: its own time (from a Gherkin phrase, a string), up to 5 min; or 10 s. */
+export function waitTimeoutMs(timeout: number | string | undefined): number {
+  const ms = Number(timeout);
+  return Number.isFinite(ms) && ms > 0 ? Math.min(ms, MAX_WAIT_TIMEOUT_MS) : DEFAULT_WAIT_TIMEOUT_MS;
+}

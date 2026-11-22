@@ -7,6 +7,7 @@ import { listStepDefinitions, getStepDefinition, updateStepDefinition } from './
 import { compileDefinitions, stepsForPhrase } from './gherkin/parse.js';
 import { isTimeWait } from './gherkin/serialize.js';
 import { evaluateAssertion } from './test-execute.js';
+import { waitsExtraMs } from './recorded-waits.js';
 
 // While a test is recorded, a step of a business step waits for its element this long at most:
 // the page is there, the agent is watching — a step the page does not show is told in seconds,
@@ -79,7 +80,7 @@ export async function playBusinessSteps(found, { sendCommand, live, tabId, eleme
       const played = await sendCommand(undefined, 'replay_sequence', {
         steps: [{ ...step, params: live(step.params ?? {}), ...pick }], startIndex: 0, newWindow: false,
         ...(lastTabId ? { tabId: lastTabId } : {}), elementTimeoutMs,
-      }, 120000);
+      }, 120000 + waitsExtraMs([step]));
       const outcome = played?.results?.[0];
       if (outcome?.status === 'failed') throw new Error(outcome.error || 'failed');
       if (outcome?.tabId) lastTabId = outcome.tabId;

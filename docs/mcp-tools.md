@@ -23,7 +23,7 @@ These tools are used for direct, real-time control of the browser.
 | `get_tabs` | Lists all open tabs in the browser. | `profile` |
 | `get_page_info` | Detailed info (title, URL, element counts). | `tabId`, `profile` |
 | `scroll` | Scrolls the page or moves to an element. | `direction`, `amount`, `selector` |
-| `wait` | Pauses for a duration or until an element appears (up to 10 s; it then answers `found: false`). One of the two is needed: a `wait` with neither is refused, not recorded. In a replayed test, a wait whose element never appears fails its step: before, the replay went on, and the test failed further on, on another page, for the wrong reason. | `ms`, `selector` |
+| `wait` | Pauses for a duration or until an element appears: as long as the project waits for an element (10 s by default), or `timeout` (ms, from 1 s to 5 min, rounded up to whole seconds) for what takes longer — an export built, a report computed. It then answers `found: false`. Its own `timeout` is kept with the step and replayed; without one, the replay waits as long as the project says then. One of `ms` and `selector` is needed: a `wait` with neither is refused, not recorded. In a replayed test, a wait whose element never appears fails its step: before, the replay went on, and the test failed further on, on another page, for the wrong reason. | `ms`, `selector`, `timeout` |
 | `execute_js` | Runs arbitrary JavaScript in the page context. Recorded as a step while a test records — to only read the page, use `extract` or `snapshot`, which are not. | `code` |
 | `keyboard` | Sends a key press event. | `key`, `modifiers` |
 | `get_cookies` | Retrieves cookies for a URL/domain. | `url`, `domain` |
@@ -575,7 +575,8 @@ propose à l'agent. Une étape enregistrée facultative le reste quand elle entr
 - **An action** : pour un clic, une saisie, un choix dans une liste, un survol, un défilement ou une attente,
   *Element of the project* liste les éléments du projet, page par page, avec une recherche. En choisir un
   remplit le sélecteur, les locators et l'intention, que l'on peut encore modifier. Pour une attente, c'est
-  une attente de l'élément, pas d'un temps.
+  une attente de l'élément, pas d'un temps ; **Wait at most** lui donne son propre délai, en secondes
+  (vide : le délai du projet).
 
 ### Étapes métier proposées par l'IA
 
@@ -900,6 +901,23 @@ l'attend d'abord, sans quoi ces changements passaient pour l'effet du clic.
 **Attendre un élément, pas un temps.** Une attente en ms enregistrée juste avant une étape qui
 attend elle-même (un clic, une saisie, l'attente d'un élément, une vérification) n'est pas gardée
 dans le test : `stop_recording` le dit. L'outil `wait` le rappelle à l'agent.
+
+**Une attente plus longue que les autres a son propre délai.** L'attente d'un élément (`wait` avec
+`selector`) attend, elle aussi, le délai du projet. Ce qu'elle attend peut prendre plus longtemps
+que l'élément de n'importe quelle autre étape : un export qui se construit, un rapport calculé, un
+traitement en lot. Plutôt que d'allonger le délai de tout le projet, on lui donne le sien, de 1 s à
+5 min, en secondes entières :
+- en Gherkin : `When I wait for "the report link" up to 90 seconds`, en français
+  `Quand j'attends "le lien du rapport" jusqu'à 90 secondes` ;
+- dans le tableau de bord : l'étape d'attente, *Edit*, **Wait at most** (en secondes ; vide : le
+  délai du projet) ;
+- par l'agent : `wait` avec `timeout` en ms (`90000`), gardé avec l'étape enregistrée.
+
+Le délai est rangé dans l'étape (`params.timeout`, en ms) et rejoué tel quel ; une attente sans
+délai propre suit celui du projet au moment du rejeu. Le rejeu complet reçoit ce temps en plus de ses
+120 s, sinon une longue attente le coupait avant de finir. L'export Playwright l'écrit
+`waitFor({ timeout: 90000 })`. Avant, l'attente d'un élément durait toujours 10 s, quel que soit le
+délai du projet, et rien ne permettait d'attendre plus.
 
 On le règle par projet, de 1 à 120 s :
 - dans le tableau de bord : *Projects → Edit → Wait for an element* (vide : le défaut) ;

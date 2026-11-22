@@ -199,9 +199,11 @@ function renderStep(step) {
       }
       if (p.selector) {
         const t = target();
+        // Its own time (recorded-waits.js); without it, Playwright's default.
+        const own = Number(p.timeout) > 0 ? `{ timeout: ${Number(p.timeout)} }` : '';
         return withFixme(t, t.locator
-          ? `await ${t.locator}.waitFor();`
-          : `await page.waitForSelector(${jsLiteral(t.css)});`);
+          ? `await ${t.locator}.waitFor(${own});`
+          : `await page.waitForSelector(${jsLiteral(t.css)}${own ? `, ${own}` : ''});`);
       }
       return `// TODO: wait step without ms or selector`;
     case 'assert':

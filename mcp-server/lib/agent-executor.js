@@ -37,7 +37,7 @@ import { pageOf } from './elements.js';
 import { LIVE_ACTIONS } from './live.js';
 import { recordingDataset, recordingDatasetText, placeRecorded, datasetVariables, withColumnsOf } from './datasets.js';
 import { redact, recordedPassword } from './secrets.js';
-import { redundantTimeWaits, TIME_WAIT_NOTE } from './recorded-waits.js';
+import { redundantTimeWaits, TIME_WAIT_NOTE, waitNow } from './recorded-waits.js';
 import { businessStepsOf, playBusinessPhrase } from './business-play.js';
 import { elementTimeoutFor } from './projects.js';
 import { askUser, cancelAsk, ASK_USER_DESCRIPTION, ASK_FIELD_DESCRIPTION } from './asks.js';
@@ -500,18 +500,21 @@ function buildTools(sendCommand) {
     }),
 
     wait: tool({
-      description: 'Wait until an element appears in the active tab (selector) — what the page shows once ready. A wait of a time (ms) is a last resort: every step already waits for its element, and a check for what it expects.',
+      description: 'Wait until an element appears in the active tab (selector) — what the page shows once ready — as long as the project waits for an element (10 s by default), or timeout. A wait of a time (ms) is a last resort: every step already waits for its element, and a check for what it expects.',
       inputSchema: z.object({
         ms: z.number().optional(),
         selector: z.string().optional(),
+        timeout: z.number().optional().describe('With selector: how long to wait for it at most, in ms (30 seconds: 30000), from 1 s to 5 min. Kept with the step and replayed.'),
         intent: z.string().optional(),
       }),
-      execute: async ({ ms, selector, intent }) => {
+      execute: async ({ ms, selector, timeout, intent }) => {
         const nothing = waitsForNothing(ms, selector);
         if (nothing) return nothing;
+        const wait = waitNow({ ms, selector, timeout, elementTimeoutMs: elementTimeoutFor(getRecording()?.projectId ?? null) });
+        if (wait.error) return wait.error;
         try {
-          const result = await sendCommand(undefined, 'wait', { ms, selector });
-          saveActionToHistory('wait', { ms, selector }, null, null, intent);
+          const result = await sendCommand(undefined, 'wait', wait.sent, wait.commandMs);
+          saveActionToHistory('wait', wait.kept, null, null, intent);
           return JSON.stringify(result) + (ms && !selector && getRecording() ? TIME_WAIT_NOTE : '');
         } catch (err) { return formatToolError(err, 'wait'); }
       },

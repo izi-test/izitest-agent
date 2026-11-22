@@ -17,6 +17,11 @@ import { elementTimeoutFor, cleanStartFor, autoBugsFor } from './projects.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { logoutToPlay } from './closing-logout.js';
 import { startRunVideo, finishRunVideo } from './run-video.js';
+import { waitsExtraMs } from './recorded-waits.js';
+
+// How long the browser has to replay its steps, before the time of their long waits
+// (recorded-waits.js waitsExtraMs: a pause, a wait for an element given its own time).
+const REPLAY_TIMEOUT_MS = 120_000;
 // After a run, before its video stops: the extension sends what the screen showed last.
 const VIDEO_SETTLE_MS = Number(process.env.IZITEST_VIDEO_SETTLE_MS ?? 600);
 const videoKeepAliveMs = () => Number(process.env.IZITEST_VIDEO_KEEPALIVE_MS ?? 1500);
@@ -217,7 +222,7 @@ async function executeStepsInDebugMode(
 
     try {
       const singleResult = await sendCommand(
-        undefined, 'replay_sequence', singleStepParams, 120000
+        undefined, 'replay_sequence', singleStepParams, REPLAY_TIMEOUT_MS + waitsExtraMs(singleStepParams.steps)
       );
 
       const stepResult = singleResult.results?.[0];
@@ -367,7 +372,7 @@ async function executeInSegments(
         ...(elementTimeoutMs ? { elementTimeoutMs } : {}),
         ...(lastTabId ? { tabId: lastTabId } : {}),
         ...(first && viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {}),
-      }, 120000, async (raw) => {
+      }, REPLAY_TIMEOUT_MS + waitsExtraMs(steps), async (raw) => {
         if (raw?.type === 'step_start') { if (onProgress) onProgress({ ...raw, step: numberOf(raw.step) }); return; }
         if (raw?.type === 'step_complete' && raw.stepResult) {
           const stepResult = { ...raw.stepResult, step: numberOf(raw.stepResult.step) };
@@ -834,7 +839,7 @@ export async function executeTest(name, variables, substitutions, start_step, ne
       extensionResult = await sendCommand(undefined, 'replay_sequence', {
         steps: actionSteps, startIndex, newWindow: new_window, elementTimeoutMs,
         ...(viewportWidth && viewportHeight ? { viewportWidth, viewportHeight } : {})
-      }, 120000, async (raw) => {
+      }, REPLAY_TIMEOUT_MS + waitsExtraMs(actionSteps.slice(startIndex)), async (raw) => {
         const msg = numbered(raw);
         if (onProgress) onProgress(msg);
 
@@ -1067,7 +1072,7 @@ async function playClosingLogout({ steps, ranUpTo, sendCommand, tabId, execution
     const live = sequence.map((step) => { try { return server.rehydrate(step); } catch { return step; } });
     played = await sendCommand(undefined, 'replay_sequence', {
       steps: live, startIndex: 0, newWindow: false, tabId, ...(elementTimeoutMs ? { elementTimeoutMs } : {}),
-    }, 60000);
+    }, 60000 + waitsExtraMs(live));
   } catch (err) {
     played = { results: err.results || [] };
     log(`Execution #${executionId}: its closing logout could not be played: ${err.message}`);

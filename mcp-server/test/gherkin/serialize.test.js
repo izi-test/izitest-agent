@@ -147,3 +147,27 @@ test('includes the description lines indented under Feature', () => {
   const feature = serializeTestToFeatureWith(t, SEED);
   assert.match(feature, /Feature: With desc\n {2}line 1\n {2}line 2/);
 });
+
+test('a wait for an element with its own time reads "up to N seconds", and parses back', () => {
+  const t = {
+    name: 'Export',
+    description: '',
+    steps: [
+      { command: 'wait', params: { selector: '#report-ready', timeout: 90000 } },
+      { command: 'wait', params: { selector: '#list' } },
+    ],
+  };
+  const feature = serializeTestToFeatureWith(t, SEED);
+  assert.match(feature, /When I wait for "#report-ready" up to 90 seconds/);
+  assert.match(feature, /And I wait for "#list"\n/);
+  const steps = parseFeatureToStepsWith(feature, SEED);
+  assert.deepEqual(steps.map((s) => s.params), [{ selector: '#report-ready', timeout: '90000' }, { selector: '#list' }]);
+});
+
+test('in French: j\'attends "…" jusqu\'à N secondes', async () => {
+  const { defaultStepDefinitions } = await import('../../lib/gherkin/default-step-definitions.js');
+  const FR = defaultStepDefinitions('fr').map((def, i) => ({ id: i + 1, ...def }));
+  const feature = serializeTestToFeatureWith({ name: 'Export', description: '', language: 'fr', steps: [{ command: 'wait', params: { selector: '#pret', timeout: 30000 } }] }, FR, { language: 'fr' });
+  assert.match(feature, /j'attends "#pret" jusqu'à 30 secondes/);
+  assert.deepEqual(parseFeatureToStepsWith(feature, FR)[0].params, { selector: '#pret', timeout: '30000' });
+});

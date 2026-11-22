@@ -233,6 +233,10 @@ When('I wait for {string}', async function (selector) {
   await this.page.waitForSelector(selector);
 });
 
+When('I wait for {string} up to {int} seconds', async function (selector, seconds) {
+  await this.page.waitForSelector(selector, { timeout: seconds * 1000 });
+});
+
 // ─── Values kept for the steps after, APIs called ──────────────────
 
 When('I store the text of {string} as {string}', async function (selector, name) {
@@ -523,9 +527,12 @@ function commandToPlaywright(tpl, argNames) {
     case 'wait':
       if (params.selector) {
         const t = target();
+        // Its own time (recorded-waits.js); without it, Playwright's default.
+        // A phrase's {int} seconds is an argument of the step: `${seconds}000`.
+        const own = params.timeout != null && params.timeout !== '' ? `{ timeout: Number(${resolve(params.timeout)}) }` : '';
         return withFixme(t, t.locator
-          ? `await ${t.locator}.waitFor();`
-          : `await this.page.waitForSelector(${resolve(t.css)});`);
+          ? `await ${t.locator}.waitFor(${own});`
+          : `await this.page.waitForSelector(${resolve(t.css)}${own ? `, ${own}` : ''});`);
       }
       return `await this.page.waitForTimeout(${resolve(params.ms)});`;
     case 'assert':

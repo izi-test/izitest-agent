@@ -189,3 +189,15 @@ test('indents every rendered body line by two spaces', () => {
   const bodyLine = out.split('\n').find((l) => l.includes('page.goto'));
   assert.ok(bodyLine && bodyLine.startsWith('  '), `expected 2-space indent, got: ${bodyLine}`);
 });
+
+test('a wait for an element with its own time waits that long', () => {
+  const out = generatePlaywrightPlain({
+    name: 'Export',
+    steps: [
+      { command: 'wait', params: { selector: '#report-ready', timeout: 90000 } },
+      { command: 'wait', params: { selector: '#list' } },
+    ],
+  });
+  assert.match(out, /await page\.waitForSelector\('#report-ready', \{ timeout: 90000 \}\);/);
+  assert.match(out, /await page\.waitForSelector\('#list'\);/);
+});

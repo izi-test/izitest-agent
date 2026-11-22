@@ -59,6 +59,7 @@ import { windowSettings, setWindowSettings, closesAfterRun } from './run-windows
 import { headlessStatus, installHeadless, startHeadless, stopHeadless, ensureHeadless, inHeadless, holdHeadless, setIdleMinutes } from './headless.js';
 import { handleAgentChat, listConversations, getConversation, deleteConversation } from './agent/chat.js';
 import { testConversation, sendTestMessage, stopTestAgent, closeTestConversation, forgetTestConversation } from './agent/test-chat.js';
+import { keptWaitParams } from './recorded-waits.js';
 
 // How long to wait for a reloaded extension to register again. A reload drops the socket
 // and the service worker reconnects after ~1s; this leaves room for a slow restart.
@@ -1159,6 +1160,10 @@ export async function apiRouter(req, res, url) {
         'SELECT COALESCE(MAX(step_order), 0) AS max_order FROM test_steps WHERE test_id = ?'
       ).get(testId);
       const nextOrder = Math.min(body.step_order || (maxRes.max_order + 1), maxRes.max_order + 1);
+      // A wait's own time: whole seconds, from 1 s to 5 min (recorded-waits.js).
+      if (body.command === 'wait') {
+        try { body.params = keptWaitParams(body.params); } catch (err) { return json(res, 400, { error: err.message }); }
+      }
 
       // Inserted in the middle, the steps after it move down (see insertTestStep).
       const result = insertTestStep(testId, nextOrder, body);
@@ -1186,6 +1191,9 @@ export async function apiRouter(req, res, url) {
       if (!test) return json(res, 404, { error: 'Test not found' });
       const order = parseInt(params.stepOrder, 10);
       const before = stepRow(test.id, order);
+      if ((body.command ?? before?.command) === 'wait' && body.params) {
+        try { body.params = keptWaitParams(body.params); } catch (err) { return json(res, 400, { error: err.message }); }
+      }
 
       const result = db.prepare(
         `UPDATE test_steps SET

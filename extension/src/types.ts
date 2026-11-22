@@ -155,6 +155,8 @@ export interface SnapshotParams {
 export interface WaitParams {
   ms?: number;
   selector?: string;
+  /** How long to wait for the selector, in ms: its own time, or the project's wait for an element when replayed (10 s without). */
+  timeout?: number;
   tabId?: number;
   /** IziTest Agent session this command belongs to — scopes tab resolution to its window. */
   sessionId?: string;

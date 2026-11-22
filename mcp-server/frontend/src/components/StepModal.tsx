@@ -50,6 +50,25 @@ interface StepModalProps {
   onSaved: () => void;
 }
 
+/** A wait's own time in the step's params (ms), as seconds; '' without one, or unreadable params. */
+function waitSecondsOf(params: string): string {
+  try {
+    const timeout = Number(JSON.parse(params || '{}')?.timeout);
+    return timeout > 0 ? String(timeout / 1000) : '';
+  } catch { return ''; }
+}
+
+/** The step's params with the wait's own time set to `seconds`, or taken out when empty; null for unreadable params. */
+function withWaitSeconds(params: string, seconds: string): string | null {
+  let current: Record<string, unknown>;
+  try { current = JSON.parse(params || '{}'); } catch { return null; }
+  const next: Record<string, unknown> = { ...current };
+  const value = Number(seconds);
+  if (seconds.trim() && value > 0) next.timeout = Math.round(value * 1000);
+  else delete next.timeout;
+  return JSON.stringify(next, null, 2);
+}
+
 /** The phrase of a business step with its values: each {string} quoted, the rest as typed. */
 function phraseOf(pattern: string, values: string[]): string {
   let i = 0;
@@ -139,6 +158,9 @@ export function StepModal({ isOpen, testName, projectId, step, onClose, onSaved 
   const chosenBusiness = business.find((b) => String(b.id) === businessId) ?? null;
 
   if (!isOpen) return null;
+
+  // A wait of a time (params.ms) waits that time: no time of its own to give.
+  const waitIsPause = (() => { try { return Number(JSON.parse(params || '{}')?.ms) > 0; } catch { return false; } })();
 
   /** Picking an element writes its selector into the parameters and its locators below. */
   const pickElement = (id: string) => {
@@ -312,6 +334,17 @@ export function StepModal({ isOpen, testName, projectId, step, onClose, onSaved 
                     ))}
                   </select>
                   {command === 'wait' && <span className="field__hint">Waiting for an element is better than waiting a time: the replay goes on as soon as it shows.</span>}
+                </div>
+              )}
+              {command === 'wait' && !waitIsPause && (
+                <div className="field-group">
+                  <label htmlFor="step-wait-timeout">Wait at most <span className="field__optional">seconds — empty: as long as the project waits for an element</span></label>
+                  <input
+                    id="step-wait-timeout" type="number" min={1} max={300} step={1} style={{ width: 120 }}
+                    value={waitSecondsOf(params)}
+                    onChange={(e) => { const next = withWaitSeconds(params, e.target.value); if (next != null) setParams(next); }}
+                  />
+                  <span className="field__hint">For what takes longer than the other steps' elements: an export built, a report computed. From 1 s to 5 min.</span>
                 </div>
               )}
               <div className="field-group">

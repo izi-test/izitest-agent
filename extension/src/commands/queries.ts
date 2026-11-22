@@ -3,6 +3,7 @@
 // because they only need DOM read access
 
 import { resolveTabId, delay, ensureContentScript, captureTabScreenshot, TOP_FRAME } from '../helpers';
+import { waitTimeoutMs } from '../wait-outcome';
 import { findFrame, framesWithRefs, sendToFrame, snapshotAllFrames } from '../frames';
 import type {
   SnapshotParams, ExtractParams, PageInfoParams,
@@ -16,7 +17,6 @@ import { isStaleContextError } from './page-helpers';
 import { hideCursor } from '../cursor';
 
 const MAX_SNAPSHOT_ELEMENTS = 500;
-const WAIT_MAX_TIMEOUT_MS = 10000;
 const WAIT_POLL_MS = 300;
 
 // ─── Snapshot ───────────────────────────────────────────────────────
@@ -262,10 +262,10 @@ export async function cmdCloseWindow({ tabId, sessionId, liveSessions }: CloseWi
 
 // ─── Wait ───────────────────────────────────────────────────────────
 
-export async function cmdWait({ ms, selector, tabId, sessionId }: WaitParams) {
+export async function cmdWait({ ms, selector, timeout, tabId, sessionId }: WaitParams) {
   if (ms) {
-    await delay(ms);
-    return { waited: ms };
+    await delay(Number(ms));
+    return { waited: Number(ms) };
   }
 
   if (selector) {
@@ -294,12 +294,13 @@ export async function cmdWait({ ms, selector, tabId, sessionId }: WaitParams) {
       return results.some((r) => r.result === true);
     };
 
-    const deadline = Date.now() + WAIT_MAX_TIMEOUT_MS;
+    const waitMs = waitTimeoutMs(timeout);
+    const deadline = Date.now() + waitMs;
     do {
       if (await isThere()) return { found: true, selector };
       await delay(WAIT_POLL_MS);
     } while (Date.now() < deadline);
-    return { found: false, selector, timeout: true, waitedMs: WAIT_MAX_TIMEOUT_MS };
+    return { found: false, selector, timeout: true, waitedMs: waitMs };
   }
 
   return { error: 'Specify either ms or selector' };

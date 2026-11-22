@@ -116,6 +116,9 @@ export async function cmdReplaySequence(
   for (let i = startIndex; i < totalSteps; i++) {
     const step = steps[i] as ReplayStep;
     const baseParams = { ...step.params };
+    // A wait for an element that says no time of its own waits as long as any step of its
+    // project waits for its element.
+    if (step.command === 'wait' && baseParams.selector && baseParams.timeout == null && elementTimeoutMs) baseParams.timeout = elementTimeoutMs;
     const stepStartedAt = Date.now();
     // The page the step runs on: a step recorded before steps kept theirs gets it (server's
     // fillStepPages).

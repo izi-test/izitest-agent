@@ -16,7 +16,8 @@ import { absolutePaths, readUploadFiles } from '../upload-files.js';
 import { captureActionFrame, LIVE_ACTIONS } from '../live.js';
 import { isHeadlessProfile, hasWindowedProfile } from '../websocket.js';
 import { recordedPassword } from '../secrets.js';
-import { TIME_WAIT_NOTE } from '../recorded-waits.js';
+import { TIME_WAIT_NOTE, waitNow } from '../recorded-waits.js';
+import { elementTimeoutFor } from '../projects.js';
 
 // How text is typed into fields. Default is per-character key events (human-like, slow:
 // ~2 CDP round trips per character). IZITEST_TYPING=insert makes one-shot insertion
@@ -634,22 +635,26 @@ export function registerBrowserTools(server, { sendCommand: dispatch, getProfile
     [
       'Wait until an element appears on the page (selector): what the page shows once it is ready — the list loaded, the next',
       'page\'s heading. You rarely need it: every action already waits for its element (and a replay waits up to the project\'s',
-      'wait for an element), and a check reads the page again until it holds. A wait of a time (ms) is a last resort: it slows',
-      'every replay and is too short on a slow day; recorded before a step that waits by itself, it is not kept.',
+      'wait for an element), and a check reads the page again until it holds. What takes longer than that — an export built,',
+      'a report computed — gets its own time: timeout, kept with the step and replayed. A wait of a time (ms) is a last resort:',
+      'it slows every replay and is too short on a slow day; recorded before a step that waits by itself, it is not kept.',
     ].join(' '),
     {
       profile: z.string().optional(),
       tabId: z.number().optional(),
       ms: z.number().optional().describe('Milliseconds to wait (3 seconds: 3000)'),
-      selector: z.string().optional().describe('Wait until this CSS selector appears (max 10s)'),
+      selector: z.string().optional().describe('Wait until this CSS selector appears: as long as the project waits for an element (10 s by default), or timeout'),
+      timeout: z.union([z.number(), z.string().transform(Number)]).optional().describe('With selector: how long to wait for it at most, in milliseconds (30 seconds: 30000), from 1 s to 5 min, rounded up to whole seconds. Kept with the step and replayed. Without it: the project\'s wait for an element.'),
       intent: z.string().optional().describe('Functional description of this step. Recorded as step intent during test recording.')
     },
-    async ({ profile, tabId, ms, selector, intent }) => {
+    async ({ profile, tabId, ms, selector, timeout, intent }) => {
       // Neither (a parameter of another name, dropped): it would wait 0 ms and be recorded as a step.
       const nothing = waitsForNothing(ms, selector);
       if (nothing) return { content: [{ type: 'text', text: nothing }], isError: true };
-      const result = await sendCommand(profile, 'wait', { ms, selector, tabId });
-      const actionId = saveActionToHistory('wait', { ms, selector, tabId }, null, null, intent);
+      const wait = waitNow({ ms, selector, timeout, elementTimeoutMs: elementTimeoutFor(getRecording()?.projectId ?? null) });
+      if (wait.error) return { content: [{ type: 'text', text: wait.error }], isError: true };
+      const result = await sendCommand(profile, 'wait', { ...wait.sent, tabId }, wait.commandMs);
+      const actionId = saveActionToHistory('wait', { ...wait.kept, tabId }, null, null, intent);
       const note = ms && !selector && getRecording() ? TIME_WAIT_NOTE : '';
       return { content: [{ type: 'text', text: `Action executed successfully (${actionId}).\n\nResult:\n` + JSON.stringify(result, null, 2) + note }] };
     }

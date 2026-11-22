@@ -37,3 +37,14 @@ test('a wait whose element came, a pause, or another command: nothing to fail', 
   assert.equal(missedWait('click', { timeout: true, selector: '#x' }), null);
   assert.equal(missedWait('wait', { found: false, selector: '#late', timeout: true }), 'Waited its time for #late: not found');
 });
+
+test('a wait for an element waits its own time, up to 5 min; 10 s without one', async () => {
+  const { waitTimeoutMs } = await load();
+  assert.equal(waitTimeoutMs(30000), 30000);
+  // From a Gherkin phrase ("up to 45 seconds"): a string.
+  assert.equal(waitTimeoutMs('45000'), 45000);
+  assert.equal(waitTimeoutMs(900000), 300000);
+  assert.equal(waitTimeoutMs(undefined), 10000);
+  assert.equal(waitTimeoutMs(0), 10000);
+  assert.equal(waitTimeoutMs('soon'), 10000);
+});
