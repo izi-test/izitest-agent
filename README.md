@@ -134,9 +134,6 @@ version before the latest, so that upgrading it is a real maintenance case for y
 | [Security](docs/security.md) | What can reach the server, the token |
 | [Troubleshooting](docs/troubleshooting.md) | When something does not connect |
 
-Parts of the documentation are still in French (most of *MCP tools*, *Configuration*,
-*Troubleshooting*).
-
 ## Status
 
 IziTest is young. It is used on real applications, and it still has rough edges: Chrome only,

@@ -28,82 +28,86 @@ These tools are used for direct, real-time control of the browser.
 | `keyboard` | Sends a key press event. | `key`, `modifiers` |
 | `get_cookies` | Retrieves cookies for a URL/domain. | `url`, `domain` |
 
-#### Champs particuliers
+#### Special fields
 
-- **Date, heure, couleur, curseur** (`date`, `time`, `datetime-local`, `month`, `week`, `color`,
-  `range`) : `fill` leur donne la valeur depuis la page, puis envoie `input` et `change`, comme
-  Playwright. La frappe ne marchait pas : la date restait vide (ses segments suivent l'ordre de la
-  langue du navigateur), la couleur ouvrait le sélecteur du système, le curseur allait où tombait le
-  clic. Le format attendu est celui du HTML : `1990-05-12`, `09:30`, `#ff5500`, un nombre sur un pas du
-  curseur. Une valeur que le champ refuserait (`12/05/1990`, `85` sur un pas de 10) est refusée avec
-  le format attendu, et le champ garde sa valeur.
-- **Texte éditable** (`contenteditable`) : listé comme `[textbox]` par la snapshot, avec son texte en
-  `value="…"`, et rempli comme un champ.
-- **Effacer avant de taper** : tout le texte est sélectionné, et la frappe le remplace. Retour arrière
-  ne sert plus que pour une valeur vide : sur un champ de tags vide, il supprimait le dernier tag.
-- **Nom d'un champ** : la valeur d'un champ n'est son nom que pour un bouton (`<input type="submit">`).
-  Une couleur, un curseur, un champ prérempli sans label n'ont plus pour nom `#6c5ce7` ou `60`, qui
-  changeaient au premier `fill`.
-- **Envoi de fichiers** (`upload_file`) : les fichiers sont lus sur la machine d'IziTest Agent (chemins
-  absolus, ou relatifs à son dossier de travail ; 25 Mo au plus par étape), puis posés dans
-  l'`<input type="file">` depuis la page, qui reçoit `input` et `change` comme après le sélecteur de
-  fichiers. La voie de Chrome (`DOM.setFileInputFiles`) n'est pas prise : elle est refusée à une
-  extension qui n'a pas l'accès aux URL de fichiers, désactivé par défaut. La ref peut être l'input
-  — souvent caché, absent de la snapshot — ou ce qui l'entoure : la zone de dépôt qui le contient,
-  son `<label>`, ou le bouton « Upload » posé à côté (le seul input de fichier de l'ancêtre le plus
-  proche qui en a un). L'étape enregistrée est celle de l'input lui-même (`#avatar-input`), sur
-  lequel le code généré pose les fichiers. Une zone de dépôt sans aucun input n'est pas gérée.
-  Enregistré, un fichier devient une variable de type `file` (`{{avatar}}`), changeable par
-  `run_test` ; en Playwright, `page.setInputFiles('#avatar-input', …)`, précédé d'un `// FIXME`
-  quand le chemin est celui de la machine qui a enregistré — à copier dans le projet ; en Gherkin,
-  `When I upload "<avatar>" to "#avatar-input"` (un seul fichier : plusieurs n'ont pas de phrase).
-  Une assertion sur le nom affiché (`✓ avatar.png`) reste littérale : seul le chemin est variable.
-- **Glisser-déposer** (`drag`) : la souris presse l'élément, va jusqu'à la cible en plusieurs
-  mouvements, et relâche. Une page qui suit la souris (SortableJS en mode fallback, dnd-kit, jQuery UI)
-  n'a besoin de rien d'autre. Un élément `draggable="true"` lance le glisser-déposer de Chrome, que
-  des événements souris envoyés par CDP ne terminent jamais : il est intercepté
-  (`Input.setInterceptDrags`) et mené jusqu'au dépôt par `Input.dispatchDragEvent` — la page reçoit
-  les `dragenter`, `dragover`, `drop` et `dragend` de Chrome, `dataTransfer` compris, comme avec le
-  `dragTo` de Playwright. Le résultat dit lequel a servi (`drag: "native"` ou `"mouse"`) et, dans
-  `changes`, si l'élément glissé a bougé. `position` est l'endroit de la cible où il est déposé : son
-  centre, ou à un quart de son haut, de son bas, de sa gauche ou de sa droite — dans une liste
-  verticale, `top` le pose avant la cible, `bottom` après. Les deux doivent tenir ensemble à l'écran :
-  `drag` ne fait pas défiler la page pendant qu'il tient l'élément.
-  La snapshot liste ce qui se glisse, nommé par son texte : `[generic] "⠿ Cost Efficiency #5"
-  [draggable]`, ou `[cursor=grab]` pour une page qui suit la souris (aussi avec
-  `purposeFilter: "click"`). Un élément que rien ne nomme (ni test ID, ni id, ni nom) est enregistré
-  par son `data-id`, `data-value` ou `data-key` s'il est seul à l'avoir — `div[data-value="cost"]` —
-  plutôt que par sa position, que le tri change. La cible est gardée avec ses propres localisateurs
-  (`params.targetLocators`), que le rejeu essaie comme ceux de l'élément glissé. En Playwright,
-  `await page.locator(…).dragTo(page.locator(…))`, avec `targetPosition` calculé sur la boîte de la
-  cible pour un bord ; en Gherkin, `When I drag "…" to "…"` et `When I drag "…" to the top of "…"`.
-- **Clic par le texte** (`click({ text })`) : le texte visé est d'abord celui d'un contrôle visible —
-  « Sign in » est le bouton, pas le titre du formulaire juste au-dessus, qui venait avant dans la page
-  et prenait le clic (et la détection de listes de la fin d'enregistrement en faisait un « élément de
-  liste »). À l'export, un tel clic va au rôle et au nom enregistrés (`getByRole`), sinon au texte
-  (`getByText`) — il sortait en `page.click('')` ; en Gherkin, `When I click on the text "…"`.
-- **Champ nommé par son label** (Gherkin, sans sélecteur) : `When I fill the field "Email" with "…"`,
-  `When I select "…" in the field "Subject"`, `When I check the field "Remember me"` et `When I
-  uncheck the field "…"` donnent à `fill`, `select` et `click` un `label` au lieu d'un `selector` :
-  un scénario écrit sans avoir vu la page (`design_tests`) peut nommer un champ. L'extension le
-  cherche comme `getByLabel(…, { exact: true })` de Playwright : son `aria-labelledby`, sinon son
-  `aria-label`, sinon son `<label for>` ou le `<label>` qui l'entoure — le texte entier du label,
-  espaces resserrés, casse comprise (`Phone *` pour `<label><span>Phone</span> <em>*</em>`) —, ou
-  enfin son `placeholder`. Elle prend le premier qui se voit, dans l'ordre de la page (iframes de même
-  origine comprises) : sur le Test Arena, « Email » est le champ du login, pas celui du formulaire de
-  contact plus bas. Une case que la page dessine elle-même (l'input invisible, sans taille) est
-  cliquée par son label. Un champ pas encore affiché est attendu 5 s ; un label introuvable échoue en
-  citant les champs présents : `No field labelled "Courriel" (…). Fields on the page: "Email",
-  "Password", …`. Ce qui est tapé devient une variable nommée d'après le label (`{{email}}`).
-  L'export est décrit plus bas (*Champs nommés par leur label à l'export*).
-- **Case ou radio en `display: none`** derrière un label visible (les étoiles d'une note) : listée
-  et manipulée par son label, avec sa valeur quand son nom ne la dit pas :
+- **Date, time, colour, slider** (`date`, `time`, `datetime-local`, `month`, `week`, `color`,
+  `range`): `fill` sets their value from the page, then sends `input` and `change`, as Playwright
+  does. Typing did not work: the date stayed empty (its segments follow the order of the browser's
+  language), the colour opened the system's picker, the slider went where the click landed. The
+  expected format is HTML's: `1990-05-12`, `09:30`, `#ff5500`, a number on a step of the slider. A
+  value the field would refuse (`12/05/1990`, `85` with a step of 10) is refused with the expected
+  format, and the field keeps its value.
+- **Editable text** (`contenteditable`): listed as `[textbox]` by the snapshot, with its text in
+  `value="…"`, and filled like a field.
+- **Clearing before typing**: all the text is selected, and typing replaces it. Backspace is now
+  used only for an empty value: on an empty tag field, it used to delete the last tag.
+- **Name of a field**: a field's value is its name only for a button (`<input type="submit">`).
+  A colour, a slider, a prefilled field with no label are no longer named `#6c5ce7` or `60`, which
+  changed at the first `fill`.
+- **Uploading files** (`upload_file`): the files are read on IziTest Agent's machine (absolute
+  paths, or relative to its working folder; 25 MB at most per step), then set in the
+  `<input type="file">` from the page, which receives `input` and `change` as after the file
+  dialog. Chrome's own way (`DOM.setFileInputFiles`) is not taken: it is refused to an extension
+  that does not have access to file URLs, which is off by default. The ref may be the input
+  — often hidden, absent from the snapshot — or what surrounds it: the drop zone that contains it,
+  its `<label>`, or the "Upload" button placed beside it (the only file input of the nearest
+  ancestor that has one). The recorded step is that of the input itself (`#avatar-input`), on
+  which the generated code sets the files. A drop zone with no input at all is not handled.
+  Once recorded, a file becomes a variable of type `file` (`{{avatar}}`), which `run_test` can
+  change; in Playwright, `page.setInputFiles('#avatar-input', …)`, preceded by a `// FIXME`
+  when the path is that of the machine that recorded — to copy into the project; in Gherkin,
+  `When I upload "<avatar>" to "#avatar-input"` (a single file: several have no phrase).
+  An assertion on the name shown (`✓ avatar.png`) stays literal: only the path is variable.
+- **Drag and drop** (`drag`): the mouse presses the element, goes to the target in several
+  moves, and releases. A page that follows the mouse (SortableJS in fallback mode, dnd-kit, jQuery UI)
+  needs nothing else. A `draggable="true"` element starts Chrome's drag and drop, which mouse
+  events sent through CDP never finish: it is intercepted (`Input.setInterceptDrags`) and carried
+  through to the drop by `Input.dispatchDragEvent` — the page receives Chrome's `dragenter`,
+  `dragover`, `drop` and `dragend`, `dataTransfer` included, as with Playwright's `dragTo`. The
+  result says which one was used (`drag: "native"` or `"mouse"`) and, in `changes`, whether the
+  dragged element moved. `position` is the place on the target where it is dropped: its centre, or
+  a quarter of the way in from its top, its bottom, its left or its right — in a vertical list,
+  `top` puts it before the target, `bottom` after. Both must fit on screen together: `drag` does
+  not scroll the page while it holds the element.
+  The snapshot lists what can be dragged, named by its text:
+  `[generic] "⠿ Cost Efficiency #5" [draggable]`, or `[cursor=grab]` for a page that follows the
+  mouse (also with `purposeFilter: "click"`). An element nothing names (no test ID, no id, no name)
+  is recorded by its `data-id`, `data-value` or `data-key` if it is the only one to have it —
+  `div[data-value="cost"]` — rather than by its position, which sorting changes. The target is kept
+  with its own locators (`params.targetLocators`), which the replay tries like those of the dragged
+  element. In Playwright, `await page.locator(…).dragTo(page.locator(…))`, with `targetPosition`
+  computed on the target's box for an edge; in Gherkin, `When I drag "…" to "…"` and
+  `When I drag "…" to the top of "…"`.
+- **Click by text** (`click({ text })`): the text aimed at is first that of a visible control —
+  "Sign in" is the button, not the form's heading just above it, which came earlier in the page
+  and took the click (and the list detection at the end of the recording made a "list item" of
+  it). On export, such a click goes to the recorded role and name (`getByRole`), otherwise to the
+  text (`getByText`) — it used to come out as `page.click('')`; in Gherkin,
+  `When I click on the text "…"`.
+- **Field named by its label** (Gherkin, no selector): `When I fill the field "Email" with "…"`,
+  `When I select "…" in the field "Subject"`, `When I check the field "Remember me"` and
+  `When I uncheck the field "…"` give `fill`, `select` and `click` a `label` instead of a
+  `selector`: a scenario written without having seen the page (`design_tests`) can name a field.
+  The extension looks for it as Playwright's `getByLabel(…, { exact: true })` does: its
+  `aria-labelledby`, otherwise its `aria-label`, otherwise its `<label for>` or the `<label>`
+  around it — the label's whole text, spaces collapsed, case included (`Phone *` for
+  `<label><span>Phone</span> <em>*</em>`) —, or lastly its `placeholder`. It takes the first one
+  that is visible, in page order (same-origin iframes included): on the Test Arena, "Email" is the
+  login's field, not that of the contact form further down. A checkbox the page draws itself (the
+  input invisible, with no size) is clicked by its label. A field not shown yet is waited for 5 s;
+  a label that cannot be found fails, citing the fields present:
+  `No field labelled "Courriel" (…). Fields on the page: "Email", "Password", …`. What is typed
+  becomes a variable named after the label (`{{email}}`).
+  The export is described further down (*Fields named by their label on export*).
+- **Checkbox or radio in `display: none`** behind a visible label (the stars of a rating): listed
+  and handled through its label, with its value when its name does not say it:
   `[radio] "★" value="4" [unchecked]`.
 
 ### Recommended Workflow: The Element Discovery Protocol
 To ensure high reliability, follow this sequence when interacting with elements:
-1.  **Step 1**: Use `screenshot()`. It's the most robust way to find elements, even in complex SPAs.
-2.  **Step 2**: If the element isn't in the mapping, use `snapshot(includeHidden=true, purposeFilter="...")`. Use `searchText` to narrow down the results.
+1.  **Step 1**: Use `snapshot()` with a `purposeFilter` matching what you are about to do (`"fill"`, `"click"`), and `searchText` to narrow down the results. It is fast and cheap: use the `@eX` ref of the element found.
+2.  **Step 2**: If the element isn't in the output, call `snapshot()` again with broader filters: without `purposeFilter`, with another `searchText`, or with `includeHidden=true` if the element might be in a hidden container.
+3.  **Step 3**: Use `screenshot()` only as a last resort, after `snapshot` failed twice or more to find the element: it is expensive (a large image).
 
 ---
 
@@ -115,7 +119,7 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | :--- | :--- |
 | `list_projects` | Lists the projects (id, name, base URL, language of their tests, number of tests). With `url`, only those of that app: its URL starts with their base URL, or shares its origin. The first call for a new app. |
 | `create_project` | Creates a project: `name` (unique), `base_url`, `language` (`en`, `fr`), `description`, `context`, `project_type`. A name taken answers with the project that has it; another project of the same app is pointed out. Its id is the `project_id` of the tools below. |
-| `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Jeux de données). With `scenario` (a Gherkin feature, as written), the test is recorded phrase by phrase: the answer numbers the phrases and says how to do each (see « Un test écrit en Gherkin d'abord »). |
+| `start_recording` | Starts recording a new test. All subsequent browser actions are auto-recorded. `project_id`: the project the test is saved in, whose datasets it reads while recording (`{{users[1].email}}`); with `dataset`, it plays one — `{{email}}` types its row 1, and the test is bound to it (see Datasets). With `scenario` (a Gherkin feature, as written), the test is recorded phrase by phrase: the answer numbers the phrases and says how to do each (see "A test written in Gherkin first"). |
 | `start_phrase` | Recording a scenario (`start_recording` with `scenario`): before the actions of each phrase, its `number` (and the `phrase`, shown to the user). The steps recorded until the next call are that phrase's: a new phrase becomes a business step of the project made of them at `stop_recording`. |
 | `record_step` | Optional: steps record themselves. Names the variable of the step an action recorded (`action_id`, `variable_name`: what a fill typed becomes `{{email}}` instead of a name taken from its field), keeps its value fixed (`skip_variable`), changes its intent, makes it optional (`optional`), removes it (`remove`: an `execute_js` that only looked at the page, an action done by mistake), or says how a click found in a list is meant (`pick`: `none`, `by_place`, `by_text` — the click's result says what it was taken as). |
 | `stop_recording` | Stops the recording and saves the test. Performs batch variable detection. It first waits for the actions still under way (up to 30 s), so one sent in the same message is recorded. A last `wait` for an element is kept: it checks what the test did (before, every wait at the end was dropped as an artifact). One of a time only, at the end, is not, and the answer says what was not kept. When the user chose so (**Settings → Browser windows**), the window the test was recorded in is closed once it is saved, and the answer says so. |
@@ -150,169 +154,164 @@ These tools allow you to record sequences of actions and replay them autonomousl
 | `create_business_step` | Groups a run of steps of a recorded test into one business Gherkin step (see below). |
 | `add_test_variable` | Turns a recorded value (e.g. a city inside a URL) into a `{{variable}}` of the test (see below). On a step already holding a variable recording made (`{{input_9}}`), renames it everywhere the test uses it and gives it `default_value`. |
 
-### Vérifier pendant l'enregistrement
+### Checking while recording
 
-Pendant un enregistrement, `add_assertion` avec le nom du test enregistré contrôle la page du moment
-et enregistre la vérification comme **étape suivante**, juste après l'action dont elle vérifie le
-résultat. Au rejeu, une vérification attend à sa place que ce qu'elle vérifie apparaisse (jusqu'au
-délai d'attente du projet) avant l'action suivante.
+During a recording, `add_assertion` with the name of the test being recorded checks the page as it
+is at that moment and records the check as the **next step**, right after the action whose result
+it checks. On replay, a check waits in its place for what it checks to appear (up to the project's
+wait for an element) before the next action.
 
-Vérifiées toutes à la fin, les vérifications étaient faites sur la dernière page, et le rejeu
-enchaînait les actions sans attendre ce que chacune amène : sur une fiche à onglets, un deuxième
-onglet cliqué 0,4 s après le premier empêchait le premier de se charger, et la vérification de son
-contenu, en fin de test, échouait. Les consignes des agents (MCP et tableau de bord) leur demandent
-donc de vérifier chaque résultat juste après son action.
+Checked all at the end, the checks were made on the last page, and the replay chained the actions
+without waiting for what each one brings: on a record page with tabs, a second tab clicked 0.4 s
+after the first kept the first from loading, and the check of its content, at the end of the test,
+failed. The agents' instructions (MCP and dashboard) therefore ask them to check each result right
+after its action.
 
-- **`step_order`** ne sert pas pendant l'enregistrement : la vérification va après la dernière action.
-- **Ce que le test a tapé** et que la vérification attend (« Welcome Bernadette ») est relié à sa
-  variable à `stop_recording` (« Welcome {{first_name}} »), comme sur un test enregistré.
-- **Sur un test déjà enregistré**, `add_assertion` contrôle la page telle qu'elle est maintenant :
-  ne donnez un `step_order` que si la page affichée est celle que voit cette étape.
+- **`step_order`** is not used during the recording: the check goes after the last action.
+- **What the test typed** and the check expects ("Welcome Bernadette") is linked to its
+  variable at `stop_recording` ("Welcome {{first_name}}"), as on a saved test.
+- **On a test already saved**, `add_assertion` checks the page as it is now: give a `step_order`
+  only if the page shown is the one that step sees.
 
-### Vidéo d'une exécution
+### Video of a run
 
-Chaque exécution est enregistrée en vidéo ; elle est gardée si le test échoue, ou avec
-`run_test(…, record_video: true)` / `run_campaign(…, record_video: true)`. `run_test` dit quand une
-vidéo a été gardée ; elle se regarde dans le tableau de bord (onglet *Runs* du test, bouton *Video*),
-les étapes à côté. Voir [la vue en direct](live-view.md#la-vidéo-dune-exécution).
+Every run is recorded on video; the video is kept if the test fails, or with
+`run_test(…, record_video: true)` / `run_campaign(…, record_video: true)`. `run_test` says when a
+video was kept; it is watched in the dashboard (the test's *Runs* tab, *Video* button), with the
+steps beside it. See [the live view](live-view.md#the-video-of-a-run).
 
-### Étapes facultatives
+### Optional steps
 
-Une étape **facultative** peut ne pas se faire à chaque exécution : un bandeau de cookies ou une
-fenêtre qui ne s'affiche que parfois, une visite guidée à fermer. Quand elle échoue au rejeu, son
-échec est dit (l'étape est marquée *skipped*, avec son erreur) et le test continue : il passe si le
-reste passe. Elle attend son élément comme toute étape (le délai du projet, 10 s par défaut).
+An **optional** step may not be done at every run: a cookie banner or a popup that only shows
+sometimes, a guided tour to close. When it fails on a replay, its failure is told (the step is
+marked *skipped*, with its error) and the test goes on: it passes if the rest passes. It waits for
+its element like any step (the project's wait, 10 s by default).
 
-- **Dans le tableau de bord** : bouton ◌ sur la ligne de l'étape (onglet *Steps*), qui affiche alors
-  l'étiquette *optional*. Il marche aussi pour une vérification.
-- **Pendant un enregistrement** : `record_step(action_id, optional: true)` sur l'action qui vient
-  d'être faite.
-- **Sur un test enregistré** : `set_step_optional(test_name, step_order)`.
-- `run_test` et le rapport d'exécution disent quelles étapes facultatives n'ont pas été faites.
-- **Une vérification facultative** qui ne tient pas n'est pas comptée en échec. Ne rendez jamais
-  facultative une étape que le test vérifie : un échec là doit faire échouer le test.
-- **En Playwright exporté**, l'étape est dans un `try { … } catch {}`.
+- **In the dashboard**: the ◌ button on the step's row (*Steps* tab), which then shows the
+  *optional* label. It works for a check too.
+- **During a recording**: `record_step(action_id, optional: true)` on the action just done.
+- **On a saved test**: `set_step_optional(test_name, step_order)`.
+- `run_test` and the run report say which optional steps were not done.
+- **An optional check** that does not hold is not counted as a failure. Never make optional a
+  step the test checks: a failure there must fail the test.
+- **In exported Playwright**, the step is in a `try { … } catch {}`.
 
-### Modifier un test enregistré
+### Changing a saved test
 
-Un test enregistré se change sans le réenregistrer, depuis n'importe quel agent connecté — et
-depuis le tableau de bord, dans la conversation du test (*Ask the agent*, plus bas).
+A saved test is changed without recording it again, from any connected agent — and from the
+dashboard, in the test's conversation (*Ask the agent*, below).
 
-- **Le lire** : `get_test(name)` donne ses étapes numérotées (ce que fait chacune, sur quel
-  élément, avec quelle valeur, sa variable, si elle est facultative), ses variables, les lignes
-  qu'il joue, sa dernière exécution (l'étape en échec et son erreur) et les réparations proposées.
-  À relire après chaque étape ajoutée ou supprimée : les numéros bougent.
-- **Ajouter une étape** : faire l'action dans le navigateur, sur la page telle que les étapes
-  d'avant la laissent, puis `add_test_step(test_name, action_id, step_order, intent)`. L'étape
-  garde ce que l'action a appris de son élément (sélecteur, localisateurs, page). Sans
-  `step_order`, elle va à la fin ; `optional: true` pour une étape dont l'appli n'a pas toujours
-  besoin.
-- **Supprimer une étape** : `delete_test_step(test_name, step_order)`. Jamais une vérification
-  pour faire passer un test qui échoue.
-- **Remplacer une étape qui échoue** : `fix_test_step`, comme avant.
-- **Réécrire son scénario** : `get_test_as_gherkin`, changer ses phrases (une valeur entre
-  guillemets, leur ordre, une phrase retirée, une ajoutée), puis
-  `update_test_gherkin(test_name, gherkin)` avec le scénario entier. C'est ce que fait l'onglet
-  *Gherkin* : une phrase inchangée garde son étape telle qu'elle a été enregistrée, une nouvelle
-  doit être une phrase du projet. Le test doit appartenir à un projet.
+- **Read it**: `get_test(name)` gives its numbered steps (what each does, on which element, with
+  which value, its variable, whether it is optional), its variables, the rows it plays, its last
+  run (the failed step and its error) and the repairs proposed. Read it again after each step
+  added or deleted: the numbers move.
+- **Add a step**: do the action in the browser, on the page as the steps before leave it, then
+  `add_test_step(test_name, action_id, step_order, intent)`. The step keeps what the action
+  learned about its element (selector, locators, page). Without `step_order`, it goes at the end;
+  `optional: true` for a step the app does not always need.
+- **Delete a step**: `delete_test_step(test_name, step_order)`. Never a check, to make a failing
+  test pass.
+- **Replace a failing step**: `fix_test_step`, as before.
+- **Rewrite its scenario**: `get_test_as_gherkin`, change its phrases (a value in quotes, their
+  order, a phrase removed, one added), then `update_test_gherkin(test_name, gherkin)` with the
+  whole scenario. This is what the *Gherkin* tab does: an unchanged phrase keeps its step as it was
+  recorded, a new one must be a phrase of the project. The test must belong to a project.
 
-**Après `run_test`, la session reprend sur la page où l'exécution s'est arrêtée** : là où
-l'étape a échoué, pour la réparer sur place ; là où le test a fini, si sa fenêtre reste ouverte,
-pour y ajouter une vérification. L'action suivante (`snapshot`, `click`…) n'a pas d'onglet à
-nommer. Avant, la fenêtre de l'exécution n'était pas celle de la session : l'agent s'entendait
-répondre « no window of its own », rouvrait l'application et réparait l'étape sur une page que
-les étapes d'avant n'avaient pas préparée.
+**After `run_test`, the session resumes on the page where the run stopped**: where the step
+failed, to repair it on the spot; where the test ended, if its window stays open, to add a check
+there. The next action (`snapshot`, `click`…) has no tab to name. Before, the run's window was not
+the session's: the agent was answered "no window of its own", opened the application again and
+repaired the step on a page the steps before had not prepared.
 
-### La conversation d'un test avec l'agent (tableau de bord)
+### A test's conversation with the agent (dashboard)
 
-Sur la page d'un test, *Ask the agent* ouvre une fenêtre : à gauche le navigateur de l'agent, en
-direct ; à droite la conversation. On y demande de réparer le test, de le modifier, de dire ce
-qu'il vérifie (`lib/agent/test-chat.js`).
+On a test's page, *Ask the agent* opens a window: on the left the agent's browser, live; on the
+right the conversation. There you ask it to repair the test, to change it, to say what it checks
+(`lib/agent/test-chat.js`).
 
-- **Une conversation par test**, gardée avec lui (`test_conversations`,
-  `test_conversation_messages`) : rouverte, elle est là. *Start over* l'oublie ; elle est
-  supprimée avec le test.
-- **Chaque message est une exécution de Claude Code** (`claude -p`, sortie `stream-json`), qui
-  reprend sa propre session (`--resume`) : l'agent se souvient de ce qui s'est dit et fait. Le
-  premier message porte le brief : le test tel qu'il est (`get_test`), son projet (URL, contexte,
-  jeux de données, noms des secrets), ce que l'agent peut faire et ses règles. Si la session de
-  la CLI a disparu, l'agent repart du brief et de l'historique.
-- **Une seule session de navigateur** pour toute la conversation, tant que sa fenêtre est
-  ouverte : chaque exécution de la CLI se connecte avec l'identifiant de la conversation
-  (`/sse?run=…`) et travaille dans la même session (`keepRunSession`, `lib/session.js`) — même
-  fenêtre, mêmes références, mêmes actions, qu'un message suivant peut encore nommer
-  (`fix_test_step`, `add_test_step`).
-- **Ses outils** : le navigateur et le test (`get_test`, `run_test`, `fix_test_step`,
+- **One conversation per test**, kept with it (`test_conversations`,
+  `test_conversation_messages`): opened again, it is there. *Start over* forgets it; it is
+  deleted with the test.
+- **Each message is a run of Claude Code** (`claude -p`, `stream-json` output), which goes on in
+  its own session (`--resume`): the agent remembers what was said and done. The first message
+  carries the brief: the test as it is (`get_test`), its project (URL, context, datasets, names of
+  the secrets), what the agent can do and its rules. If the CLI's session is gone, the agent
+  starts again from the brief and the history.
+- **A single browser session** for the whole conversation, as long as its window is open: each
+  run of the CLI connects with the conversation's identifier (`/sse?run=…`) and works in the same
+  session (`keepRunSession`, `lib/session.js`) — same window, same refs, same actions, which a
+  later message can still name (`fix_test_step`, `add_test_step`).
+- **Its tools**: the browser and the test (`get_test`, `run_test`, `fix_test_step`,
   `add_test_step`, `delete_test_step`, `update_test_gherkin`, `add_assertion`,
-  `set_step_optional`, `add_test_variable`, les réparations, `ask_user`…). Ni
-  `start_recording`, ni `delete_test`, ni `get_tabs`, ni les outils propres à Claude Code (Bash,
-  fichiers, web).
-- **Ce que la fenêtre montre** : ce que l'agent fait, une ligne par action, en mots simples
-  (« Runs the test », « Repairs step 5 ») — jamais une valeur tapée ; ce qu'il dit avant d'agir
-  rejoint cette liste, et sa réponse est ce qu'il dit à la fin.
-- **Arrêter** arrête l'agent ; ce qu'il a déjà changé reste. **Fermer la fenêtre** ferme la
-  fenêtre de navigateur de l'agent (après la fin de l'exécution en cours, pour ne pas la garder
-  en échec) ; sans message pendant 30 minutes, elle est rendue de la même façon
+  `set_step_optional`, `add_test_variable`, the repairs, `ask_user`…). Neither
+  `start_recording`, nor `delete_test`, nor `get_tabs`, nor Claude Code's own tools (Bash,
+  files, web).
+- **What the window shows**: what the agent does, a line per action, in plain words
+  ("Runs the test", "Repairs step 5") — never a value typed; what it says before acting joins
+  this list, and its answer is what it says at the end.
+- **Stop the agent** stops it; what it has already changed stays. **Closing the window** closes
+  the agent's browser window (once the run under way is over, so that it is not kept as failed);
+  with no message for 30 minutes, it is given back the same way
   (`IZITEST_TEST_CHAT_IDLE_MS`).
-- **Sans fenêtre** quand *Headless* est coché : toute la session travaille dans le Chrome sans
-  fenêtre, et on la suit dans la fenêtre de la conversation.
-- **Secrets** : un message et une réponse passent par `redact()` avant d'être gardés ou envoyés ;
-  un mot de passe se demande avec `ask_user`, jamais dans la conversation.
-- **Agent** : Claude Code (réglage *CLI*). L'agent API et les autres CLI n'ont pas ces outils sur
-  plusieurs messages : la fenêtre le dit, et rien n'est lancé.
+- **Without a window** when *Headless* is checked: the whole session works in the headless
+  browser, and you follow it in the conversation's window.
+- **Secrets**: a message and an answer go through `redact()` before being kept or sent; a
+  password is asked for with `ask_user`, never in the conversation.
+- **Agent**: Claude Code (the *CLI* setting). The API agent and the other CLIs do not have these
+  tools over several messages: the window says so, and nothing is started.
 
-### Export Playwright : `get_test_as_code`
+### Playwright export: `get_test_as_code`
 
-Rend un test enregistré sous forme de fichiers Playwright, à versionner dans le projet testé. Ils
-tournent avec Playwright seul, sans l'extension ni LLM, en CI comme en local.
+Returns a saved test as Playwright files, to commit in the project under test. They run with
+Playwright alone, without the extension or an LLM, in CI as well as locally.
 
-| Paramètre | Type | Description |
+| Parameter | Type | Description |
 | :--- | :--- | :--- |
-| `test_name` | string | Nom du test (obligatoire) |
-| `framework` | string | `playwright-plain` (défaut) : un `tests/<nom>.spec.js`, lancé par `npx playwright test`. `playwright-cucumber` : un projet autonome (`.feature`, step definitions, World, `cucumber.js` et son propre `package.json`) ; le test doit appartenir à un projet |
+| `test_name` | string | Name of the test (required) |
+| `framework` | string | `playwright-plain` (default): a `tests/<name>.spec.js`, run by `npx playwright test`. `playwright-cucumber`: a standalone project (`.feature`, step definitions, World, `cucumber.js` and its own `package.json`); the test must belong to a project |
 
-Rien n'est écrit sur le disque : les fichiers reviennent en texte (un titre avec le chemin, puis le
-code), et l'agent les écrit lui-même. Le projet `playwright-cucumber` va dans un dossier à part
-(ex. `e2e/`), jamais par-dessus le `package.json` du dépôt. Le tableau de bord sert le même code
-sur `GET /api/tests/:name/codegen?framework=…`.
+Nothing is written to disk: the files come back as text (a heading with the path, then the
+code), and the agent writes them itself. The `playwright-cucumber` project goes in a folder of its
+own (e.g. `e2e/`), never over the repository's `package.json`. The dashboard serves the same code
+at `GET /api/tests/:name/codegen?framework=…`.
 
-#### Identifiants générés à chaque chargement
+#### Identifiers generated at each load
 
-Le rejeu d'IziTest essaie tous les locators enregistrés d'une étape ; le code Playwright n'en
-garde qu'un. Un sélecteur bâti sur un identifiant que la page génère à chaque chargement (UUID
-dans un `id` ou un `for`, `:r1:` de React, classes CSS-in-JS) y casserait au premier passage ; un
-sélecteur positionnel (`#login-form > div:nth-of-type(3) > button:nth-of-type(1)`) tient tant que
-la mise en page ne bouge pas. En `playwright-plain`, chaque étape prend donc le premier locator
-solide, dans cet ordre :
+IziTest's replay tries all the locators recorded for a step; the Playwright code keeps only one.
+A selector built on an identifier the page generates at each load (a UUID in an `id` or a `for`,
+React's `:r1:`, CSS-in-JS classes) would break there on the first run; a positional selector
+(`#login-form > div:nth-of-type(3) > button:nth-of-type(1)`) holds as long as the layout does not
+move. In `playwright-plain`, each step therefore takes the first solid locator, in this order:
 
-1. le sélecteur enregistré, s'il ne contient ni rien de généré ni position (le code est alors
-   celui d'avant) ;
-2. un `data-testid`, puis un autre locator CSS du même genre — pas `input[name="interests"]` pour
-   une case d'un groupe : toutes les cases le partagent ;
-3. le rôle et le nom accessible que **Chrome** donne à l'élément, lus au clic dans son arbre
-   d'accessibilité : `page.getByRole('button', { name, exact: true })` — le bouton « Sign in », pas le
-   titre qui le dit aussi. C'est exactement ce que `getByRole` compare, là où le nom calculé par la
-   snapshot peut différer (texte caché, `title` qui passe avant le contenu). Pour un clic enregistré
-   avant, le rôle déduit de la balise (bouton, lien, liste déroulante, titre) et le nom de la snapshot.
-   Un rôle et un nom présents plusieurs fois sur la page (le « Clear » du formulaire de connexion et
-   celui du formulaire de contact) sont enregistrés avec l'endroit où ils sont : l'ancêtre le plus
-   proche qui n'en contient qu'un (`data-testid`, ou un id écrit à la main), sinon leur rang —
-   `page.getByTestId('login-form').getByRole('button', { name: 'Clear', exact: true })`, ou
-   `….nth(1)`. Seul, `getByRole` échouait sur le mode strict de Playwright. Le rejeu d'IziTest
-   cherche aussi dans cet ancêtre, et ne lance plus en parallèle le même nom lu seul (`aria`,
-   texte), qui pouvait gagner la course et cliquer l'autre bouton ;
-4. pour un `<label>` : `page.locator('label', { hasText: … })`, le label lui-même (les cases à
-   cocher stylées cachent souvent le vrai `<input>`) ;
-5. pour un champ (`input`, `select`, `textarea`, ou une saisie) : `page.getByLabel(…)` ;
-6. `page.getByPlaceholder(…)`, puis `page.getByText(…, { exact: true })` quand le texte visible
-   est le nom accessible ;
-7. le sélecteur positionnel, faute de mieux.
+1. the recorded selector, if it holds nothing generated and no position (the code is then the
+   same as before);
+2. a `data-testid`, then another CSS locator of the same kind — not `input[name="interests"]` for
+   a checkbox of a group: all the boxes share it;
+3. the role and the accessible name that **Chrome** gives the element, read at the click in its
+   accessibility tree: `page.getByRole('button', { name, exact: true })` — the "Sign in" button,
+   not the heading that says it too. This is exactly what `getByRole` compares, where the name the
+   snapshot computes may differ (hidden text, a `title` that comes before the content). For a
+   click recorded before, the role deduced from the tag (button, link, dropdown list, heading) and
+   the snapshot's name.
+   A role and a name present several times on the page (the "Clear" of the login form and that of
+   the contact form) are recorded with where they are: the nearest ancestor that holds only one
+   (a `data-testid`, or a hand-written id), otherwise their rank —
+   `page.getByTestId('login-form').getByRole('button', { name: 'Clear', exact: true })`, or
+   `….nth(1)`. Alone, `getByRole` failed on Playwright's strict mode. IziTest's replay also
+   looks inside this ancestor, and no longer runs in parallel the same name read alone (`aria`,
+   text), which could win the race and click the other button;
+4. for a `<label>`: `page.locator('label', { hasText: … })`, the label itself (styled
+   checkboxes often hide the real `<input>`);
+5. for a field (`input`, `select`, `textarea`, or a step that types): `page.getByLabel(…)`;
+6. `page.getByPlaceholder(…)`, then `page.getByText(…, { exact: true })` when the visible text
+   is the accessible name;
+7. the positional selector, for want of anything better.
 
-Sans alternative stable, le sélecteur d'origine reste, précédé d'un commentaire `// FIXME`.
+With no stable alternative, the original selector stays, preceded by a `// FIXME` comment.
 
-En `playwright-cucumber`, le même choix vaut pour les étapes métier (ci-dessous) et pour les étapes
-génériques : le `.feature` exporté leur donne la cible retenue, sous forme de sélecteur Playwright que
-`page.locator()` accepte tel quel :
+In `playwright-cucumber`, the same choice applies to business steps (below) and to generic steps:
+the exported `.feature` gives them the target chosen, as a Playwright selector that
+`page.locator()` accepts as it is:
 
 ```gherkin
 When I click on 'role=button[name="Sign in"s]'
@@ -323,182 +322,181 @@ And I fill 'internal:label="E-mail"i' with "bob@corp"
 And I select "Pro — 25 members ($29/mo)" in "#ws-plan"
 ```
 
-L'onglet Gherkin du tableau de bord, lui, nomme les éléments (ci-dessous) au lieu de donner leur
-sélecteur ; une étape sans élément garde le sélecteur enregistré. Un argument qui contient des
-guillemets doubles s'écrit entre guillemets simples.
+The dashboard's *Gherkin* tab, for its part, names the elements (below) instead of giving their
+selector; a step with no element keeps the recorded selector. An argument that contains double
+quotes is written between single quotes.
 
-Une attente d'un temps seul (« I wait 4 seconds ») dit comment le test s'exécute, pas ce qu'il fait :
-elle n'est pas une phrase de l'onglet Gherkin, ni de `get_test_as_gherkin`. Elle reste dans le test
-(onglet *Steps*), rejouée, et va avec la phrase qui la précède — la première, au début du test : un
-Gherkin sauvé la garde, même si cette phrase est reformulée, et la supprime avec elle. L'export Cucumber,
-qui joue ses phrases, les montre. Une attente d'un élément reste une phrase, qui le nomme.
+A wait of a time alone ("I wait 4 seconds") says how the test runs, not what it does: it is not a
+phrase of the *Gherkin* tab, nor of `get_test_as_gherkin`. It stays in the test (*Steps* tab),
+replayed, and goes with the phrase before it — the first one, at the start of the test: a saved
+Gherkin keeps it, even if that phrase is reworded, and removes it with that phrase. The Cucumber
+export, which plays its phrases, shows them. A wait for an element stays a phrase, which names it.
 
-### La langue des tests d'un projet
+### The language of a project's tests
 
-Chaque projet a une langue, `en` ou `fr`, choisie à sa création (« Tests written in », par défaut celle
-du navigateur) et modifiable ensuite : c'est celle de ses tests, pas celle du tableau de bord.
+Each project has a language, `en` or `fr`, chosen when it is created (*Tests written in*, by
+default the browser's) and changeable afterwards: it is the language of its tests, not that of the
+dashboard.
 
-- Son Gherkin est écrit dans cette langue : en français, la feature commence par `# language: fr` et ses
-  mots-clés sont `Fonctionnalité`, `Scénario`, `Soit`, `Quand`, `Alors`, `Et`, que Cucumber lit
-  nativement. Le parseur lit les mots-clés des deux langues.
-- Ses phrases intégrées le sont aussi : `je suis sur {string}`, `je clique sur {string}`,
-  `je remplis {string} avec {string}`, `{string} contient {string}`… les mêmes commandes, arguments
-  dans le même ordre. Un projet passé en français reçoit les phrases françaises et garde les anglaises :
-  ses tests se lisent en français, et ce qui a été écrit en anglais se relit toujours.
-- L'export Cucumber suit : feature en français (`Plan du scénario`, `Exemples`), et
-  `default.steps.js` avec les phrases françaises.
-- Tout ce que l'IA écrit pour le projet est dans sa langue : les étapes métier qu'elle propose, les
-  scénarios de `design_tests` (titres et étapes ; la revue des critères reste dans la langue de
-  l'exigence), les intentions des étapes qu'elle enregistre, le Gherkin du chat.
-  `get_project_context` renvoie la langue (`language`) et les phrases de cette langue.
+- Its Gherkin is written in that language: in French, the feature starts with `# language: fr` and
+  its keywords are `Fonctionnalité`, `Scénario`, `Soit`, `Quand`, `Alors`, `Et`, which Cucumber
+  reads natively. The parser reads the keywords of both languages.
+- So are its built-in phrases: `je suis sur {string}`, `je clique sur {string}`,
+  `je remplis {string} avec {string}`, `{string} contient {string}`… the same commands, arguments
+  in the same order. A project switched to French gets the French phrases and keeps the English
+  ones: its tests read in French, and what was written in English can still be read.
+- The Cucumber export follows: a feature in French (`Plan du scénario`, `Exemples`), and
+  `default.steps.js` with the French phrases.
+- Everything the AI writes for the project is in its language: the business steps it proposes, the
+  scenarios of `design_tests` (titles and steps; the review of the criteria stays in the
+  requirement's language), the intents of the steps it records, the Gherkin of the chat.
+  `get_project_context` returns the language (`language`) and the phrases of that language.
 
-### Les éléments d'un projet
+### The elements of a project
 
-Chaque étape qui agit sur un élément de la page (`click`, `fill`, `select`, `upload`, `drag`, et `wait` quand elle
-attend un élément), et
-chaque assertion qui vérifie un élément par son sélecteur, garde la page où elle a été faite : l'hôte et le chemin, sans la requête ni le fragment, chaque partie du chemin
-qui contient un chiffre (un identifiant, un slug avec un identifiant) remplacée par `*` —
-`notes.test/notes/*` pour la note 42 comme pour la 43. L'extension renvoie l'URL de la page avec le
-résultat de chaque action (`pageUrl`), et une assertion lit celle de la page où elle est vérifiée
-(`add_assertion`). Une étape enregistrée avant n'a pas de page : elle la reçoit à la prochaine exécution
-de son test où elle réussit.
+Each step that acts on an element of the page (`click`, `fill`, `select`, `upload`, `drag`, and
+`wait` when it waits for an element), and each assertion that checks an element by its selector,
+keeps the page it was done on: the host and the path, without the query or the fragment, each part
+of the path that holds a digit (an identifier, a slug with an identifier) replaced by `*` —
+`notes.test/notes/*` for note 42 as for note 43. The extension returns the page's URL with the
+result of each action (`pageUrl`), and an assertion reads that of the page it is checked on
+(`add_assertion`). A step recorded before has no page: it gets one at the next run of its test in
+which it succeeds.
 
-L'élément sur lequel agit une étape est connu par une **clé exacte**, jamais par ressemblance : sa page,
-puis son rôle et son nom accessible (avec le conteneur qui le distingue quand la page en a plusieurs,
-`button "Delete" in testid "note-3"`), à défaut son `data-testid`, le libellé d'un champ
-(`field "E-mail"`), ou un sélecteur CSS stable — celui d'une assertion (`css #result-profile`). Le bouton « Save » de la page des notes et celui de la
-page du profil sont deux éléments, même avec le même sélecteur ; le même « Save » enregistré par deux
-tests n'en est qu'un. Une étape qui n'a que sa position pour se distinguer, ou dont un élément de liste
-est choisi par une variable, n'a pas d'élément.
+The element a step acts on is known by an **exact key**, never by resemblance: its page, then its
+role and its accessible name (with the container that sets it apart when the page has several,
+`button "Delete" in testid "note-3"`), failing that its `data-testid`, the label of a field
+(`field "E-mail"`), or a stable CSS selector — that of an assertion (`css #result-profile`). The
+"Save" button of the notes page and that of the profile page are two elements, even with the same
+selector; the same "Save" recorded by two tests is only one. A step that has only its position to
+tell it apart, or whose list item is picked by a variable, has no element.
 
-**Un élément enregistré de plusieurs façons n'en fait qu'un.** Le champ pays de Test Arena était trois
-éléments : un test l'avait par son sélecteur (`css #country-input`), un autre par son nom accessible
-(`field "Start typing..."`), une vérification par son placeholder (`css input[placeholder="Start
-typing..."]`). Deux étapes d'une même page qui partagent ce qui distingue l'élément à coup sûr agissent
-sur le même élément : son `id` (le sélecteur `#country-input`, un locator CSS ou XPath par id), son
-`data-testid`, et pour un champ saisi ou choisi — ou lu par un sélecteur qui le nomme ainsi — son attribut
-`name` ou son placeholder. Leurs éléments sont fusionnés sous le nom que l'utilisateur a donné à l'un
-d'eux ; sinon sous celui qu'une personne lit (rôle, libellé) plutôt qu'un sélecteur. Un élément connu
-jusque-là par un sélecteur seul prend ce nom dès qu'une étape le donne. Ne fusionnent jamais :
-- deux éléments qu'une personne lit sous deux noms : le « Next » et le « Finish » d'un assistant peuvent
-  partager un id ;
-- les cases ou les boutons radio d'un groupe : leur `name` est celui du groupe, et un clic n'en donne pas ;
-- un élément distingué par son conteneur ou sa position (un bouton « Delete » par ligne) ;
-- un `id` généré à chaque chargement.
+**An element recorded in several ways is only one.** The country field of the Test Arena was three
+elements: one test had it by its selector (`css #country-input`), another by its accessible name
+(`field "Start typing..."`), a check by its placeholder
+(`css input[placeholder="Start typing..."]`). Two steps of the same page that share what tells the
+element apart for sure act on the same element: its `id` (the selector `#country-input`, a CSS or
+XPath locator by id), its `data-testid`, and for a field typed in or chosen — or read by a selector
+that names it so — its `name` attribute or its placeholder. Their elements are merged under the
+name the user gave one of them; otherwise under the one a person reads (role, label) rather than a
+selector. An element known until then by a selector alone takes that name as soon as a step gives
+it. Never merged:
+- two elements a person reads under two names: the "Next" and the "Finish" of a wizard may share
+  an id;
+- the checkboxes or the radio buttons of a group: their `name` is the group's, and a click gives none;
+- an element told apart by its container or its position (a "Delete" button per row);
+- an `id` generated at each load.
 
-Toutes les clés et marques d'un élément sont gardées (table `element_keys`) : une étape enregistrée plus
-tard le retrouve par n'importe laquelle. Au démarrage, le serveur enregistre les éléments de toutes les
-étapes, ce qui fusionne ceux enregistrés avant.
+All the keys and marks of an element are kept (the `element_keys` table): a step recorded later
+finds it by any of them. At startup, the server registers the elements of all the steps, which
+merges those recorded before.
 
-**Une correction, toutes les utilisations.** Chaque étape garde sa propre copie de la façon de trouver
-son élément (sélecteur, locators) : le rejeu, sans IA, et l'export Playwright lisent l'étape seule. Quand
-l'une change, les autres étapes du projet qui agissent sur le même élément reçoivent la même chose, sur
-confirmation :
-- une réparation qui trouve l'élément autrement (`relocate`) dit quelles autres étapes agissent sur lui,
-  test par test (`run_test`, `list_repairs`, `verify_repair`) ;
-  `resolve_repair(repair_id, decision="apply", all_uses=true)` leur donne aussi les nouveaux locators.
-  Rappelée avec `all_uses=true` sur une réparation déjà appliquée, elle corrige celles qui le trouvent
-  encore à l'ancienne ;
-- `fix_test_step(…, all_uses=true)` fait de même pour une étape que l'agent a corrigée à la main ;
-- dans le tableau de bord, la réparation (onglet *Runs* du test) affiche « “Start typing...” is also used
-  by 3 steps in 2 tests », la liste de ces étapes, et la case **Apply the repair to them too**, cochée :
-  le bouton devient **Apply to 4 steps**. L'éditeur d'étape affiche la même liste avec la case **Give
-  them this step's selector and locators too**, décochée : une étape modifiée à la main peut viser un
-  autre élément.
+**One fix, every use.** Each step keeps its own copy of how to find its element (selector,
+locators): the replay, without AI, and the Playwright export read the step alone. When one changes,
+the other steps of the project that act on the same element get the same, on confirmation:
+- a repair that finds the element another way (`relocate`) says which other steps act on it, test
+  by test (`run_test`, `list_repairs`, `verify_repair`);
+  `resolve_repair(repair_id, decision="apply", all_uses=true)` gives them the new locators too.
+  Called again with `all_uses=true` on a repair already applied, it fixes those that still find it
+  the old way;
+- `fix_test_step(…, all_uses=true)` does the same for a step the agent fixed by hand;
+- in the dashboard, the repair (the test's *Runs* tab) shows
+  "“Start typing...” is also used by 3 steps in 2 tests", the list of these steps, and the
+  *Apply the repair to them too* box, checked: the button becomes *Apply to 4 steps*. The step
+  editor shows the same list with the *Give them this step's selector and locators too* box,
+  unchecked: a step edited by hand may aim at another element.
 
-Chaque étape garde ce qu'elle fait : sa commande, sa valeur, ce que vérifie son assertion. Une assertion
-reçoit le sélecteur ; une action reçoit le sélecteur et les locators — ou, venant d'une assertion qui n'a
-pas de locators, le sélecteur seul. Les réparations `relocate` encore ouvertes de ces étapes sont
-remplacées (`superseded`). Appliquée à son étape seule, une réparation garde quand même l'élément : sa
-nouvelle clé s'ajoute aux siennes, son nom ne change pas. Une étape sans page (enregistrée avant que les
-étapes gardent la leur) n'est pas comptée : elle la reçoit à sa prochaine exécution réussie.
+Each step keeps what it does: its command, its value, what its assertion checks. An assertion gets
+the selector; an action gets the selector and the locators — or, coming from an assertion that has
+no locators, the selector alone. The `relocate` repairs of these steps that are still open are
+replaced (`superseded`). Applied to its step alone, a repair still keeps the element: its new key
+is added to the element's own, its name does not change. A step with no page (recorded before steps
+kept theirs) is not counted: it gets one at its next successful run.
 
-Chaque élément a un nom, unique dans son projet quelle que soit la casse (« save » est le « Save »
-d'une autre page), pris de ce qu'une personne lit dessus : son rôle et son nom accessible, son libellé,
-le texte du bouton ou du lien cliqué (« Accept all cookies » ; pas un prix ni l'élément d'une liste choisi
-par une variable), son placeholder, son test ID — sans le caractère d'une police d'icônes qu'un site
-dessine devant (« Me connecter », pas « \uE900 Me connecter », qui s'affichait comme un espace). Un élément que rien ne nomme — une vérification n'a que
-son sélecteur — reçoit des mots tirés de la partie du sélecteur qui le désigne, jamais le sélecteur
-lui-même : `#shop-cart-total` → « Shop cart total », `[data-testid=flash-message]` → « Flash message »,
-`button[aria-label="Empty the cart"]` → « Empty the cart ». Un nom déjà pris reçoit sa page
-(« Save (profile) »).
+Each element has a name, unique in its project whatever the case ("save" is the "Save" of another
+page), taken from what a person reads on it: its role and its accessible name, its label, the text
+of the button or link clicked ("Accept all cookies"; not a price nor the item of a list picked by a
+variable), its placeholder, its test ID — without the character of an icon font that a site draws
+in front of it ("Me connecter", not " Me connecter", which showed as a space). An element
+nothing names — a check has only its selector — gets words drawn from the part of the selector that
+designates it, never the selector itself: `#shop-cart-total` → "Shop cart total",
+`[data-testid=flash-message]` → "Flash message", `button[aria-label="Empty the cart"]` →
+"Empty the cart". A name already taken gets its page ("Save (profile)").
 
-**L'agent nomme les éléments que rien ne nomme.** Ceux trouvés par un sélecteur ou un test ID seul, ou
-nommés comme un autre avec leur page ajoutée, sont nommés par l'agent d'après ce que les tests en font
-(l'intention de chaque étape, ce que vérifie une assertion) : « Total du panier », « Message de
-confirmation », dans la langue du projet. Il reçoit les noms des autres éléments du projet, avec leur page,
-et donne à chacun un nom à lui : un élément qui ressemble à celui d'une autre page est nommé par ce qui
-l'en distingue (« Rechercher un produit », « Rechercher un utilisateur »), jamais le même nom avec un
-numéro. Un nom qu'il donne quand même déjà pris reçoit sa page ; une réponse qui n'est pas un nom (un
-sélecteur, un id) est ignorée. Un nom que l'utilisateur a donné n'est jamais changé ; un nom donné par
-l'agent reste quand une étape plus tardive lit un libellé sur l'élément, et l'agent ne le redemande pas
-(colonne `agent_named`). L'agent le fait :
-- à la fin de chaque enregistrement (`stop_recording`, du MCP comme de l'agent du tableau de bord), pour
-  les éléments du test sauvé, en arrière-plan : la réponse à l'agent qui enregistre n'attend pas ;
-- dans la page **Elements**, pour tous ceux du projet : « N elements have no name on the page… », bouton
-  **Name them** ; chacun porte « no name on the page » dans la liste.
+**The agent names the elements nothing names.** Those found by a selector or a test ID alone, or
+named like another one with their page added, are named by the agent from what the tests do with
+them (the intent of each step, what an assertion checks): "Total du panier",
+"Message de confirmation", in the project's language. It is given the names of the project's other
+elements, with their page, and gives each a name of its own: an element that looks like one of
+another page is named by what sets it apart ("Rechercher un produit", "Rechercher un utilisateur"),
+never the same name with a number. A name it gives that is taken all the same gets its page; an answer that
+is not a name (a selector, an id) is ignored. A name the user gave is never changed; a name given
+by the agent stays when a later step reads a label on the element, and the agent is not asked for
+it again (the `agent_named` column). The agent does it:
+- at the end of each recording (`stop_recording`, from MCP as from the dashboard's agent), for the
+  elements of the saved test, in the background: the answer to the recording agent does not wait;
+- on the *Elements* page, for all those of the project: "N elements have no name on the page…",
+  *Name them* button; each bears *no name on the page* in the list.
 
-L'onglet Gherkin dit ce nom à la place du sélecteur :
+The *Gherkin* tab says this name in place of the selector:
 
 ```gherkin
 When I fill "E-mail" with "{{email}}"
 And I click on "Sign in"
 ```
 
-et le relit comme l'élément : une phrase qui nomme un élément du projet, là où va un sélecteur, agit
-sur lui, avec le sélecteur, les locators et la page du dernier enregistrement qui l'a touché. C'est vrai
-aussi d'un scénario écrit à la main (`create_test_from_gherkin`) et d'une assertion
-(`Then "Profile result" should contain "Saved"`). Un nom qu'aucun élément ne porte reste un sélecteur.
+and reads it back as the element: a phrase that names an element of the project, where a selector
+goes, acts on it, with the selector, the locators and the page of the last recording that touched
+it. This is also true of a scenario written by hand (`create_test_from_gherkin`) and of an assertion
+(`Then "Profile result" should contain "Saved"`). A name no element bears stays a selector.
 
-L'agent qui écrit du Gherkin connaît ces noms : `get_project_context` liste les éléments du projet
-(`elements` : nom, page, ce qu'ils sont), la méthode de `design_tests` les donne page par page avec les
-phrases, et le chat du tableau de bord aussi. Un scénario conçu pour une exigence peut donc nommer les
-éléments déjà enregistrés au lieu de deviner un sélecteur.
+The agent that writes Gherkin knows these names: `get_project_context` lists the project's elements
+(`elements`: name, page, what they are), the method of `design_tests` gives them page by page with
+the phrases, and so does the dashboard's chat. A scenario designed for a requirement can therefore
+name the elements already recorded instead of guessing a selector.
 
-La page **Elements** du tableau de bord liste les éléments du projet, page par page, avec les tests qui
-les utilisent, et sous chacun les autres clés sous lesquelles il a été enregistré (« also css
-#country-input · … » ; la recherche les lit aussi). Un élément s'y renomme (son nouveau nom se lit dans
-le Gherkin de tous ses tests, et il le garde s'il est fusionné) ; un élément qu'aucune étape n'utilise
-plus s'y supprime. Les étapes d'un test montrent le nom de leur
-élément.
+The dashboard's *Elements* page lists the project's elements, page by page, with the tests that use
+them, and under each the other keys it was recorded under ("also css #country-input · …"; the
+search reads them too). An element is renamed there (its new name reads in the Gherkin of all its
+tests, and it keeps it if it is merged); an element no step uses any more is deleted there. The
+steps of a test show the name of their element.
 
-| Route | Rôle |
+| Route | Role |
 | :--- | :--- |
-| `GET /api/projects/:id/elements` | Les éléments du projet, avec leur page, ce qu'ils sont, et les étapes qui les utilisent ; `to_name` : les ids de ceux que rien ne nomme |
-| `POST /api/projects/:id/elements/name` | L'agent nomme les éléments que rien ne nomme (`to_name` de `GET …/elements`) : `{ changed: [{ id, from, to }], left }` ; 502 si l'agent ne répond pas |
-| `PATCH /api/elements/:id` | Renomme un élément (`{ name }`) ; 409 si un autre élément du projet a ce nom, quelle que soit la casse |
-| `DELETE /api/elements/:id` | Supprime un élément qu'aucune étape n'utilise ; 409 sinon |
+| `GET /api/projects/:id/elements` | The project's elements, with their page, what they are, and the steps that use them; `to_name`: the ids of those nothing names |
+| `POST /api/projects/:id/elements/name` | The agent names the elements nothing names (`to_name` of `GET …/elements`): `{ changed: [{ id, from, to }], left }`; 502 if the agent does not answer |
+| `PATCH /api/elements/:id` | Renames an element (`{ name }`); 409 if another element of the project has that name, whatever the case |
+| `DELETE /api/elements/:id` | Deletes an element no step uses; 409 otherwise |
 
-### Étapes métier : `create_business_step`
+### Business steps: `create_business_step`
 
-Regroupe une suite d'étapes d'un test enregistré en une seule phrase Gherkin métier, au lieu d'une
-étape technique par clic :
+Groups a run of steps of a recorded test into a single business phrase in Gherkin, instead of one
+technical step per click:
 
 ```gherkin
-# avant
+# before
 When I click on "div.moreFilterBtn"
 And I click on "label[for=\"…uuid…\"]"
 And I click on "#seeAllResults"
-# après
+# after
 When je ne garde que les maisons avec jardin
 ```
 
-La step definition est construite à partir des étapes enregistrées elles-mêmes, sélecteurs et
-locators compris : rien n'est à recopier. L'export Cucumber de ce test, et de tout test qui contient
-les mêmes étapes, affiche la phrase, et `features/steps/composite.steps.js` contient les actions
-Playwright (avec les locators stables ci-dessus). Écrite à la main dans un autre scénario, la phrase
-fonctionne aussi.
+The step definition is built from the recorded steps themselves, selectors and locators included:
+nothing has to be retyped. The Cucumber export of this test, and of any test that holds the same
+steps, shows the phrase, and `features/steps/composite.steps.js` holds the Playwright actions (with
+the stable locators above). Written by hand in another scenario, the phrase works too.
 
-| Paramètre | Type | Description |
+| Parameter | Type | Description |
 | :--- | :--- | :--- |
-| `project_id` | number | Projet de la step definition. Un test sans projet y est rattaché |
-| `test_name` | string | Test enregistré |
-| `from_step`, `to_step` | number | Étapes à regrouper, numérotées à partir de 1, bornes comprises |
-| `keyword` | string | `Given`, `When` ou `Then` |
-| `pattern` | string | La phrase, en Cucumber expression. `( )` et `/` y ont un sens (texte optionnel, alternatives) : à éviter |
-| `args` | array | Un par paramètre de la phrase (`{string}`, `{int}`…), dans l'ordre. `{ step, param }` prend toute la valeur enregistrée, `{ step, param, value }` seulement cette partie, `{ variable }` une variable du test (voir plus bas) |
+| `project_id` | number | Project of the step definition. A test without a project is attached to it |
+| `test_name` | string | Recorded test |
+| `from_step`, `to_step` | number | Steps to group, numbered from 1, both ends included |
+| `keyword` | string | `Given`, `When` or `Then` |
+| `pattern` | string | The phrase, as a Cucumber expression. `( )` and `/` have a meaning in it (optional text, alternatives): avoid them |
+| `args` | array | One per parameter of the phrase (`{string}`, `{int}`…), in order. `{ step, param }` takes the whole recorded value, `{ step, param, value }` only that part, `{ variable }` a variable of the test (see below) |
 
-Exemple paramétré : la ville et le budget, pris dans l'URL de l'étape 1.
+A parameterized example: the city and the budget, taken from the URL of step 1.
 
 ```javascript
 create_business_step({
@@ -509,98 +507,99 @@ create_business_step({
 // → Given je cherche une maison à vendre à "antony-92160" pour 500000 euros maximum
 ```
 
-À sélecteurs et paramètres égaux, une step definition du projet passe devant une step definition
-par défaut (`I am on {string}`). Rejouée depuis Gherkin (`create_test_from_gherkin`), une étape
-métier redonne ses étapes avec leurs locators.
+With the same selectors and parameters, a step definition of the project goes before a default
+step definition (`I am on {string}`). Replayed from Gherkin (`create_test_from_gherkin`), a
+business step gives back its steps with their locators.
 
-Les sous-étapes d'une étape métier gardent leur page. Quand l'enregistrement comparé a aussi la sienne,
-chaque sous-étape doit agir sur le même élément (même clé, voir « Les éléments d'un projet »), quels que
-soient les sélecteurs : les mêmes clics sur une autre page ne sont pas l'étape métier, même avec les
-mêmes sélecteurs.
+The sub-steps of a business step keep their page. When the recording it is compared with has its
+page too, each sub-step must act on the same element (same key, see "The elements of a project"),
+whatever the selectors: the same clicks on another page are not the business step, even with the
+same selectors.
 
-Sans page d'un côté, une étape métier se reconnaît aussi dans un autre enregistrement des mêmes étapes,
-même si un sélecteur y diffère parce qu'il est faible : un identifiant généré à chaque chargement (deux
-enregistrements de Bien'ici donnent deux `label[for="<uuid>"]` différents) ou une position. L'élément
-est alors reconnu à ce que les deux enregistrements ont en commun : le même `data-testid`, un même
-locator CSS stable, ou la même balise avec le même nom accessible (`label` « Jardin »). Deux sélecteurs
-stables qui diffèrent restent deux éléments, et l'attribut `name` d'une case cochée, commun à tout son
-groupe, ne compte pas. Les autres paramètres (état coché, valeur saisie…) doivent toujours correspondre.
-Une étape métier créée sans locators (avant `create_business_step`) demande toujours le sélecteur exact.
+Without a page on one side, a business step is also recognized in another recording of the same
+steps, even when a selector differs there because it is weak: an identifier generated at each load
+(two recordings of Bien'ici give two different `label[for="<uuid>"]`) or a position. The element
+is then recognized by what the two recordings have in common: the same `data-testid`, the same
+stable CSS locator, or the same tag with the same accessible name (`label` "Jardin"). Two stable
+selectors that differ stay two elements, and the `name` attribute of a checked box, shared by its
+whole group, does not count. The other parameters (checked state, value typed…) must still match.
+A business step created without locators (before `create_business_step`) still requires the exact
+selector.
 
-Une attente d'un temps seul (« j'attends 4 secondes ») ne fait partie d'aucune étape métier : elle
-n'est pas gardée à la création, et elle est ignorée pour reconnaître une étape métier dans un test, entre
-ses sous-étapes comme à la fin. Un test qui attend 4 s après sa connexion se lit quand même avec
-l'étape métier de connexion.
+A wait of a time only ("I wait 4 seconds") is part of no business step: it is not kept when one is
+created, and it is ignored when a business step is recognized in a test, between its sub-steps as
+at the end. A test that waits 4 s after logging in still reads with the login business step.
 
-#### Jouer une étape métier : `play_business_step`
+#### Playing a business step: `play_business_step`
 
-Pendant un enregistrement, l'agent joue une étape métier du projet en un seul appel, au lieu de refaire
-ses clics : `play_business_step({ phrase: 'je me connecte au portail avec l\'identifiant "{{secret.PORTAL_USERNAME}}"
-et le mot de passe "{{secret.PORTAL_PASSWORD}}"' })`. Ses étapes sont jouées dans le navigateur avec leurs
-locators et le délai d'attente du projet, puis enregistrées liées à elle : le test se lit avec la phrase,
-sans dépendre de la reconnaissance. Chaque `{string}` prend sa valeur entre guillemets ; un secret s'écrit
-`{{secret.NOM}}`, et le test garde la référence. `start_recording` liste les étapes métier du projet.
+While recording, the agent plays a business step of the project in a single call, instead of doing
+its clicks again: `play_business_step({ phrase: 'je me connecte au portail avec l\'identifiant "{{secret.PORTAL_USERNAME}}"
+et le mot de passe "{{secret.PORTAL_PASSWORD}}"' })`. Its steps are played in the browser with their
+locators and the project's wait for an element, then recorded, linked to it: the test reads as the
+phrase, without depending on recognition. Each `{string}` takes its value in double quotes; a secret
+is written `{{secret.NAME}}`, and the test keeps the reference. `start_recording` lists the
+project's business steps.
 
-Pendant un enregistrement, chaque étape d'une étape métier attend son élément **8 s au plus**, pas le
-délai du projet (30 s sur un site lent) : la page est déjà là, et un élément absent est dit en quelques
-secondes. Les rejeux gardent le délai du projet.
+While recording, each step of a business step waits for its element **8 s at most**, not the
+project's wait (30 s on a slow site): the page is already there, and a missing element is told
+within a few seconds. Replays keep the project's wait.
 
-Un élément choisi dans une liste **par sa place** (« le premier résultat ») le reste dans l'étape
-métier faite de ce clic : elle choisit l'élément à cette place, au rejeu comme quand l'agent la joue, et
-non celui qui a été cliqué à l'enregistrement. Elle se reconnaît dans un test qui a choisi un autre
-produit à la même place.
+An item picked in a list **by its place** ("the first result") stays so in the business step made
+of that click: it picks the item at that place, on a replay as when the agent plays it, not the one
+that was clicked while recording. It is recognized in a test that picked another product at the
+same place.
 
-**Une étape qui échoue en route.** La réponse dit laquelle, et ce qui a déjà été fait reste fait : les
-actions jouées avant sont enregistrées. Une étape métier qui ne fait que vérifier (« je suis connecté »,
-jouée pour savoir) et dont la vérification ne tient pas n'enregistre rien : une vérification ne change
-rien à la page. Une connexion faite dans le navigateur ne manque donc plus au test,
-qui échouerait sinon une fois rejoué déconnecté. Échouée dès sa première étape, rien n'est fait ni
-enregistré : la réponse dit d'abord d'aller là où elle commence (un formulaire à ouvrir).
+**A step that fails partway.** The answer says which one, and what was already done stays done:
+the actions played before it are recorded. A business step that only checks ("I am logged in",
+played to find out) and whose check does not hold records nothing: a check changes nothing on the
+page. A login done in the browser is therefore no longer missing from the test, which would
+otherwise fail once replayed logged out. When it fails at its very first step, nothing is done or
+recorded: the answer says to go first where it starts (a form to open).
 
-**Une étape demandée seulement parfois** (le code de vérification qu'un site ne demande que sur un nouvel
-appareil, une bannière) : `play_business_step(phrase, optional_step: 4)` la rend **facultative dans
-l'étape métier de la bibliothèque**. Tous les tests qui l'utilisent la font quand la page la demande, et
-continuent quand elle ne la demande pas. Appelé juste après l'échec sur cette étape, il repart de là :
-ce qui a été fait (l'e-mail, le mot de passe) n'est pas refait, l'étape manquante n'est pas réessayée, et
-le test reçoit l'étape métier entière, liée à elle, cette étape facultative. La réponse à l'échec le
-propose à l'agent. Une étape enregistrée facultative le reste quand elle entre dans une étape métier
+**A step needed only sometimes** (the verification code a site asks for only on a new device, a
+banner): `play_business_step(phrase, optional_step: 4)` makes it **optional in the business step
+of the library**. Every test that uses it does it when the page asks for it, and goes on when it
+does not. Called right after the failure on that step, it goes on from there: what was done (the
+e-mail, the password) is not done again, the missing step is not tried again, and the test gets the
+whole business step, linked to it, with that step optional. The answer to the failure suggests it
+to the agent. A step recorded as optional stays so when it goes into a business step
 (`create_business_step`).
 
-#### Dans le tableau de bord
+#### In the dashboard
 
-*Add step* propose deux choix :
-- **A business step** : une étape métier du projet, avec ses valeurs, insérée à l'étape voulue (à la fin
-  par défaut). Le test se lit avec sa phrase. `POST /api/tests/:name/steps/business` `{ phrase, step_order }` ;
-  la liste : `GET /api/projects/:id/business-steps`.
-- **An action** : pour un clic, une saisie, un choix dans une liste, un survol, un défilement ou une attente,
-  *Element of the project* liste les éléments du projet, page par page, avec une recherche. En choisir un
-  remplit le sélecteur, les locators et l'intention, que l'on peut encore modifier. Pour une attente, c'est
-  une attente de l'élément, pas d'un temps ; **Wait at most** lui donne son propre délai, en secondes
-  (vide : le délai du projet).
+*Add step* offers two choices:
+- **A business step**: a business step of the project, with its values, inserted at the step you
+  want (at the end by default). The test reads as its phrase. `POST /api/tests/:name/steps/business` `{ phrase, step_order }`;
+  the list: `GET /api/projects/:id/business-steps`.
+- **An action**: for a click, a fill, a choice in a list, a hover, a scroll or a wait,
+  *Element of the project* lists the project's elements, page by page, with a search. Choosing one
+  fills in the selector, the locators and the intent, which you can still change. For a wait, it is
+  a wait for the element, not for a time; **Wait at most** gives it its own time, in seconds
+  (empty: the project's wait).
 
-### Étapes métier proposées par l'IA
+### Business steps proposed by the AI
 
-Après la création d'un test par l'IA, l'agent réglé dans Settings propose ses étapes métier, en
-arrière-plan ; l'onglet Gherkin du test les montre, et le bouton « Propose business steps » les demande
-pour n'importe quel test d'un projet. Rien n'est créé sans l'accord de l'utilisateur : chaque
-proposition s'accepte, avec sa phrase telle qu'il l'a laissée, ou s'écarte.
+After the AI creates a test, the agent set in *Settings* proposes its business steps, in the
+background; the test's *Gherkin* tab shows them, and the *Propose business steps* button asks for
+them for any test of a project. Nothing is created without the user's agreement: each proposal is
+accepted, with its phrase as the user left it, or dismissed.
 
-L'agent lit le test étape par étape, par le nom de ses éléments, avec ses variables et les étapes métier
-que le projet a déjà ; ce qu'une étape métier regroupe déjà s'affiche comme elle et n'est pas proposé à
-nouveau. Il propose des suites de 2 à 12 étapes consécutives qui font ensemble une chose qu'un
-utilisateur veut dire (« j'enregistre mon profil avec le nom {string} … »), dans la langue des étapes
-métier du projet, chaque valeur qui change d'un scénario à l'autre en paramètre. Chaque proposition est
-vérifiée avant d'être montrée : elle ne coupe pas une phrase, ne chevauche ni une autre ni une étape
-métier, sa phrase est nouvelle et sans `( )` ni `/`, et chaque variable des étapes regroupées a son
-paramètre. Elle dit comment le test se lira, les phrases qu'elle remplace, et les autres tests du projet
-qui se liront avec elle (les mêmes étapes, sur les mêmes éléments).
+The agent reads the test step by step, by the names of its elements, with its variables and the
+business steps the project already has; what a business step already groups shows as that business
+step and is not proposed again. It proposes runs of 2 to 12 consecutive steps that together do one
+thing a user means ("I save my profile with the name {string} …"), in the language of the project's
+business steps, each value that changes from one scenario to the next as a parameter. Each proposal
+is checked before it is shown: it does not cut a phrase, overlaps neither another proposal nor a
+business step, its phrase is new and has no `( )` or `/`, and each variable of the grouped steps
+has its parameter. It says how the test will read, the phrases it replaces, and the other tests of
+the project that will read with it (the same steps, on the same elements).
 
-| Route | Rôle |
+| Route | Role |
 | :--- | :--- |
-| `GET /api/tests/:name/business-steps` | Les propositions gardées pour le test, ou qu'elles sont en cours (`status` : `none`, `running`, `ready`, `failed`) |
-| `POST /api/tests/:name/business-steps/propose` | Les demande à l'agent, en arrière-plan (202) ; une seule demande à la fois |
-| `POST /api/tests/:name/business-steps/:id/accept` | Crée l'étape métier (`{ pattern }` : la phrase modifiée) ; 422 si elle ne convient pas |
-| `DELETE /api/tests/:name/business-steps/:id` | Écarte une proposition ; sans `:id`, toutes |
+| `GET /api/tests/:name/business-steps` | The proposals kept for the test, or that they are under way (`status`: `none`, `running`, `ready`, `failed`) |
+| `POST /api/tests/:name/business-steps/propose` | Asks the agent for them, in the background (202); only one request at a time |
+| `POST /api/tests/:name/business-steps/:id/accept` | Creates the business step (`{ pattern }`: the edited phrase); 422 if it does not fit |
+| `DELETE /api/tests/:name/business-steps/:id` | Dismisses a proposal; without `:id`, all of them |
 
 ### Variable Support
 When saving a test (via `stop_recording`), IziTest Agent automatically identifies variables (e.g., input values or list selections). You can override these during `run_test`:
@@ -609,164 +608,163 @@ When saving a test (via `stop_recording`), IziTest Agent automatically identifie
 run_test("my_test", { variables: { "user_email": "new@example.com" } })
 ```
 
-Une variable de saisie prend le nom du champ : son label (« Workspace name » → `workspace_name`),
-sinon le nom envoyé par le formulaire (`displayName` → `display_name`), sinon son id
-(`#inline-title` → `inline_title`, pas un id généré comme `#r1`), le placeholder en dernier. Un nom
-accessible qui n'est que le placeholder (champ sans label) compte comme le placeholder : le champ
-`name="country"` au placeholder « Start typing... » donne `{{country}}`.
+An input variable takes the name of its field: its label ("Workspace name" → `workspace_name`),
+else the name the form sends (`displayName` → `display_name`), else its id
+(`#inline-title` → `inline_title`, not a generated id like `#r1`), the placeholder last. An
+accessible name that is only the placeholder (a field without a label) counts as the placeholder:
+the field `name="country"` with the placeholder "Start typing..." gives `{{country}}`.
 
-Une option choisie dans un `<select>` (outil `select`) devient aussi une variable, de type `select`,
-nommée de la même façon : `{{plan}}`. L'étape garde la `value` de l'option (`pro`), ce que le
-formulaire envoie, et non son libellé (`Pro — 25 members ($29/mo)`) : une assertion sur la valeur
-envoyée (`"plan": "pro"`) s'y lie seule, et un libellé reformulé ou traduit se rejoue encore. En
-Playwright : ``selectOption('#ws-plan', `${VARS.plan}`)`` ; en Gherkin : `I select "<plan>" in "#ws-plan"`.
-Un `select` par texte (phrase Gherkin relue) essaie la `value` des options avant une correspondance
-partielle du libellé, comme `selectOption` de Playwright.
+An option chosen in a `<select>` (the `select` tool) becomes a variable too, of type `select`,
+named the same way: `{{plan}}`. The step keeps the option's `value` (`pro`), what the form sends,
+not its label (`Pro — 25 members ($29/mo)`): an assertion on the value sent (`"plan": "pro"`)
+links to it by itself, and a label reworded or translated still replays. In
+Playwright: ``selectOption('#ws-plan', `${VARS.plan}`)``; in Gherkin: `I select "<plan>" in "#ws-plan"`.
+A `select` by text (a Gherkin phrase read back) tries the options' `value` before a partial match
+of the label, like Playwright's `selectOption`.
 
-Un clic devient une variable de liste quand l'élément cliqué fait partie d'éléments semblables. Un LLM
-en décide (clé OpenRouter, sinon la CLI `copilot`) ; sans LLM disponible, une règle prudente prend le
-relais :
+A click becomes a list variable when the element clicked is one of several similar elements. An
+LLM decides (an OpenRouter key, else the `copilot` CLI); with no LLM available, a cautious rule
+takes over:
 
-- pas de liste pour moins de 3 éléments, pour un élément sans texte (interrupteur nu, icône), ni pour
-  des boutons d'action côte à côte (« Save » / « Discard » / « Delete ») ;
-- des éléments à libellés distincts (critères, catégories) sont choisis **par texte**, sans le compteur
-  final : `Jardin (44)` devient `Jardin`, qui retrouve `Jardin (62)` ailleurs ;
-- un même bouton ou lien répété (« Add to cart » sur chaque produit) est choisi par position.
+- no list for fewer than 3 elements, for an element without text (a bare switch, an icon), or for
+  action buttons side by side ("Save" / "Discard" / "Delete");
+- elements with distinct labels (criteria, categories) are picked **by text**, without the count
+  at the end: `Jardin (44)` becomes `Jardin`, which finds `Jardin (62)` elsewhere;
+- the same button or link repeated ("Add to cart" on each product) is picked by position.
 
-La liste est lue **au moment du clic**, sur sa page : lue à `stop_recording`, sur la dernière page
-seulement (le panier), les résultats d'une recherche n'y étaient plus, et « le deuxième résultat »
-restait le clic sur le nom de son produit. Un clic qui ne pouvait pas être lu est relu à
-`stop_recording`, comme avant.
+The list is read **when the click is made**, on its page: read at `stop_recording`, on the last
+page only (the cart), the results of a search were no longer there, and "the second result" stayed
+the click on its product's name. A click that could not be read is read again at
+`stop_recording`, as before.
 
-**Un élément dans une carte.** Un élément peut ne ressembler à aucun autre, ou se trouver trop
-profond pour que ses semblables soient trouvés. C'est le cas du bouton « Ajouter » d'une carte
-produit, six niveaux sous sa carte chez Auchan, ou du « + » d'une quantité, que seule la carte
-ajoutée au panier affiche. Il est alors rattaché à **sa carte** : son plus proche ancêtre qui a au
-moins 3 semblables, mêmes balise et première classe, construits pareil. Cet ancêtre doit aussi être
-un élément de liste : `article`, `li`, `tr`, un rôle de liste, ou l'enfant d'une grille ou d'une
-rangée qui passe à la ligne. Les sections d'une page, l'une sous l'autre, n'en sont pas.
+**An element in a card.** An element may look like no other, or sit too deep for the elements like
+it to be found. That is the case of the "Ajouter" button of a product card, six levels below its
+card at Auchan, or of the "+" of a quantity, which only the card added to the cart shows. It is
+then attached to **its card**: its closest ancestor that has at least 3 elements like it, with the
+same tag and first class, built the same way. That ancestor must also be a list item: `article`,
+`li`, `tr`, a list role, or the child of a grid or of a row that wraps. The sections of a page, one
+below the other, are not.
 
-La variable garde la place de la carte (`itemXpath`, parmi les enfants directs de la liste) et le
-chemin de l'élément dans la carte (`withinXpath`). Les clics suivants sur la même carte partagent la
-variable : « Ajouter » puis « + » deux fois sur le 2ᵉ résultat donnent un seul `{{product}}`, et
-`product=2` les déplace tous les trois sur la 3ᵉ carte. Au rejeu, la carte et l'élément sont attendus
-jusqu'à 10 s : le « + » n'apparaît qu'une fois l'ajout pris en compte. La Test Arena a une section 7
-(recherche et panier) qui reproduit ce cas.
+The variable keeps the card's place (`itemXpath`, among the direct children of the list) and the
+element's path inside the card (`withinXpath`). Later clicks on the same card share the variable:
+"Ajouter" then "+" twice on the 2nd result give a single `{{product}}`, and `product=2` moves all
+three to the 3rd card. On a replay, the card and the element are waited for up to 10 s: the "+"
+only appears once the addition has been taken into account. The Test Arena has a section 7 (search
+and cart) that reproduces this case.
 
-**L'agent valide.** Le code peut se tromper : le bouton « Search » de la Test Arena avait été pris
-pour « la 7ᵉ section de la page ». L'agent qui enregistre sait ce qu'il voulait faire. Juste après
-un clic trouvé dans une liste, le résultat du clic le lui dit : « List: taken as item 2 of 8 of a
-list ("Whole milk 1L 1,15 €", …) — this element of that item, the same item as step 6 ». S'il n'est
-pas d'accord, il répond par `record_step(action_id, pick)` :
-- `none` : ce n'est pas un élément de liste, le clic reste un clic sur cet élément ;
-- `by_place` : l'élément à cette place (« le deuxième résultat ») ;
-- `by_text` : l'élément qui porte ce libellé (« la catégorie Jardin »).
+**The agent validates.** The code can be wrong: the Test Arena's "Search" button had been taken
+for "the 7th section of the page". The agent that records knows what it meant to do. Right after
+a click found in a list, the click's result tells it: "List: taken as item 2 of 8 of a
+list ("Whole milk 1L 1,15 €", …) — this element of that item, the same item as step 6". If it
+does not agree, it answers with `record_step(action_id, pick)`:
+- `none`: not an item of a list, the click stays a click on this element;
+- `by_place`: the item at that place ("the second result");
+- `by_text`: the item with that label ("the category Garden").
 
-Sa réponse passe avant celle du classifieur à `stop_recording`, et avant la règle des menus. S'il ne
-dit rien, rien ne change. L'agent du tableau de bord en mode API a le même retour, et répond par
-`pick_list_item(pick)`, qui vise le dernier clic.
+Its answer goes before the classifier's at `stop_recording`, and before the rule for menus. If it
+says nothing, nothing changes. The dashboard's agent in API mode gets the same feedback, and
+answers with `pick_list_item(pick)`, which applies to the last click.
 
-Quand l'élément cliqué porte le nom de l'élément choisi (« Ajouter le produit : Lait demi-écrémé UHT
-à une liste », le même bouton des autres cartes disant « Ajouter le produit : … à une liste »), le
-résultat du clic donne aussi ce nom, et comment le garder tout de suite pour une étape suivante qui le
-nommera (le vérifier dans la liste, le retirer) : « Its name here: "Lait demi-écrémé UHT" … capture_value(name:
-"item_name", ref: the one you clicked, what: "attribute", attribute: "aria-label", pattern: …) ». Le nom
-est ce que son libellé dit que ceux des autres éléments ne disent pas : au clic, le serveur lit le
-libellé de l'élément cliqué dans chaque carte (`pickedLabel`, `otherLabels`, et d'où il vient :
-`aria-label`, `title`, `alt` ou le texte).
+When the element clicked carries the name of the item picked ("Ajouter le produit : Lait demi-écrémé UHT
+à une liste", the same button of the other cards saying "Ajouter le produit : … à une liste"), the
+click's result also gives that name, and how to keep it right away for a later step that will name
+it (checking it in the list, removing it): "Its name here: "Lait demi-écrémé UHT" … capture_value(name:
+"item_name", ref: the one you clicked, what: "attribute", attribute: "aria-label", pattern: …)". The name
+is what its label says that the labels of the other items do not: at the click, the server reads
+the label of the clicked element in each card (`pickedLabel`, `otherLabels`, and where it comes
+from: `aria-label`, `title`, `alt` or the text).
 
-Un clic dans un **menu, une barre d'onglets ou un menu latéral** n'est jamais une variable : c'est
-l'endroit où va le test, pas une valeur qu'il fait varier. La page le dit (élément dans un `nav`, un
-`role="tab"`, `tablist`, `menu`, `menubar`, `menuitem`, ou un `data-testid` qui contient « menu » ou
-« nav »), ou la liste est dans l'en-tête de la page (`header`, `role="banner"`) ou ses liens portent
-un nom de navigation (`navigation-header__link`, `navbar`…), sinon le LLM (qui le classe
-`menu_item`). Le lien du panier d'Auchan, parmi les 4 liens de son en-tête, était devenu
-`{{product}}`, « le premier d'entre eux » : au rejeu, son logo, qui ramenait à l'accueil. Des
-**cartes** ne sont jamais un menu, où qu'elles soient : un `article`, ou un élément dont la classe
-parle de produit, de carte ou de tuile (`product`, `card`, `tile`). Auchan dessine ses produits — ceux
-qu'une marque sponsorise au-dessus des résultats aussi — dans un `<nav>` : « le deuxième résultat »
-était pris pour un lien du menu, et enregistré tel quel, sans variable. La règle vaut aussi quand
-c'est la page qui signale le `<nav>` autour des cartes, et pour une carte trouvée autour de son
-bouton (`./article…`) ; seul le LLM, s'il les classe `menu_item`, en fait encore un menu. Variable, un onglet était rejoué par son libellé,
-« Runs7 » avec son compteur, qui change à la prochaine exécution ; c'est maintenant un clic avec ses
-locators. Une liste de choix n'est jamais prise pour un menu : des options (`role="option"`,
-`listbox`, classes « autocomplete » ou « suggest »), ou une liste cliquée juste après une saisie, même
-dans le `nav` de l'en-tête.
+A click in a **menu, a tab bar or a side menu** is never a variable: it is where the test goes,
+not a value it varies. The page says so (an element in a `nav`, a `role="tab"`, `tablist`, `menu`,
+`menubar`, `menuitem`, or a `data-testid` that contains "menu" or "nav"), or the list is in the
+page's header (`header`, `role="banner"`) or its links carry a navigation name
+(`navigation-header__link`, `navbar`…), else the LLM says so (it classifies it `menu_item`). Auchan's
+cart link, among the 4 links of its header, had become `{{product}}`, "the first of them": on a
+replay, its logo, which led back to the home page. **Cards** are never a menu, wherever they are:
+an `article`, or an element whose class speaks of a product, a card or a tile (`product`, `card`,
+`tile`). Auchan draws its products — those a brand sponsors above the results too — in a `<nav>`:
+"the second result" was taken for a link of the menu, and recorded as it was, without a variable.
+The rule also holds when it is the page that reports the `<nav>` around the cards, and for a card
+found around its button (`./article…`); only the LLM, if it classifies them `menu_item`, still
+makes a menu of them. As a variable, a tab was replayed by its label, "Runs7" with its counter,
+which changes at the next run; it is now a click with its locators. A list of choices is never
+taken for a menu: options (`role="option"`, `listbox`, "autocomplete" or "suggest" classes), or a
+list clicked right after typing, even in the header's `nav`.
 
-**Une suggestion choisie après une saisie** devient une variable à elle : « Fr » tapé dans le champ
-pays (`{{country_input}}`), « France » choisi parmi ses suggestions (`{{country}}`). Le clic va à la
-suggestion de ce texte : ses locators par position (« la première suggestion ») sont retirés, qui en
-choisissaient une autre, en silence, sur une autre valeur. Un attribut qui se termine par ce texte
-donne un sélecteur ciblé, sans tenir compte des majuscules : `a[aria-label$=": {{text_choice}}" i]`
-pour « Suggestion de mot clé 1/2: chocolat » (la position, qui change avec la valeur, n'est pas
-gardée), et « Bananas » trouve la suggestion « bananas ». Avec un tel sélecteur, le texte seul n'est
-pas gardé : il se trouve n'importe où sur la page (« Bananas » dans le titre « Bananas Selections »
-au-dessus des suggestions de Walmart, cliqué à leur place).
-Réparée à la main (`fix_test_step`), l'étape garde sa variable, comme une saisie garde la sienne. Une vérification de ce qui a été choisi
-(« France » dans le champ) se relie à `{{country}}`. Pour rejouer avec l'Italie, changez les deux :
-`run_test(…, { variables: { "country_input": "Ital", "country": "Italy" } })`, ou deux colonnes d'un
-jeu de données. Une suggestion qui n'est pas proposée pour ce qui est tapé fait échouer l'étape, qui
-le dit (« Spain » introuvable après « S »). C'est une suggestion quand chaque mot tapé commence un
-mot de l'élément cliqué (« saint eti » → « Saint-Étienne ») : un bouton « Save » cliqué après avoir
-tapé un nom n'en est pas une. La liste étant fermée quand l'enregistrement s'arrête, c'est la seule
-façon de la retrouver. Une attente ou une vérification placée entre la saisie et le choix (l'agent
-vérifie que la suggestion s'affiche) ne l'empêche pas, et le libellé pris est son texte
-(« chocolat »), pas son nom accessible (« Suggestion de mot clé 1/2: chocolat »).
+**A suggestion picked after typing** becomes a variable of its own: "Fr" typed in the country
+field (`{{country_input}}`), "France" picked among its suggestions (`{{country}}`). The click goes
+to the suggestion with that text: its locators by position ("the first suggestion") are removed;
+they picked another one, silently, with another value. An attribute that ends with that text gives
+a targeted selector, ignoring case: `a[aria-label$=": {{text_choice}}" i]` for "Suggestion de mot
+clé 1/2: chocolat" (the position, which changes with the value, is not kept), and "Bananas" finds
+the suggestion "bananas". With such a selector, the text alone is not kept: it can be anywhere on
+the page ("Bananas" in the heading "Bananas Selections" above Walmart's suggestions, clicked
+instead of them).
+Repaired by hand (`fix_test_step`), the step keeps its variable, as a fill keeps its own. A check
+of what was picked ("France" in the field) is linked to `{{country}}`. To replay with Italy, change
+both: `run_test(…, { variables: { "country_input": "Ital", "country": "Italy" } })`, or two columns
+of a dataset. A suggestion that is not offered for what is typed fails the step, which says so
+("Spain" not found after "S"). It is a suggestion when each word typed starts a word of the clicked
+element ("saint eti" → "Saint-Étienne"): a "Save" button clicked after typing a name is not one.
+As the list is closed when the recording stops, this is the only way to find it. A wait or a check
+placed between the typing and the pick (the agent checks that the suggestion shows) does not
+prevent it, and the label taken is its text ("chocolat"), not its accessible name ("Suggestion de
+mot clé 1/2: chocolat").
 
-**Les vérifications autour de la suggestion la suivent** : là où elles la citent dans un sélecteur
-(`a[href="/recherche?text={{text_choice}}"]`) et dans ce qu'elles attendent, sans tenir compte des
-majuscules — un terme de recherche, que la page écrit à sa façon (« Chocolat » dans le titre,
-« Bananes Prix Bas » pour « banane »). Dans une URL, la suggestion est la valeur d'un paramètre, ou
-son début : `/search?q=laptop` pour « laptop computers » devient `/search?q={{search_choice}}`, lue
-sur l'URL décodée (`laptop+computers` → « laptop computers »). Une vérification marquée `ignoreCase` compare ainsi, au rejeu
-comme en Playwright exporté (`{ ignoreCase: true }`, ou une expression `/…/i`).
+**The checks around the suggestion follow it**: where they quote it in a selector
+(`a[href="/recherche?text={{text_choice}}"]`) and in what they expect, ignoring case — a search
+term, which the page writes its own way ("Chocolat" in the title, "Bananes Prix Bas" for
+"banane"). In a URL, the suggestion is the value of a parameter, or its beginning:
+`/search?q=laptop` for "laptop computers" becomes `/search?q={{search_choice}}`, read on the
+decoded URL (`laptop+computers` → "laptop computers"). A check marked `ignoreCase` compares that
+way, on a replay as in exported Playwright (`{ ignoreCase: true }`, or a `/…/i` expression).
 
-Son pluriel aussi, dans un texte qui doit la contenir : le titre « Chocolats pas cher » attendu
-après « chocolat » devient `{{text_choice}}`, que « Chocolats » contient, et que « Votre recherche
-banane » contient pour « banane ». Jamais un autre mot qui en est fait (« Chocolaterie »), ni un
-texte qui doit être égal (`title_equals`). Un paramètre seul (`redirect_keywords=chocolat`) devient
-la suggestion seule : son nom dit comment le site a pris cette valeur-là. Auchan envoie un mot qu'il
-connaît vers son rayon (`/…/ca-n0507?redirect_keywords=chocolat`), et tout autre vers sa recherche
-(`/recherche?text=banane`). Un chemin avec elle (`/search?q={{search_choice}}`) reste entier.
+Its plural too, in a text that must contain it: the title "Chocolats pas cher" expected after
+"chocolat" becomes `{{text_choice}}`, which "Chocolats" contains, and which "Votre recherche
+banane" contains for "banane". Never another word made from it ("Chocolaterie"), nor a text that
+must be equal (`title_equals`). A parameter alone (`redirect_keywords=chocolat`) becomes the
+suggestion alone: its name says how the site took that particular value. Auchan sends a word it
+knows to its aisle (`/…/ca-n0507?redirect_keywords=chocolat`), and any other to its search
+(`/recherche?text=banane`). A path with it (`/search?q={{search_choice}}`) stays whole.
 
-Ce qu'aucune variable ne suit, c'est un résultat propre à une valeur : un produit Kinder vérifié
-après « chocolat » n'est pas dans les résultats de « banane ». Les consignes de l'agent qui
-enregistre (`start_recording`, et l'agent du dashboard) lui demandent d'agir et de vérifier, après
-une valeur saisie ou choisie, ce qui tient pour toute valeur :
-- vérifier la valeur elle-même dans le titre, un titre de la page ou l'URL, et une liste de
-  résultats affichée (son conteneur, un compte), jamais un résultat en particulier ;
-- prendre un résultat par sa place (« le deuxième résultat ») dans la liste des résultats elle-même —
-  pas dans un bloc qu'une marque sponsorise au-dessus ou à côté, qui change d'une visite à l'autre —,
-  pas par un nom que lui seul porte (le nom du produit dans un `aria-label`) ; un nom dont les étapes
-  suivantes ont besoin est gardé d'abord par `capture_value`, puis utilisé en `{{nom}}` ;
-- vérifier un montant calculé par une expression : le prix gardé, puis `{{prix * 3 | 0,00}}` ;
-- retirer à la fin ce que le test a ajouté (un panier, une donnée créée), pour que l'exécution
-  suivante parte du même état ;
-- regarder la page par `snapshot` ou `extract`, pas par un `execute_js` qui serait rejoué ; un
-  `execute_js` qui n'a fait que regarder est retiré par `record_step(action_id, remove: true)`.
+What no variable follows is a result that belongs to one value: a Kinder product checked after
+"chocolat" is not in the results of "banane". The instructions of the agent that records
+(`start_recording`, and the dashboard's agent) ask it to act on and check, after a value typed or
+picked, what holds for any value:
+- check the value itself in the title, a heading or the URL, and a list of results shown (its
+  container, a count), never one particular result;
+- take a result by its place ("the second result") in the list of results itself — not in a block
+  a brand sponsors above or beside it, which changes from one visit to the next —, not by a name
+  only it has (the product's name in an `aria-label`); a name the next steps need is kept first
+  with `capture_value`, then used as `{{name}}`;
+- check a computed amount with an expression: the price kept, then `{{price * 3 | 0,00}}`;
+- remove at the end what the test added (a cart, data it created), so that the next run starts
+  from the same state;
+- look at the page with `snapshot` or `extract`, not with an `execute_js` that would be replayed;
+  an `execute_js` that only looked is removed with `record_step(action_id, remove: true)`.
 
-#### Déclarer une variable : `add_test_variable`
+#### Declaring a variable: `add_test_variable`
 
-La détection ne couvre que ce qui est saisi (`fill`) ou choisi dans une liste : une ville ou un budget
-dans une URL reste en dur. `add_test_variable` remplace une valeur enregistrée, ou une partie, par
-`{{nom}}` ; la valeur enregistrée devient sa valeur par défaut.
+Detection only covers what is typed (`fill`) or picked in a list: a city or a budget in a URL
+stays hard-coded. `add_test_variable` replaces a recorded value, or a part of it, with `{{name}}`;
+the recorded value becomes its default value.
 
 ```javascript
 add_test_variable({ test_name: "recherche_bienici", step: 1, param: "url", value: "antony-92160", name: "ville" })
 add_test_variable({ test_name: "recherche_bienici", step: 1, param: "url", value: "500000", name: "budget" })
-// étape 1 : https://www.bienici.com/recherche/achat/{{ville}}/maisonvilla?prix-max={{budget}}
+// step 1: https://www.bienici.com/recherche/achat/{{ville}}/maisonvilla?prix-max={{budget}}
 ```
 
-La variable apparaît alors partout :
+The variable then shows everywhere:
 
-- **Tableau de bord** : onglet Data ;
-- **`run_test`** : `run_test("recherche_bienici", { variables: { ville: "massy-91300", budget: "600000" } })` ;
-- **`playwright-plain`** : `VARS.ville`, `VARS.budget` ;
-- **Étape métier** : `args: [{ variable: "ville" }, { variable: "budget" }]` en fait les paramètres
-  de la phrase. Toute variable des étapes regroupées doit en avoir un : sinon le code généré taperait
-  `{{ville}}` tel quel ;
-- **Export Cucumber** : un `Scenario Outline`, avec `<ville>` dans les étapes et une ligne `Examples`
-  des valeurs par défaut, à compléter d'autres lignes pour d'autres jeux de données :
+- **Dashboard**: the *Data* tab;
+- **`run_test`**: `run_test("recherche_bienici", { variables: { ville: "massy-91300", budget: "600000" } })`;
+- **`playwright-plain`**: `VARS.ville`, `VARS.budget`;
+- **Business step**: `args: [{ variable: "ville" }, { variable: "budget" }]` makes them the
+  parameters of the phrase. Every variable of the grouped steps must have one: otherwise the
+  generated code would type `{{ville}}` as it is;
+- **Cucumber export**: a `Scenario Outline`, with `<ville>` in the steps and an `Examples` row of
+  the default values, to be completed with other rows for other datasets:
 
 ```gherkin
 Scenario Outline: recherche_bienici
@@ -778,322 +776,322 @@ Scenario Outline: recherche_bienici
     | antony-92160 | 500000 |
 ```
 
-Dans l'onglet Gherkin du tableau de bord, la phrase garde `"{{ville}}"` et `{{budget}}`, et s'enregistre
-telle quelle, même là où la phrase attend un `{int}`.
+In the dashboard's *Gherkin* tab, the phrase keeps `"{{ville}}"` and `{{budget}}`, and is saved as
+it is, even where the phrase expects an `{int}`.
 
-#### Assertions et variables
+#### Assertions and variables
 
-Une assertion qui vérifie une valeur saisie dans le test doit suivre cette valeur : rejoué avec un autre
-e-mail, le test doit vérifier cet e-mail, pas celui de l'enregistrement. `add_assertion` le fait seul :
-toute valeur d'une variable de saisie (`text` ou `select`, 2 caractères au moins) présente dans
-`expected` y est remplacée par sa variable, et la réponse l'indique :
+An assertion that checks a value typed in the test must follow that value: replayed with another
+e-mail, the test must check that e-mail, not the one of the recording. `add_assertion` does it by
+itself: any value of an input variable (`text` or `select`, at least 2 characters) found in
+`expected` is replaced there by its variable, and the answer says so:
 
 ```
 Linked to {{email}}: saved as ""email": "{{email}}"", so a replay with other values checks those values.
 ```
 
-La valeur est cherchée entière, jamais au milieu d'un mot : « Fra », tapé pour que l'autocomplétion
-propose « France », ne lie pas `"country": "France"`. Sur l'onglet d'un rejeu (`tabId` rendu par
-`run_test`), ce sont les valeurs saisies par ce rejeu qui sont cherchées, pas celles de
-l'enregistrement : rejoué avec `date_of_birth: "1985-11-30"`, `"dob": "1985-11-30"` devient
+The value is looked for whole, never in the middle of a word: "Fra", typed so that the
+autocomplete offers "France", does not link `"country": "France"`. On the tab of a replay (the
+`tabId` returned by `run_test`), the values typed by that replay are the ones looked for, not those
+of the recording: replayed with `date_of_birth: "1985-11-30"`, `"dob": "1985-11-30"` becomes
 `"dob": "{{date_of_birth}}"`.
 
-Une valeur de 2 caractères n'est liée que si c'est un nombre ou un code (`25`, `FR`, `XL`) — un petit
-mot en minuscules (`on`, `in`) se trouve dans n'importe quelle phrase — et seulement si elle n'apparaît
-qu'une fois : sinon, la réponse le dit (`Not linked to {{volume}}: "25" is found 2 times…`).
+A 2-character value is linked only if it is a number or a code (`25`, `FR`, `XL`) — a short
+lowercase word (`on`, `in`) is found in any sentence — and only if it appears once: otherwise, the
+answer says so (`Not linked to {{volume}}: "25" is found 2 times…`).
 
-Pour une assertion ajoutée avant, `add_test_variable` avec le nom d'une variable existante la réutilise
-(sans `value`, ou avec sa valeur par défaut) :
+For an assertion added before, `add_test_variable` with the name of an existing variable reuses it
+(without `value`, or with its default value):
 
 ```javascript
 add_test_variable({ test_name: "izi_login", step: 7, param: "expected", name: "email" })
 // "email": "jane.doe@example.com"  →  "email": "{{email}}"
 ```
 
-Au rejeu, une valeur contenant un guillemet ou une barre oblique inverse (`Pa"ss\word`) est prise telle
-quelle. Dans les `Examples` d'un Scenario Outline exporté, une valeur qui contient le guillemet
-entourant sa colonne dans une étape (`d'abord` dans `'"reason": "<reason>"'`) y est échappée
-(`d\\'abord`) : sinon la chaîne se fermait au milieu de la valeur, et l'étape restait sans définition.
+On a replay, a value containing a quote or a backslash (`Pa"ss\word`) is taken as it is. In the
+`Examples` of an exported Scenario Outline, a value that contains the quote surrounding its column
+in a step (`d'abord` in `'"reason": "<reason>"'`) is escaped there (`d\\'abord`): otherwise the
+string closed in the middle of the value, and the step was left without a definition.
 
-#### Enregistrer depuis l'onglet Gherkin
+#### Saving from the Gherkin tab
 
-Une phrase ne dit pas tout d'une étape : ni ses locators, ni son intention, ni sa variable de liste,
-ni ce que seul l'enregistrement sait (case cliquée par son label, capture VRT). Enregistrer la feature
-compare donc les phrases éditées à celles du test :
+A phrase does not say everything about a step: not its locators, nor its intent, nor its list
+variable, nor what only the recording knows (a box clicked through its label, a VRT screenshot).
+Saving the feature therefore compares the edited phrases with those of the test:
 
-- une phrase **inchangée** garde ses étapes telles quelles — y compris une étape qu'aucune phrase ne
-  décrit (`execute_js`, vérification visuelle), qui ne s'enregistrait pas du tout jusqu'ici ;
-- une phrase **modifiée** est relue ; si sa commande et sa cible (sélecteur, URL) n'ont pas changé,
-  elle garde les locators, l'intention et la variable de liste de l'étape qu'elle remplace (une
-  variable de saisie, tant que son `{{nom}}` y figure encore) ;
-- une phrase **ajoutée** est relue, une phrase **supprimée** disparaît ; les autres ne bougent pas.
+- an **unchanged** phrase keeps its steps as they are — including a step no phrase describes
+  (`execute_js`, a visual check), which was not saved at all until now;
+- a **changed** phrase is read back; if its command and its target (selector, URL) have not
+  changed, it keeps the locators, the intent and the list variable of the step it replaces (an
+  input variable, as long as its `{{name}}` is still in it);
+- an **added** phrase is read back, a **deleted** phrase goes away; the others do not move.
 
-Seules les phrases modifiées ou ajoutées doivent correspondre à une step definition : une erreur
-cite leur ligne.
+Only the changed or added phrases must match a step definition: an error quotes their line.
 
-#### Une assertion est vérifiée à sa place
+#### An assertion is checked at its place
 
-Une assertion suivie d'autres actions est vérifiée là où elle est dans le test, sur la page où les
-étapes d'avant ont mené. Un test peut ainsi vérifier la page d'un employé, puis passer à celle d'un
-manager et la vérifier aussi.
+An assertion followed by other actions is checked where it is in the test, on the page the steps
+before it led to. A test can thus check an employee's page, then move on to a manager's and check
+it too.
 
-- Le navigateur joue les étapes jusqu'à l'assertion, le serveur la vérifie, puis la suite part dans
-  le même onglet.
-- Une assertion qui échoue à sa place arrête l'exécution là : ce qui suit reposait sur ce qu'elle
-  vérifiait. Elle est l'étape en échec du rapport et du triage.
-- Les assertions placées après la dernière action sont toutes vérifiées sur la dernière page, et
-  chacune est rapportée, comme avant.
-- Le mode debug les vérifie aussi à leur place, pas à pas.
+- The browser plays the steps up to the assertion, the server checks it, then the rest goes on in
+  the same tab.
+- An assertion that fails at its place stops the run there: what follows relied on what it
+  checked. It is the failed step of the report and of the triage.
+- The assertions placed after the last action are all checked on the last page, and each one is
+  reported, as before.
+- Debug mode checks them at their place too, step by step.
 
-Avant, toutes les assertions étaient vérifiées après la dernière action : une vérification placée
-avant un changement de page lisait la mauvaise page, et échouait.
+Before, all the assertions were checked after the last action: a check placed before a change of
+page read the wrong page, and failed.
 
-#### Une assertion attend ce qu'elle vérifie
+#### An assertion waits for what it checks
 
-À l'exécution, une assertion est relue jusqu'à ce qu'elle passe, pendant le délai d'attente du
-projet (10 s par défaut, voir ci-dessous), comme l'`expect` de Playwright. C'est utile quand la page est encore en route vers ce qu'elle vérifie : un
-formulaire envoyé avec Entrée dont la page suivante se charge, un message affiché à la réponse d'une
-requête.
+During a run, an assertion is read again until it passes, for as long as the project's wait for an
+element (10 s by default, see below), like Playwright's `expect`. This is useful when the page is
+still on its way to what the assertion checks: a form sent with Enter whose next page is loading, a
+message shown when a request answers.
 
-- Une page qu'on ne peut pas lire pendant ce temps, parce qu'elle est en train d'être remplacée,
-  est relue aussi.
-- Une fois le délai écoulé, l'assertion échoue avec ce qu'elle a lu en dernier.
-- Une comparaison de captures (VRT) et un oracle sont lus une seule fois.
-- `IZITEST_ASSERT_TIMEOUT_MS`, s'il est défini, remplace ce délai pour tous les projets ; `0` lit
-  une seule fois.
+- A page that cannot be read during that time, because it is being replaced, is read again too.
+- Once the time is up, the assertion fails with what it read last.
+- A screenshot comparison (VRT) and an oracle are read only once.
+- `IZITEST_ASSERT_TIMEOUT_MS`, when set, replaces this time for every project; `0` reads only
+  once.
 
-#### Le délai d'attente d'un élément
+#### The wait for an element
 
-Au rejeu, chaque étape attend que son élément (le bouton, le champ…) apparaisse avant d'agir,
-jusqu'au délai d'attente du projet : **10 s par défaut**. L'attente s'arrête dès que l'élément est
-là, donc un test qui passe ne prend pas plus de temps. Une étape qui ne trouve pas son élément
-échoue avec « not found within 10 s ».
+On a replay, each step waits for its element (the button, the field…) to show before it acts, up
+to the project's wait for an element: **10 s by default**. The wait stops as soon as the element is
+there, so a test that passes takes no longer. A step that does not find its element fails with
+"not found within 10 s".
 
-**Un clic attend que son élément puisse le recevoir**, comme chez Playwright : visible, actif (ni
-`disabled`, ni `aria-disabled`), immobile (la même position deux fois de suite) et au-dessus de tout
-(ce qui est au milieu de l'élément est l'élément, quelque chose dedans ou son label, pas un voile de
-chargement). Sinon l'étape échoue avec la raison : « Not clicked: the element stayed covered by
-<div.loading-bg> within 10 s ».
+**A click waits until its element can receive it**, as in Playwright: visible, enabled (neither
+`disabled` nor `aria-disabled`), still (the same position twice in a row) and on top of everything
+(what is at the middle of the element is the element, something inside it or its label, not a
+loading overlay). Otherwise the step fails with the reason: "Not clicked: the element stayed
+covered by <div.loading-bg> within 10 s".
 
-**Une action attend que sa page ait fini de se charger.** Un clic, une saisie, un choix dans une
-liste : avant d'agir, le rejeu attend que le document de l'élément soit chargé (`readyState`
-`complete` : ses scripts ont tourné, ceux qu'il a ajoutés en se chargeant aussi), puis recherche
-l'élément, la page s'étant dessinée entre-temps. Un élément choisi par sa place dans une liste
-(« le deuxième résultat ») attend de même, avant que la liste soit lue. Une page chargée ne coûte
-rien. Chez Auchan, le clic « ajouter à une liste » partait dès que le bouton était dessiné sur la
-page de résultats que le clic d'avant venait d'ouvrir : ses scripts n'avaient pas tourné, rien
-n'écoutait le bouton, et l'étape suivante échouait une exécution sur deux.
+**An action waits until its page has finished loading.** A click, a fill, a choice in a list:
+before acting, the replay waits until the element's document has loaded (`readyState` `complete`:
+its scripts have run, those it added while loading too), then looks the element up again, the page
+having drawn itself meanwhile. An item picked by its place in a list ("the second result") waits
+the same way, before the list is read. A page that has loaded costs nothing. At Auchan, the "add to
+a list" click went off as soon as the button was drawn on the results page the click before had
+just opened: its scripts had not run, nothing listened to the button, and the next step failed one
+run in two.
 
-L'attente dure au plus 15 s, comme celle d'un `navigate`. Passé ce délai (une ressource qui ne
-répond jamais), l'étape est jouée quand même, son résultat le dit (« the page was still loading
-after 15 s »), et cette page n'est plus attendue aux étapes suivantes. Les clics, saisies et choix
-de l'agent (`click`, `fill`, `select`) attendent de la même façon : un clic fait sur la page qu'un
-clic venait d'ouvrir était perdu (« no visible change »).
+The wait lasts 15 s at most, like that of a `navigate`. Past that time (a resource that never
+answers), the step is played anyway, its result says so ("the page was still loading after 15 s"),
+and that page is no longer waited for at the following steps. The agent's clicks, fills and choices
+(`click`, `fill`, `select`) wait the same way: a click made on the page a click had just opened was
+lost ("no visible change").
 
-**Un clic sans effet est refait une fois.** Après un clic, le rejeu observe la page une seconde : un
-changement de la page, une navigation ou une requête suffisent. Si rien de tout cela n'arrive, la
-page n'écoutait pas encore (une application qui affiche ses boutons avant d'y brancher leurs
-actions) : le rejeu reclique, si l'élément est toujours là et prêt. Le résultat de l'étape le dit
-(« clicked twice »). Un élément choisi par sa place est observé et recliqué de la même façon. Une
-page encore en chargement change d'elle-même (ses images, son panier) : c'est pourquoi le rejeu
-l'attend d'abord, sans quoi ces changements passaient pour l'effet du clic.
+**A click with no effect is made once more.** After a click, the replay watches the page for one
+second: a change of the page, a navigation or a request is enough. If none of that happens, the
+page was not listening yet (an application that shows its buttons before wiring their actions to
+them): the replay clicks again, if the element is still there and ready. The step's result says so
+("clicked twice"). An item picked by its place is watched and clicked again the same way. A page
+still loading changes by itself (its images, its cart): that is why the replay waits for it first;
+otherwise those changes passed for the click's effect.
 
-**Attendre un élément, pas un temps.** Une attente en ms enregistrée juste avant une étape qui
-attend elle-même (un clic, une saisie, l'attente d'un élément, une vérification) n'est pas gardée
-dans le test : `stop_recording` le dit. L'outil `wait` le rappelle à l'agent.
+**Wait for an element, not for a time.** A wait in ms recorded right before a step that waits by
+itself (a click, a fill, a wait for an element, a check) is not kept in the test: `stop_recording`
+says so. The `wait` tool reminds the agent of it.
 
-**Une attente plus longue que les autres a son propre délai.** L'attente d'un élément (`wait` avec
-`selector`) attend, elle aussi, le délai du projet. Ce qu'elle attend peut prendre plus longtemps
-que l'élément de n'importe quelle autre étape : un export qui se construit, un rapport calculé, un
-traitement en lot. Plutôt que d'allonger le délai de tout le projet, on lui donne le sien, de 1 s à
-5 min, en secondes entières :
-- en Gherkin : `When I wait for "the report link" up to 90 seconds`, en français
-  `Quand j'attends "le lien du rapport" jusqu'à 90 secondes` ;
-- dans le tableau de bord : l'étape d'attente, *Edit*, **Wait at most** (en secondes ; vide : le
-  délai du projet) ;
-- par l'agent : `wait` avec `timeout` en ms (`90000`), gardé avec l'étape enregistrée.
+**A wait longer than the others has its own time.** A wait for an element (`wait` with
+`selector`) also waits as long as the project's wait for an element. What it waits for may take
+longer than the element of any other step: an export being built, a report computed, a batch job.
+Rather than lengthening the wait of the whole project, you give it its own, from 1 s to 5 min, in
+whole seconds:
+- in Gherkin: `When I wait for "the report link" up to 90 seconds`, in French
+  `Quand j'attends "le lien du rapport" jusqu'à 90 secondes`;
+- in the dashboard: the wait step, *Edit*, **Wait at most** (in seconds; empty: the project's
+  wait);
+- by the agent: `wait` with `timeout` in ms (`90000`), kept with the recorded step.
 
-Le délai est rangé dans l'étape (`params.timeout`, en ms) et rejoué tel quel ; une attente sans
-délai propre suit celui du projet au moment du rejeu. Le rejeu complet reçoit ce temps en plus de ses
-120 s, sinon une longue attente le coupait avant de finir. L'export Playwright l'écrit
-`waitFor({ timeout: 90000 })`. Avant, l'attente d'un élément durait toujours 10 s, quel que soit le
-délai du projet, et rien ne permettait d'attendre plus.
+The time is stored in the step (`params.timeout`, in ms) and replayed as it is; a wait without a
+time of its own follows the project's at the time of the replay. The whole replay gets that time on
+top of its 120 s; otherwise a long wait cut it off before it finished. The Playwright export writes
+it `waitFor({ timeout: 90000 })`. Before, a wait for an element always lasted 10 s, whatever the
+project's wait, and nothing allowed waiting longer.
 
-On le règle par projet, de 1 à 120 s :
-- dans le tableau de bord : *Projects → Edit → Wait for an element* (vide : le défaut) ;
-- par l'agent : `update_project_context` avec `element_timeout_ms` (`null` revient au défaut) ;
-  `clean_start: false` y coupe aussi le nettoyage des cookies avant chaque test (voir l'installation) ;
-- par l'API : `PUT /api/projects/:id` avec `element_timeout_ms`.
+The wait for an element is set per project, from 1 to 120 s:
+- in the dashboard: *Projects → Edit → Wait for an element* (empty: the default);
+- by the agent: `update_project_context` with `element_timeout_ms` (`null` goes back to the default);
+  `clean_start: false` there also turns off the clearing of cookies before each test (see the
+  installation guide);
+- through the API: `PUT /api/projects/:id` with `element_timeout_ms`.
 
-Il vaut aussi pour les assertions. Augmentez-le quand des tests échouent sur une page encore en
-chargement : serveur de test lent, poste d'entreprise, Chrome sans fenêtre. Les actions de l'agent
-pendant qu'il enregistre attendent toujours 2 s : il lit la réponse et regarde la page aussitôt.
+It applies to assertions too. Raise it when tests fail on a page still loading: a slow test
+server, a company laptop, the headless browser. The agent's actions while it records always wait
+2 s: it reads the answer and looks at the page right away.
 
-#### Types d'assertion à l'export
+#### Assertion types on export
 
-Chaque type d'assertion se rejoue, s'exporte en Playwright et a sa phrase Gherkin :
+Each assertion type replays, exports to Playwright and has its Gherkin phrase:
 
 | Type | Playwright | Gherkin |
 | :--- | :--- | :--- |
-| `text_contains` / `text_not_contains` | `toContainText` / `not.toContainText` | `"…" should contain "…"` / `should not contain` ; sans sélecteur, `I should see "…"` |
+| `text_contains` / `text_not_contains` | `toContainText` / `not.toContainText` | `"…" should contain "…"` / `should not contain`; without a selector, `I should see "…"` |
 | `text_equals` | `toHaveText` | `"…" should have text "…"` |
-| `attribute_equals` | `toHaveAttribute` ; `toHaveValue` pour `value` | `the "href" of "…" should be "…"` |
+| `attribute_equals` | `toHaveAttribute`; `toHaveValue` for `value` | `the "href" of "…" should be "…"` |
 | `element_count` | `toHaveCount` | `"…" should match 2 elements` |
 | `element_exists` / `element_not_exists` | `.first().toBeAttached()` / `toHaveCount(0)` | `"…" should exist` / `I should not see "…"` |
 | `element_visible` / `element_hidden` | `toBeVisible` / `toBeHidden` | `"…" should be visible` / `should be hidden` |
 | `url_equals` / `url_contains` | `toHaveURL` | `the URL should be "…"` / `should contain` |
 | `title_equals` / `title_contains` | `toHaveTitle` | `the title should be "…"` / `should contain` |
-| `no_console_errors` | erreurs collectées dès le début du test, puis `expect(…).toEqual([])` | `the page should log no error containing "…"` |
-| `no_failed_requests` | réponses ≥ 400 et requêtes en échec collectées, puis `toEqual([])` | `no request to "…" should fail` |
-| `link_ok` | `page.request.get(href)`, statut < 400 | `the link "…" should work` |
-| `no_a11y_violations` | `@axe-core/playwright` : `new AxeBuilder({ page }).withRules([…])` | `the page should not break the accessibility rule "…"` |
+| `no_console_errors` | errors collected from the start of the test, then `expect(…).toEqual([])` | `the page should log no error containing "…"` |
+| `no_failed_requests` | responses ≥ 400 and failed requests collected, then `toEqual([])` | `no request to "…" should fail` |
+| `link_ok` | `page.request.get(href)`, status < 400 | `the link "…" should work` |
+| `no_a11y_violations` | `@axe-core/playwright`: `new AxeBuilder({ page }).withRules([…])` | `the page should not break the accessibility rule "…"` |
 
-Sans sélecteur (`I should see "…"`), `text_contains` vérifie tout le texte de la page, dans `body`, au
-rejeu comme à l'export ; en échec, il en donne un extrait plutôt que la page entière.
+Without a selector (`I should see "…"`), `text_contains` checks the whole text of the page, in
+`body`, on a replay as in the export; when it fails, it gives an excerpt of it rather than the
+whole page.
 
-Pour `attribute_equals`, l'attribut `value` d'un champ est ce qu'il contient au moment du contrôle,
-comme le lit `toHaveValue` : l'attribut HTML n'est que la valeur de départ (absent d'un champ rempli
-par le test).
+For `attribute_equals`, the `value` attribute of a field is what it holds when it is checked, as
+`toHaveValue` reads it: the HTML attribute is only the starting value (absent from a field the
+test filled).
 
-#### Champs nommés par leur label à l'export
+#### Fields named by their label on export
 
-Les phrases qui nomment un champ par son label (voir *Champs particuliers*) se rejouent et
-s'exportent sans sélecteur :
+The phrases that name a field by its label (see *Special fields*) replay and export without a
+selector:
 
-| Gherkin | Étape | Playwright |
+| Gherkin | Step | Playwright |
 | :--- | :--- | :--- |
 | `When I fill the field "Email" with "…"` | `fill { label, value }` | `page.getByLabel('Email', { exact: true }).or(page.getByPlaceholder('Email', { exact: true })).locator('visible=true').first().fill(…)` |
-| `When I select "…" in the field "Subject"` | `select { value, label }` | la même cible, `.selectOption(…)` |
+| `When I select "…" in the field "Subject"` | `select { value, label }` | the same target, `.selectOption(…)` |
 | `When I check the field "Remember me"` / `I uncheck the field "…"` | `click { label, checked }` | `page.locator('label:text-is("Remember me")').or(page.getByLabel('Remember me', { exact: true })).locator('visible=true').first().check()` / `.uncheck()` |
 
-Le code trouve le champ que trouve le rejeu : par son label ou son placeholder, le premier visible.
-`getByLabel` seul échouait sur le mode strict de Playwright dès que deux champs portent le même
-label (le login et le contact du Test Arena ont chacun un « Email »), et sur un doublon caché (le
-champ de recherche du menu mobile). Une case passe par son `<label>` quand la page la dessine
-elle-même : `check()` sur l'input invisible attend jusqu'au timeout, et sur le label, Playwright
-lit l'état de la case qu'il nomme. En `playwright-cucumber`, le `.feature` garde les phrases telles
-quelles et `default.steps.js` les définit avec deux fonctions qui font la même chose, `field()` et
-`box()`. Une étape enregistrée avec un sélecteur le garde : le label ne sert qu'à une étape qui n'a
-rien d'autre.
+The code finds the field the replay finds: by its label or its placeholder, the first visible
+one. `getByLabel` alone failed on Playwright's strict mode as soon as two fields have the same
+label (the Test Arena's login and its contact form each have an "Email"), and on a hidden
+duplicate (the search field of the mobile menu). A box goes through its `<label>` when the page
+draws it itself: `check()` on the invisible input waits until the timeout, and on the label,
+Playwright reads the state of the box it names. In `playwright-cucumber`, the `.feature` keeps the
+phrases as they are and `default.steps.js` defines them with two functions that do the same thing,
+`field()` and `box()`. A step recorded with a selector keeps it: the label is only used by a step
+that has nothing else.
 
-#### Cases à cocher
+#### Checkboxes
 
-Un clic sur une case à cocher, un bouton radio ou un interrupteur (`role="switch"`), ou sur son
-`<label>`, est enregistré avec l'état où il l'a laissée : `{ "selector": "…", "checked": true }`.
-Rejouer un simple clic inverserait la case quel que soit son état : une case déjà cochée au départ
-(préférence mémorisée, case cochée par défaut) finirait décochée, et le test passerait quand même.
-Avec l'état enregistré :
+A click on a checkbox, a radio button or a switch (`role="switch"`), or on its `<label>`, is
+recorded with the state it left it in: `{ "selector": "…", "checked": true }`. Replaying a plain
+click would toggle the box whatever its state: a box already checked at the start (a remembered
+preference, a box checked by default) would end up unchecked, and the test would pass anyway.
+With the recorded state:
 
-- **`run_test`** ne clique pas si la case est déjà dans l'état voulu (« already checked: not
-  clicked » dans le résultat de l'étape) ;
-- **`playwright-plain`** et les étapes métier génèrent `.check()` ou `.uncheck()`, qui laissent la
-  case dans l'état voulu, label compris : `page.locator('label', { hasText: 'Jardin' }).check()` ;
-- **Gherkin** : `When I check "…"`, `When I uncheck "…"` ; sans sélecteur, par le label de la case :
-  `When I check the field "Remember me"`, `When I uncheck the field "…"` ;
-- **Variable** : `add_test_variable({ test_name, step, param: "checked", name: "jardin" })` fait de
-  l'état une variable (`"true"` ou `"false"`) : `When I set "…" checked to "{{jardin}}"` dans
-  l'onglet Gherkin, `setChecked(…)` dans le code généré.
+- **`run_test`** does not click if the box is already in the wanted state ("already checked: not
+  clicked" in the step's result);
+- **`playwright-plain`** and business steps generate `.check()` or `.uncheck()`, which leave the
+  box in the wanted state, label included: `page.locator('label', { hasText: 'Jardin' }).check()`;
+- **Gherkin**: `When I check "…"`, `When I uncheck "…"`; without a selector, by the box's label:
+  `When I check the field "Remember me"`, `When I uncheck the field "…"`;
+- **Variable**: `add_test_variable({ test_name, step, param: "checked", name: "jardin" })` makes
+  the state a variable (`"true"` or `"false"`): `When I set "…" checked to "{{jardin}}"` in the
+  *Gherkin* tab, `setChecked(…)` in the generated code.
 
-Un interrupteur dessiné en CSS cache souvent la vraie case (`opacity: 0`, taille nulle) derrière son
-`<label>`, avec son texte à côté (`<label class="toggle"><input …></label> Dark mode`). La snapshot le
-liste quand même, nommé par ce texte (`[checkbox] "Dark mode" [checked]`) ; un clic sur sa ref va au
-label, le résultat le signale (`viaLabel`) et le code généré passe aussi par lui :
-`page.locator('label', { has: page.locator('input[name="darkMode"]') }).uncheck()`. Un `<label for>`
-séparé de la case est noté aussi (`labelFor`, l'id de la case) : le code vise alors ce label,
-`page.check('label[for="notif"]')`, ou le label par son texte si l'id est généré.
+A switch drawn in CSS often hides the real box (`opacity: 0`, no size) behind its `<label>`, with
+its text beside it (`<label class="toggle"><input …></label> Dark mode`). The snapshot lists it
+anyway, named by that text (`[checkbox] "Dark mode" [checked]`); a click on its ref goes to the
+label, the result reports it (`viaLabel`) and the generated code goes through it too:
+`page.locator('label', { has: page.locator('input[name="darkMode"]') }).uncheck()`. A `<label for>`
+apart from the box is noted too (`labelFor`, the box's id): the code then aims at that label,
+`page.check('label[for="notif"]')`, or at the label by its text if the id is generated.
 
-Une case cochée fait souvent aussi partie d'un groupe (les critères d'une recherche) : la détection
-de variables en fait alors une variable de liste, qui choisit *quelle* case ; l'état reste celui
-enregistré.
+A checked box is often part of a group too (the criteria of a search): variable detection then
+makes it a list variable, which picks *which* box; the state stays the recorded one.
 
-### Valeurs calculées
+### Computed values
 
-Une variable, ou une étape, peut contenir une expression entre `{{ }}`, calculée par le serveur à
-chaque exécution (`lib/values.js`), une seule fois : la date saisie à l'étape 3 est celle que vérifie
-l'assertion de l'étape 9, et la valeur retenue est enregistrée avec l'exécution.
+A variable, or a step, can hold an expression between `{{ }}`, computed by the server at each run
+(`lib/values.js`), once only: the date typed at step 3 is the one the assertion of step 9 checks, and
+the value used is saved with the run.
 
-| Écrit | Donne (le 3 novembre 2026, projet en français) |
+| Written | Gives (on 3 November 2026, project in French) |
 | :--- | :--- |
 | `{{today}}`, `{{tomorrow}}`, `{{yesterday}}` | `2026-11-03`, `2026-11-04`, `2026-11-02` |
-| `{{today + 3 days \| dd/MM/yyyy}}` | `06/11/2026` (aussi `jours`, `weeks`/`semaines`, `months`/`mois`, `years`/`ans`) |
-| `{{tomorrow \| EEEE d MMMM}}` | `mercredi 4 novembre` (noms dans la langue des tests du projet) |
+| `{{today + 3 days \| dd/MM/yyyy}}` | `06/11/2026` (also `jours`, `weeks`/`semaines`, `months`/`mois`, `years`/`ans`) |
+| `{{tomorrow \| EEEE d MMMM}}` | `mercredi 4 novembre` (names in the language of the project's tests) |
 | `{{now \| HH:mm}}`, `{{now + 30 minutes}}` | `14:05`, `2026-11-03 14:35` |
-| `user-{{unique}}@example.com` | `user-lk7lajgdr@example.com` (le même jeton dans toute l'exécution) |
-| `{{uuid}}`, `{{timestamp}}`, `{{random(1000, 9999)}}` | un UUID, l'heure en ms, un entier entre les bornes |
-| `{{round(price * 1.2, 2)}}`, `{{price * qty \| 0,00}}` | un calcul avec d'autres variables, formaté |
+| `user-{{unique}}@example.com` | `user-lk7lajgdr@example.com` (the same token throughout the run) |
+| `{{uuid}}`, `{{timestamp}}`, `{{random(1000, 9999)}}` | a UUID, the time in ms, an integer between the bounds |
+| `{{round(price * 1.2, 2)}}`, `{{price * qty \| 0,00}}` | a calculation with other variables, formatted |
 
-Un nombre se lit comme la page l'écrit : un prix gardé par `capture_value` (« 6,42 € », « €19.26 »,
-« 1 234,56 € », « $1,234.56 », « 12 % ») se calcule. Le séparateur décimal est le dernier de `.` et
-`,` quand il y a les deux ; une virgule seule en est un (« 6,42 »), sauf devant trois chiffres en
-anglais (« 1,234 » vaut 1234). Les espaces ne comptent qu'entre groupes de trois chiffres
-(« 06 12 34 56 78 » n'est pas un nombre). Le total de 3 fois un produit à « 6,42 € » se vérifie par
-`text_contains` `{{prix * 3 | 0,00}}`, soit « 19,26 ».
+A number is read as the page writes it: a price kept by `capture_value` ("6,42 €", "€19.26",
+"1 234,56 €", "$1,234.56", "12 %") can be used in a calculation. The decimal separator is the last of
+`.` and `,` when both are there; a comma alone is one ("6,42"), except before three digits in English
+("1,234" is 1234). Spaces count only between groups of three digits ("06 12 34 56 78" is not a
+number). The total of 3 times a product at "6,42 €" is checked with `text_contains`
+`{{price * 3 | 0,00}}`, that is "19,26".
 
-Une variable peut en utiliser d'autres (`{{price * quantity}}`). Un `{{nom}}` qui n'est pas une variable
-reste tel quel, comme avant ; une expression qui ne se calcule pas (`{{today + 3 dayz}}`) arrête
-l'exécution avant le navigateur, en disant laquelle et pourquoi. Une valeur passée à `run_test` peut
-être une expression elle aussi.
+A variable can use others (`{{price * quantity}}`). A `{{name}}` that is not a variable stays as it
+is, as before; an expression that cannot be computed (`{{today + 3 dayz}}`) stops the run before the
+browser, saying which one and why. A value passed to `run_test` can be an expression too.
 
-- **Dans l'onglet Data**, une valeur avec une expression montre ce qu'elle donnerait maintenant, ou
-  l'erreur (`POST /api/values/preview`).
-- **`add_test_variable`** prend `default_value` : la variable vaut alors l'expression au lieu de la
-  valeur enregistrée (`user-{{unique}}@example.com` pour une inscription rejouable).
-- **L'agent qui enregistre** est invité à le faire pour une date ou une valeur qui doit changer à
-  chaque passage.
-- **Le code exporté** calcule les valeurs avec le même fichier : `tests/izitest-values.js` pour
-  Playwright, `features/support/values.js` pour Cucumber, où chaque step résout ses arguments
-  (`this.values(...)`) et les colonnes de l'Outline gardent l'expression.
+- **In the *Data* tab**, a value with an expression shows what it would give now, or the error
+  (`POST /api/values/preview`).
+- **`add_test_variable`** takes `default_value`: the variable is then worth the expression instead of
+  the recorded value (`user-{{unique}}@example.com` for a sign-up that can be replayed).
+- **The agent that records** is asked to do so for a date or a value that must change at each
+  run.
+- **The exported code** computes the values with the same file: `tests/izitest-values.js` for
+  Playwright, `features/support/values.js` for Cucumber, where each step resolves its arguments
+  (`this.values(...)`) and the columns of the Outline keep the expression.
 
 
-### Jeux de données
+### Datasets
 
-Un projet a des jeux de données (`lib/datasets.js`) : des tables de valeurs, déposées depuis un CSV
-(`,` `;` ou tabulation), une liste JSON ou la première feuille d'un Excel `.xlsx`, leur première ligne
-nommant les colonnes. Chaque colonne devient un nom de variable (`E-mail` → `e_mail`), chaque valeur un
-texte ; le nom du jeu est celui du fichier (`users.csv` → `users`), et un fichier du même nom le remplace.
-2 000 lignes au plus, 5 Mo.
+A project has datasets (`lib/datasets.js`): tables of values, uploaded from a CSV (`,` `;` or tab), a
+JSON list or the first sheet of an Excel `.xlsx`, their first row naming the columns. Each column
+becomes a variable name (`E-mail` → `e_mail`), each value a text; the dataset's name is the file's
+(`users.csv` → `users`), and a file of the same name replaces it. 2,000 rows at most, 5 MB.
 
-- **Un test lié à un jeu** (onglet Data, ou `bind_dataset`) joue une ligne par exécution : ses colonnes
-  sont des variables de l'exécution, par-dessus les valeurs par défaut du test (une valeur passée à
-  l'exécution passe devant). Lancé (Run, `run_test`), il joue toutes les lignes l'une après l'autre ;
-  une seule si on la choisit (« Rows » dans les options de Run, `run_test(row)`) ; chaque exécution note
-  laquelle, et ses valeurs. Lié à un jeu, un test joue les lignes du jeu, pas les siennes (voir Test data
-  plus bas) : les siennes restent pour quand il sera délié.
-- **Une campagne** joue toutes les lignes d'un test lié, chacune à part : `login [row 2]` dans les
-  résultats, les rapports JUnit et HTML, les régressions. Une exigence voit son test échouer si une
-  ligne échoue. « Run every row as a campaign » dans les options de Run lance la campagne de ce seul test.
-- **Une expression** lit une valeur d'un jeu du projet : `{{users[2].email}}`, lignes numérotées à
-  partir de 1, dans n'importe quel test.
-- **L'export** emporte les jeux utilisés : en Playwright, un test par ligne (`for … of
-  DATASETS['users']`) ; en Cucumber, une ligne d'`Examples` par ligne du jeu, et
-  `features/support/datasets.js` pour les expressions.
-- **L'agent IA qui crée un test** (« Create Test with AI ») reçoit les jeux du projet dans sa consigne :
-  colonnes, nombre de lignes, première ligne (la valeur d'une colonne de mot de passe, de clé ou de
-  code est montrée `(hidden)`). Il prend une valeur d'un jeu plutôt que d'en inventer une.
-  Pour une valeur, il tape `{{users[1].email}}`. Pour un test à jouer avec chaque ligne (« pour chaque
-  utilisateur »), il passe `project_id` et `dataset: "users"` à `start_recording` et tape `{{email}}`,
-  `{{password}}`. L'agent du chat, lui, les écrit dans le Gherkin, puis lie le test avec `bind_dataset`.
-- **Pendant l'enregistrement**, `start_recording(project_id)` fait lire les jeux du projet :
-  `{{users[2].email}}` tape la valeur de la ligne 2. Avec `dataset`, `{{email}}` tape celle de la ligne 1 du
-  jeu ; la réponse de `start_recording` dit quoi taper, ou liste les jeux du projet sans `dataset`.
-- **À `stop_recording`**, le test est rangé dans le projet et lié au jeu joué. Une valeur de la ligne 1,
-  écrite `{{email}}` ou tapée telle quelle (3 caractères ou plus), devient la variable de sa colonne,
-  sa valeur par défaut celle de la ligne 1. Un autre champ du même nom qu'une colonne prend un autre
-  nom (`name_2`), pour que la ligne ne le remplace pas.
-- **`add_assertion` sur un test lié** relie aussi l'attendu aux colonnes du jeu, même non tapées :
-  « Welcome Bob », Bob étant le `name` de la ligne 1, est gardé « Welcome {{name}} » et vérifie « Ann »
-  sur la ligne 2. Une colonne nommée dans l'attendu, reliée ainsi ou écrite `{{name}}` par l'agent, devient
-  une variable du test (valeur de la ligne 1) : délié du jeu, le test vérifie encore la ligne 1.
+- **A test bound to a dataset** (*Data* tab, or `bind_dataset`) plays one row per run: its columns
+  are variables of the run, over the test's default values (a value passed to the run comes
+  first). Started (*Run*, `run_test`), it plays every row one after the other; only one if it is
+  chosen (*Rows* in the *Run options*, `run_test(row)`); each run notes which one, and its values.
+  Bound to a dataset, a test plays the dataset's rows, not its own (see Test data below): its own are
+  kept for when it is unbound.
+- **A campaign** plays every row of a bound test, each on its own: `login [row 2]` in the results,
+  the JUnit and HTML reports, the regressions. A requirement sees its test fail if one row fails.
+  *Run every row as a campaign* in the *Run options* starts the campaign of that test alone.
+- **An expression** reads a value of one of the project's datasets: `{{users[2].email}}`, rows
+  numbered from 1, in any test.
+- **The export** takes the datasets used with it: in Playwright, a test per row
+  (`for … of DATASETS['users']`); in Cucumber, an `Examples` line per row of the dataset, and
+  `features/support/datasets.js` for the expressions.
+- **The AI agent that creates a test** (*Create test with AI*) gets the project's datasets in its
+  instructions: columns, number of rows, first row (the value of a password, key or code column is
+  shown as `(hidden)`). It takes a value from a dataset rather than making one up.
+  For one value, it types `{{users[1].email}}`. For a test to play with each row ("for each user"),
+  it passes `project_id` and `dataset: "users"` to `start_recording` and types `{{email}}`,
+  `{{password}}`. The chat agent, for its part, writes them in the Gherkin, then binds the test with
+  `bind_dataset`.
+- **While recording**, `start_recording(project_id)` lets the project's datasets be read:
+  `{{users[2].email}}` types the value of row 2. With `dataset`, `{{email}}` types that of row 1 of the
+  dataset; the answer of `start_recording` says what to type, or lists the project's datasets without
+  `dataset`.
+- **At `stop_recording`**, the test is put in the project and bound to the dataset played. A value of
+  row 1, written `{{email}}` or typed as it is (3 characters or more), becomes the variable of its
+  column, its default value that of row 1. Another field with the same name as a column gets another
+  name (`name_2`), so that the row does not replace it.
+- **`add_assertion` on a bound test** also links the expected value to the dataset's columns, even
+  those not typed: "Welcome Bob", Bob being the `name` of row 1, is kept as "Welcome {{name}}" and
+  checks "Ann" on row 2. A column named in the expected value, linked this way or written `{{name}}`
+  by the agent, becomes a variable of the test (value of row 1): unbound from the dataset, the test
+  still checks row 1.
 
-| Route ou outil | Rôle |
+| Route or tool | Role |
 | :--- | :--- |
-| `GET /api/projects/:id/datasets` | Les jeux du projet : colonnes, nombre de lignes, tests liés |
-| `POST /api/projects/:id/datasets` | Dépose un fichier (`filename`, `content` texte ou `content_base64` pour un Excel) ou des lignes (`name`, `rows`) |
-| `GET /api/datasets/:id`, `DELETE /api/datasets/:id` | Un jeu avec ses lignes ; sa suppression (les tests liés jouent alors une seule fois) |
-| `PUT /api/tests/:name/dataset` | Lie un test à un jeu (`{ dataset: id ou nom }`) ou le délie (`null`) |
+| `GET /api/projects/:id/datasets` | The project's datasets: columns, number of rows, bound tests |
+| `POST /api/projects/:id/datasets` | Uploads a file (`filename`, `content` as text or `content_base64` for an Excel) or rows (`name`, `rows`) |
+| `GET /api/datasets/:id`, `DELETE /api/datasets/:id` | A dataset with its rows; its deletion (the bound tests then play once only) |
+| `PUT /api/tests/:name/dataset` | Binds a test to a dataset (`{ dataset: id or name }`) or unbinds it (`null`) |
 | `PUT /api/tests/:name/rows` | The rows of the test's own (`{ rows: [{ variable: value }] }`, `[]` for none) — see Test data below |
-| `save_dataset`, `bind_dataset` | Les mêmes, pour un agent (CSV en texte ou lignes) ; `get_project_context` liste les jeux, avec leur première ligne (un mot de passe masqué) |
-| `start_recording(project_id, dataset)` | Enregistre un test qui joue un jeu : `{{email}}` tape la ligne 1, le test est lié au jeu à `stop_recording` |
+| `save_dataset`, `bind_dataset` | The same, for an agent (CSV as text or rows); `get_project_context` lists the datasets, with their first row (a password masked) |
+| `start_recording(project_id, dataset)` | Records a test that plays a dataset: `{{email}}` types row 1, the test is bound to the dataset at `stop_recording` |
 
 ### Test data: the rows of a test
 
@@ -1148,1038 +1146,1053 @@ own are kept for when it is unbound.
 | `GET /api/tests/:name/last-run` | How it last did, every row counted: `{ status, started_at, rows: { total, played, failed } }`; `GET /api/tests` gives `last_status` the same way, with `last_rows` |
 | `save_test_rows` | The same, for an agent |
 
-### Secrets : ce qu'un test tape sans que personne le lise
+### Secrets: what a test types without anyone reading it
 
-**Un mot de passe tapé en clair pendant un enregistrement** devient un secret du projet : dans un
-champ `type="password"`, la valeur est rangée sous le nom du champ (`MOT_DE_PASSE`, puis
-`MOT_DE_PASSE_2` pour une autre valeur) et le test garde `{{secret.MOT_DE_PASSE}}`. L'agent en est
-prévenu. Sans `project_id` à `start_recording`, il est prévenu que le mot de passe reste en clair.
+**A password typed in plain during a recording** becomes a secret of the project: in a
+`type="password"` field, the value is kept under the field's name (`MOT_DE_PASSE`, then
+`MOT_DE_PASSE_2` for another value) and the test keeps `{{secret.MOT_DE_PASSE}}`. The agent is
+told so. Without `project_id` at `start_recording`, it is told that the password stays in plain.
 
-Un mot de passe, une clé d'API, un jeton : un projet les garde dans ses secrets (`lib/secrets.js`),
-et un test les écrit `{{secret.NOM}}`. IziTest tape la valeur ; personne ne la relit, ni l'agent qui
-enregistre le test, ni le tableau de bord.
+A password, an API key, a token: a project keeps them in its secrets (`lib/secrets.js`), and a test
+writes them `{{secret.NAME}}`. IziTest types the value; nobody reads it back, neither the agent that
+records the test nor the dashboard.
 
-- **Où** : *Projects → Edit → Secrets*. Un nom (`TIIME_PASSWORD` : lettres, chiffres, `_`), une valeur,
-  et ce à quoi il sert (l'agent lit cette description). Une fois enregistrée, une valeur se remplace,
-  elle ne s'affiche plus jamais.
-- **Gardés chiffrés** (AES-256-GCM), avec une clé de la machine hors de la base :
-  `IZITEST_SECRET_KEY`, ou `~/.izitest/secret.key`, créée au premier secret (lisible par l'utilisateur
-  seul). Une base copiée sur une autre machine n'en livre aucun.
-- **Tapés au dernier moment**, par le serveur, juste avant que l'extension saisisse : pendant
-  l'enregistrement (`start_recording` avec `project_id`) comme à chaque exécution. Le test garde la
-  référence : à `stop_recording`, elle devient la valeur par défaut d'une variable
-  (`{{password}}` = `{{secret.TIIME_PASSWORD}}`). Une colonne d'un jeu de données peut en contenir une
-  (un mot de passe par utilisateur).
-- **Donnés seulement à ce qui agit.** À l'exécution, la valeur n'entre que dans ce que le navigateur
-  utilise pour agir : ce qu'une étape tape, cherche (`params`, `locators`) ou vérifie (`assertion`).
-  **Le libellé d'une étape garde la référence**, que le secret y soit écrit
-  (`je me connecte avec le mot de passe "{{secret.TIIME_PASSWORD}}"`) ou qu'il y arrive par une
-  variable (`{{password}}`) : c'est lui que le bandeau de l'exécution affiche dans la page testée — donc
-  dans la vidéo de l'exécution — et que l'exécution garde (`execution_steps.intent`). Les autres
-  valeurs du libellé (une variable, `{{today}}`) y sont calculées comme avant. Un secret se tape tel
-  quel : on ne calcule pas avec (`{{secret.PIN * 2}}` est refusé avant que le navigateur s'ouvre) ; ce
-  qui l'entoure s'écrit hors des accolades (`{{secret.PREFIX}}-x`).
-- **Jamais redits.** Partout où une valeur sortirait du serveur, sa référence la remplace
-  (`redact`) : la réponse de chaque outil à un agent (une page qui affiche ce qu'on a tapé, une erreur),
-  les logs, les variables, les erreurs, le localisateur utilisé et le diagnostic gardés d'une exécution
-  (et les réparations, le bug qui en sortent), l'erreur du bandeau en fin d'exécution, ce que le tableau
-  de bord en reçoit, ce qu'un connecteur envoie (résultats d'une campagne, bug).
-  Une valeur de moins de 4 caractères n'est pas reconnue ainsi — le libellé d'une étape, lui, ne la
-  reçoit jamais.
-- **Ce qui la voit quand même** : la page testée, où elle est tapée (un champ mot de passe la masque,
-  un champ e-mail l'affiche, la vidéo aussi), et la console de l'extension dans le navigateur qui joue
-  le test, qui écrit les paramètres de chaque commande — elle n'est gardée nulle part.
-- **Le snapshot masque les champs mot de passe** : `value="••••••"` dit qu'il est rempli, pas avec quoi.
-  Une colonne de jeu de données nommée comme un mot de passe, une clé ou un code (`password`,
-  `token`, `api_key`…) est montrée `(hidden)` à un agent.
-- **Ce que l'agent en sait** : leurs noms et descriptions, dans sa consigne et dans
-  `get_project_context` (`secrets`). Un secret qui manque au projet est signalé
-  (`no secret named "X"`) ; hors d'un enregistrement de projet, aucun secret n'est lu.
-- **En CI**, `IZITEST_SECRET_<NOM>` dans l'environnement du serveur remplace la valeur gardée (le
-  tableau de bord le signale : *from the environment*).
-- **À l'export Playwright**, un secret est la variable d'environnement du même nom
-  (`process.env.TIIME_PASSWORD`) : sa valeur n'est jamais écrite dans le code.
+- **Where**: *Projects → Edit → Secrets*. A name (`TIIME_PASSWORD`: letters, digits, `_`), a value,
+  and what it is for (the agent reads this description). Once saved, a value can be replaced; it is
+  never shown again.
+- **Kept encrypted** (AES-256-GCM), with a key of the machine outside the database:
+  `IZITEST_SECRET_KEY`, or `~/.izitest/secret.key`, created with the first secret (readable by the
+  user alone). A database copied to another machine gives none of them away.
+- **Typed at the last moment**, by the server, just before the extension types: during the
+  recording (`start_recording` with `project_id`) as at each run. The test keeps the
+  reference: at `stop_recording`, it becomes the default value of a variable
+  (`{{password}}` = `{{secret.TIIME_PASSWORD}}`). A column of a dataset can hold one
+  (a password per user).
+- **Given only to what acts.** At a run, the value only goes into what the browser uses to act:
+  what a step types, looks for (`params`, `locators`) or checks (`assertion`).
+  **A step's label keeps the reference**, whether the secret is written in it
+  (`I log in with the password "{{secret.TIIME_PASSWORD}}"`) or gets there through a
+  variable (`{{password}}`): the label is what the run's bar shows in the tested page — and so
+  in the run's video — and what the run keeps (`execution_steps.intent`). The label's other
+  values (a variable, `{{today}}`) are computed in it as before. A secret is typed as it is:
+  nothing is computed with it (`{{secret.PIN * 2}}` is refused before the browser opens); what
+  surrounds it is written outside the braces (`{{secret.PREFIX}}-x`).
+- **Never sent back.** Wherever a value would leave the server, its reference replaces it
+  (`redact`): each tool's answer to an agent (a page that shows what was typed, an error),
+  the logs, the variables, the errors, the locator used and the diagnosis kept of a run
+  (and the repairs, the bug that come out of it), the error of the bar at the end of a run, what the
+  dashboard receives of it, what a connector sends (a campaign's results, a bug).
+  A value of fewer than 4 characters is not caught this way — a step's label, for its part, never
+  receives it.
+- **What sees it all the same**: the tested page, where it is typed (a password field masks it,
+  an email field shows it, the video too), and the console of the extension in the browser that plays
+  the test, which writes the parameters of each command — it is kept nowhere.
+- **The snapshot masks password fields**: `value="••••••"` says it is filled, not with what.
+  A dataset column named like a password, a key or a code (`password`,
+  `token`, `api_key`…) is shown as `(hidden)` to an agent.
+- **What the agent knows of them**: their names and descriptions, in its instructions and in
+  `get_project_context` (`secrets`). A secret the project lacks is reported
+  (`no secret named "X"`); outside the recording of a project, no secret is read.
+- **In CI**, `IZITEST_SECRET_<NAME>` in the server's environment replaces the stored value (the
+  dashboard says so: *from the environment*).
+- **At the Playwright export**, a secret is the environment variable of the same name
+  (`process.env.TIIME_PASSWORD`): its value is never written in the code.
 
-| Route ou outil | Rôle |
+| Route or tool | Role |
 | :--- | :--- |
-| `GET /api/projects/:id/secrets` | Les secrets du projet : nom, description, date, `from_environment`. Jamais une valeur |
-| `PUT /api/projects/:id/secrets/:name` | Ajoute ou remplace (`value`, `description`) ; sans `value`, la valeur gardée reste |
-| `DELETE /api/projects/:id/secrets/:name` | Le supprime : les tests qui le tapent échoueront |
+| `GET /api/projects/:id/secrets` | The project's secrets: name, description, date, `from_environment`. Never a value |
+| `PUT /api/projects/:id/secrets/:name` | Adds or replaces (`value`, `description`); without `value`, the stored value stays |
+| `DELETE /api/projects/:id/secrets/:name` | Deletes it: the tests that type it will fail |
 
-### `ask_user` : l'agent demande ce qu'il lui manque
+### `ask_user`: the agent asks for what it lacks
 
-Un test a besoin d'une valeur que ni la description, ni les jeux de données, ni les secrets ne
-donnent : un compte pour se connecter, son mot de passe, un code. L'agent ne l'invente pas et ne la
-demande pas dans sa réponse : il appelle `ask_user` et attend. La personne qui l'a lancé répond dans
-le tableau de bord, jamais dans la conversation de l'agent, où il lirait un mot de passe.
+A test needs a value that neither the description, nor the datasets, nor the secrets give: an
+account to log in with, its password, a code. The agent does not make it up and does not ask for it
+in its reply: it calls `ask_user` and waits. The person who started it answers in the dashboard,
+never in the agent's conversation, where it would read a password.
 
 ```
 ask_user({
-  why: "Pour se connecter à Tiime avec le compte de test",
+  why: "To log in to Tiime with the test account",
   fields: [
-    { name: "email", label: "E-mail du compte de test" },
-    { name: "TIIME_PASSWORD", label: "Son mot de passe", secret: true }
+    { name: "email", label: "Email of the test account" },
+    { name: "TIIME_PASSWORD", label: "Its password", secret: true }
   ]
 })
 ```
 
-- **Un champ `secret: true`** (mot de passe, clé, jeton, code) est gardé dans les secrets du projet, sa
-  description étant son libellé. L'agent reçoit sa référence, `{{secret.TIIME_PASSWORD}}`, à taper.
-  Un autre champ lui revient avec sa valeur.
-- **Le projet** est celui du test enregistré (`start_recording(project_id)`), ou `project_id`. Un
-  secret demandé sans projet est refusé.
-- **Où répondre** : à côté du navigateur de l'agent, dans la fenêtre *Create test with AI* qui l'a
-  lancé. Une question qu'aucune fenêtre n'affiche (celle d'un agent lancé ailleurs, Claude Code par
-  exemple, ou d'une fenêtre fermée pendant que l'agent travaille) apparaît en bas à droite de toutes
-  les pages. *Don't give* la refuse.
-- **L'attente** : un appel attend `IZITEST_ASK_WAIT_MS` (45 s) au plus, sous la limite d'un client MCP.
-  Sans réponse, il le dit, et l'agent rappelle `ask_user({ request_id })`. L'agent du tableau de bord,
-  lui, attend la réponse dans le même appel.
-- **Sans réponse** après `IZITEST_ASK_TIMEOUT_MS` (15 min), refusée, ou quand l'exécution de l'agent
-  s'arrête, l'agent est prié d'arrêter : fermer sa fenêtre, ne rien enregistrer, dire ce qu'il manque.
+- **A `secret: true` field** (password, key, token, code) is kept in the project's secrets, its
+  description being its label. The agent gets its reference, `{{secret.TIIME_PASSWORD}}`, to type.
+  Any other field comes back to it with its value.
+- **The project** is that of the test being recorded (`start_recording(project_id)`), or
+  `project_id`. A secret asked for without a project is refused.
+- **Where to answer**: beside the agent's browser, in the *Create test with AI* window that started
+  it. A question no window shows (that of an agent started elsewhere, Claude Code for
+  instance, or of a window closed while the agent works) appears at the bottom right of every
+  page. *Don't give* refuses it.
+- **The wait**: a call waits `IZITEST_ASK_WAIT_MS` (45 s) at most, under the limit of an MCP client.
+  Without an answer, it says so, and the agent calls `ask_user({ request_id })` again. The dashboard's
+  agent, for its part, waits for the answer in the same call.
+- **Without an answer** after `IZITEST_ASK_TIMEOUT_MS` (15 min), refused, or when the agent's run
+  stops, the agent is asked to stop: close its window, save nothing, say what is missing.
 
-| Route | Rôle |
+| Route | Role |
 | :--- | :--- |
-| `GET /api/asks` | Les questions en attente : raison, champs, projet, exécution |
-| `POST /api/asks/:id/answer` | Répond : `{ values: { nom: valeur } }`, tous les champs |
-| `POST /api/asks/:id/cancel` | Refuse : l'agent s'arrête |
+| `GET /api/asks` | The questions waiting: reason, fields, project, run |
+| `POST /api/asks/:id/answer` | Answers: `{ values: { name: value } }`, every field |
+| `POST /api/asks/:id/cancel` | Refuses: the agent stops |
 
-L'agent de « Create Test with AI » lancé en CLI a droit à `ask_user` et `get_project_context`. L'agent du
-chat, qui parle à l'utilisateur, ne demande pas de mot de passe dans la conversation : il l'envoie
-l'ajouter aux secrets du projet, puis écrit `{{secret.NOM}}`.
+The *Create test with AI* agent started as a CLI may use `ask_user` and `get_project_context`. The
+chat agent, which talks to the user, does not ask for a password in the conversation: it sends the
+user to add it to the project's secrets, then writes `{{secret.NAME}}`.
 
-### Étapes serveur : garder une valeur, appeler une API
+### Server steps: keeping a value, calling an API
 
-Deux sortes d'étapes s'exécutent sur le serveur, entre celles que joue le navigateur
-(`lib/server-steps.js`) :
+Two kinds of steps run on the server, between those the browser plays
+(`lib/server-steps.js`):
 
-- **`capture`** garde une valeur comme variable pour les étapes suivantes, écrite `{{nom}}` : le texte,
-  la valeur ou un attribut d'un élément, l'URL ou le titre de la page, une valeur de la dernière
-  réponse d'API (`what: "response"`, `path: "data.items[0].id"`), ou une valeur de la réponse à une
-  requête que la page a faite (`what: "request"`, `url: "/api/orders"`, `method`, `path: "id"`) — l'id
-  qu'un clic sur « Acheter » a reçu sans l'afficher. Un motif (expression régulière) n'en garde qu'une
-  partie, son premier groupe : `#(\d+)` garde `4521` de « Commande #4521 ».
+- **`capture`** keeps a value as a variable for the steps after it, written `{{name}}`: the text,
+  the value or an attribute of an element, the URL or the title of the page, a value of the last
+  API response (`what: "response"`, `path: "data.items[0].id"`), or a value of the response to a
+  request the page made (`what: "request"`, `url: "/api/orders"`, `method`, `path: "id"`) — the id
+  a click on "Buy" received without showing it. A pattern (a regular expression) keeps only a
+  part of it, its first group: `#(\d+)` keeps `4521` of "Order #4521".
 
-  Pour une requête de la page, la capture prend la dernière dont l'URL contient `url`, faite depuis
-  l'étape d'avant ; si la page ne l'a pas encore reçue, elle l'attend jusqu'à 10 s, sinon elle prend la
-  dernière d'avant. L'extension écoute le réseau de chaque onglet qu'elle pilote dès qu'elle le prend
-  en main.
-- **`http`** appelle une API pour préparer les données (créer un utilisateur, une commande), avec les
-  valeurs du test dans l'URL, les en-têtes et le corps. L'étape échoue sur un statut autre que 2xx, ou
-  que `expect_status`. Sa réponse est lue par les captures qui suivent.
+  For a request of the page, the capture takes the last one whose URL contains `url`, made since
+  the step before; if the page has not received it yet, it waits for it up to 10 s, otherwise it takes
+  the last one from before. The extension listens to the network of each tab it drives as soon as it
+  takes control of it.
+- **`http`** calls an API to prepare the data (create a user, an order), with the
+  test's values in the URL, the headers and the body. The step fails on a status other than 2xx, or
+  than `expect_status`. Its response is read by the captures that follow.
 
-Un test qui en contient est joué par segments : le navigateur joue les étapes jusqu'à la prochaine
-étape serveur, le serveur l'exécute, puis le segment suivant part dans le même onglet avec les valeurs
-gardées. Les assertions voient les valeurs gardées avant elles. Une étape serveur qui échoue arrête
-l'exécution là. Le mode debug les exécute aussi, pas à pas. Les tests sans étape serveur sont joués
-comme avant, en un seul envoi, sauf une assertion suivie d'actions, vérifiée à sa place.
+A test that holds some is played in segments: the browser plays the steps up to the next
+server step, the server runs it, then the next segment starts in the same tab with the values
+kept. Assertions see the values kept before them. A server step that fails stops
+the run there. Debug mode runs them too, step by step. Tests without a server step are played
+as before, sent in one go, except an assertion followed by actions, checked in its place.
 
-| Outil | Rôle |
+| Tool | Role |
 | :--- | :--- |
-| `capture_value` | Garde une valeur de la page, de la dernière réponse ou d'une requête de la page (`name`, `what`, `ref`/`selector`, `attribute`, `url`, `method`, `path`, `pattern`), enregistrée comme étape |
-| `call_api` | Appelle une API depuis le serveur (`method`, `url`, `headers`, `body`, `expect_status`), enregistrée comme étape ; renvoie la réponse |
+| `capture_value` | Keeps a value of the page, of the last response or of a request of the page (`name`, `what`, `ref`/`selector`, `attribute`, `url`, `method`, `path`, `pattern`), recorded as a step |
+| `call_api` | Calls an API from the server (`method`, `url`, `headers`, `body`, `expect_status`), recorded as a step; returns the response |
 
-Pendant une session, `{{nom}}` dans une action (`fill`, `navigate`, `select`, `add_assertion`…) reçoit
-tout de suite la valeur gardée, ou calculée, et l'étape enregistrée garde `{{nom}}`.
+During a session, `{{name}}` in an action (`fill`, `navigate`, `select`, `add_assertion`…) gets
+the kept, or computed, value right away, and the recorded step keeps `{{name}}`.
 
-Les phrases Gherkin : `I store the text of {string} as {string}`, `I store the text of {string}
-matching {string} as {string}`, `I store the value of {string} as {string}`, `I store the URL as
-{string}`, `I store {string} of the response as {string}`, `I store {string} of the request to
-{string} as {string}`, `I call {word} {string}`, `I call {word} {string} with {string}`. En français :
-`je retiens le texte de {string} dans {string}`, `je retiens {string} de la requête vers {string} dans
-{string}`, `j'appelle {word} {string} avec {string}`…
+The Gherkin phrases: `I store the text of {string} as {string}`,
+`I store the text of {string} matching {string} as {string}`,
+`I store the value of {string} as {string}`, `I store the URL as {string}`,
+`I store {string} of the response as {string}`,
+`I store {string} of the request to {string} as {string}`, `I call {word} {string}`,
+`I call {word} {string} with {string}`. In French: `je retiens le texte de {string} dans {string}`,
+`je retiens {string} de la requête vers {string} dans {string}`,
+`j'appelle {word} {string} avec {string}`…
 
-L'export suit : en Playwright, les valeurs gardées vont dans `VARS`, l'API passe par la fixture
-`request`, et les réponses de la page sont gardées depuis le début du test (`ANSWERS`, lues par
-`answerTo`) ; en Cucumber, par le World (`this.vars`, `this.call()`, `this.requestValue()`), et les
-valeurs gardées ne sont pas des colonnes de l'Outline.
+The export follows: in Playwright, the kept values go into `VARS`, the API goes through the
+`request` fixture, and the page's responses are kept from the start of the test (`ANSWERS`, read by
+`answerTo`); in Cucumber, through the World (`this.vars`, `this.call()`, `this.requestValue()`), and
+the kept values are not columns of the Outline.
 
-### Paramètres de `run_test`
+### Parameters of `run_test`
 
-| Paramètre | Type | Description |
+| Parameter | Type | Description |
 | :--- | :--- | :--- |
-| `name` | string | Nom du test à exécuter (obligatoire) |
-| `variables` | object | Remplace les placeholders `{{variable}}` par des valeurs personnalisées |
-| `substitutions` | object | Remplacement textuel brut dans tous les paramètres (clé → valeur) |
-| `start_step` | number | Reprendre l'exécution à une étape spécifique (1-indexed) |
-| `new_window` | boolean | Si `true`, exécute dans une nouvelle fenêtre au lieu d'un nouvel onglet |
-| `close_window` | boolean | Ferme la fenêtre d'une exécution réussie. Par défaut, comme l'utilisateur l'a choisi dans **Settings → Browser windows** ; `false` la laisse ouverte, pour un `add_assertion` sur la page où le test s'est arrêté. La fenêtre d'une exécution en échec reste toujours ouverte : l'agent y répare l'étape. Jamais un onglet de l'utilisateur (`new_window: false`) |
-| `row` | number | Pour un test qui a des lignes (les siennes, ou celles de son jeu de données) : la seule ligne à jouer, numérotée à partir de 1. Sans `row`, toutes les lignes sont jouées, une exécution chacune ; avec `start_step` ou `debug`, la première seulement |
+| `name` | string | Name of the test to run (required) |
+| `variables` | object | Replaces the `{{variable}}` placeholders with custom values |
+| `substitutions` | object | Raw text replacement in all the parameters (key → value) |
+| `start_step` | number | Resume the run at a specific step (1-indexed) |
+| `new_window` | boolean | Runs the test in a new browser window: `true` by default. `false` reuses the current tab |
+| `close_window` | boolean | Closes the window of a run that passed. By default, as the user chose in *Settings → Browser windows*; `false` leaves it open, for an `add_assertion` on the page where the test stopped. The window of a failed run always stays open: the agent repairs the step there. Never a tab of the user's (`new_window: false`) |
+| `debug` | boolean | `true` runs the test in debug mode: the run starts paused, step by step, and `run_test` answers at once with the execution's number. `debug_action` takes it from there: `step` (one step), `resume` (up to the next breakpoint), `continue`, `toggle_breakpoint`, `abort` |
+| `breakpoints` | number[] | With `debug: true` only: the steps (1-indexed) a resumed run pauses at |
+| `row` | number | For a test that has rows (its own, or those of its dataset): the only row to play, numbered from 1. Without `row`, every row is played, a run each; with `start_step` or `debug`, the first one only |
+| `record_video` | boolean | `true` keeps the video of the run even if it passes; a failed run keeps its video anyway (see Video of a run) |
 
-### Exigences : de quoi un test est la preuve
+### Requirements: what a test is the proof of
 
-Une exigence dit ce que l'appli doit faire : un titre, une description, ses **critères
-d'acceptation** (un comportement observable chacun, avec son résultat attendu), et les **cas** qui
-les testent. Le même objet, d'où qu'elle vienne :
+A requirement says what the app must do: a title, a description, its **acceptance criteria**
+(one observable behaviour each, with its expected result), and the **cases** that test them. The
+same object, wherever it comes from:
 
-| D'où | Comment |
+| From where | How |
 | :--- | :--- |
-| Une demande (un dev, en prompt) | l'agent la garde : `save_requirement(source: "prompt", title: la demande, criteria: ce qu'il en a compris)`, montre les critères et attend un accord avant de planifier. Dans le tableau de bord, « Create Test with AI » garde la demande comme exigence et y lie le test enregistré — ou, quand son champ *Requirement* désigne une exigence existante du projet (et, si elle en a, le critère vérifié), lie le test à celle-là sans en créer : l'agent reçoit alors ses critères et passe `requirement` et `criterion` à `start_recording` ; l'agent reçoit l'URL de base et le contexte du projet, et s'il s'arrête sans sauver le test (pas d'URL d'où partir), la fenêtre reste ouverte avec son dernier message. |
-| Un fichier (un cahier de recette, un export) | `import_requirements(path)` ou le bouton **Import** de la page Requirements (voir plus bas). |
-| N'importe quel document (une spec Word, un e-mail, des notes) | l'agent le lit : dans le tableau de bord, « Have the agent read it » de l'import ; en MCP, l'agent lit le document lui-même et passe ses exigences en Markdown à `import_requirements(content)` (voir plus bas). |
-| Un outil branché (Jira, GitHub Issues) | `import_from_connector(connector, query)` ou l'onglet **From Jira**, **From GitHub Issues**… de l'import (voir les connecteurs plus bas), une fois l'outil réglé dans Settings. |
-| Un outil sans connecteur (une page Notion) | l'agent la lit (par exemple avec le serveur MCP de l'outil) et la garde : `source` l'id d'un connecteur (`"jira"`) ou un nom de son choix (`"notion"`), sa clé (`SHOP-123`), son lien, ses critères tels qu'écrits. Gardée à nouveau sous la même clé, elle est mise à jour : la réponse dit si son contenu a changé, et un critère dont le texte n'a pas changé garde ses tests. |
-| Un testeur | page **Requirements** du tableau de bord : écrire l'exigence et ses critères, demander des scénarios (« Propose scenarios »), planifier des cas, y lier des tests. |
+| A request (a dev, as a prompt) | the agent keeps it: `save_requirement(source: "prompt", title: the request, criteria: what it understood of it)`, shows the criteria and waits for an agreement before planning. In the dashboard, *Create test with AI* keeps the request as a requirement and links the recorded test to it — or, when its *Requirement* field names an existing requirement of the project (and, if it has any, the criterion checked), links the test to that one without creating any: the agent then gets its criteria and passes `requirement` and `criterion` to `start_recording`; the agent gets the base URL and the context of the project, and if it stops without saving the test (no URL to start from), the window stays open with its last message. |
+| A file (a test plan, an export) | `import_requirements(path)` or the *Import* button of the *Requirements* page (see below). |
+| Any document (a Word spec, an email, notes) | the agent reads it: in the dashboard, *Have the agent read it* in the import; in MCP, the agent reads the document itself and passes its requirements in Markdown to `import_requirements(content)` (see below). |
+| A connected tool (Jira, GitHub Issues) | `import_from_connector(connector, query)` or the *From Jira*, *From GitHub Issues*… tab of the import (see the connectors below), once the tool is set in *Settings*. |
+| A tool without a connector (a Notion page) | the agent reads it (for instance with the tool's MCP server) and keeps it: `source` the id of a connector (`"jira"`) or a name of its choice (`"notion"`), its key (`SHOP-123`), its link, its criteria as written. Kept again under the same key, it is updated: the answer says whether its content changed, and a criterion whose text did not change keeps its tests. |
+| A tester | the *Requirements* page of the dashboard: write the requirement and its criteria, ask for scenarios (*Propose scenarios*), plan cases, link tests to them. |
 
-Un cas est d'abord **planifié** (`plan_tests` : son titre, le critère qu'il vérifie, son type —
-`nominal`, `alternative`, `error`, `boundary`), puis enregistré : `start_recording(requirement, case_id)`
-— ou `create_test_from_gherkin(…, requirement, case_id)` — lie le test sauvé à ce cas. `link_test` lie
-un test existant. Un test lié à l'exigence d'un projet rejoint ce projet s'il n'en a pas.
+A case is first **planned** (`plan_tests`: its title, the criterion it checks, its type —
+`nominal`, `alternative`, `error`, `boundary`), then recorded: `start_recording(requirement, case_id)`
+— or `create_test_from_gherkin(…, requirement, case_id)` — links the saved test to that case. `link_test`
+links an existing test. A test linked to a project's requirement joins that project if it has none.
 
-**La couverture** se lit des liens et du dernier rejeu de chaque test (pas des vérifications de
-réparation ni des confirmations de bugs) : `not_covered` (un critère sans test), `failing` (un
-test a échoué), `not_run` (un test jamais rejoué), `passing`.
+**Coverage** is read from the links and from the last replay of each test (not from the checks of a
+repair nor from the confirmations of bugs): `not_covered` (a criterion without a test), `failing` (a
+test failed), `not_run` (a test never replayed), `passing`.
 
-**Le résultat attendu vient de l'exigence, pas de ce que l'appli affiche.** Si la page montre autre
-chose, ce n'est pas une valeur à accepter : `add_assertion` refuse d'abord, comme toujours, puis —
-quand l'élément est bien là et que l'agent passe `non_conformity: true` après avoir vérifié que les
-étapes précédentes ont fait ce qu'elles devaient — l'enregistre en échec : le test signale la
-non-conformité tant que l'appli ne la corrige pas. Au triage, l'échec d'une assertion d'un test lié
-à une exigence est une **non-conformité** (`non_conformity`) : aucune réparation ne propose
-d'attendre la valeur affichée ; un sélecteur cassé (`test_drift`) ou une page lente (`timing`) restent
-l'affaire du test. Il en va de même pour toute étape où l'appli est en cause (`app_regression`), par
-exemple une attente de la note soumise alors que l'appli a refusé la soumission : la non-conformité
-cite le critère que le test vérifie.
+**The expected result comes from the requirement, not from what the app shows.** If the page shows
+something else, it is not a value to accept: `add_assertion` refuses first, as always, then —
+when the element is there and the agent passes `non_conformity: true` after checking that the
+steps before did what they had to — records it as failing: the test reports the
+non-conformity as long as the app does not fix it. At triage, the failure of an assertion of a test
+linked to a requirement is a **non-conformity** (`non_conformity`): no repair proposes
+to expect the value shown; a broken selector (`test_drift`) or a slow page (`timing`) remain
+the test's business. The same goes for any step where the app is at fault (`app_regression`), for
+instance a wait for the submitted note when the app refused the submission: the non-conformity
+quotes the criterion the test checks.
 
-À l'export, les exigences d'un test deviennent des étiquettes : `test('…', { tag: ['@REQ-1'] }, …)`
-en Playwright (`npx playwright test --grep @REQ-1`), `@REQ-1` sur la feature Cucumber
-(`cucumber-js --tags @REQ-1`), avec un commentaire qui dit le critère vérifié.
+At export, a test's requirements become tags: `test('…', { tag: ['@REQ-1'] }, …)`
+in Playwright (`npx playwright test --grep @REQ-1`), `@REQ-1` on the Cucumber feature
+(`cucumber-js --tags @REQ-1`), with a comment that says the criterion checked.
 
-#### Importer des exigences d'un fichier : `import_requirements`
+#### Importing requirements from a file: `import_requirements`
 
-Beaucoup de cahiers de recette vivent dans des tableurs. L'import lit :
+Many test plans live in spreadsheets. The import reads:
 
-- **un tableau** — CSV ou TSV (le séparateur `;` d'un Excel français est reconnu, comme l'encodage
-  Windows-1252 d'un vieil Excel), ou Excel `.xlsx` (la feuille `sheet`, par défaut la première). Les
-  colonnes se reconnaissent à leur nom, en anglais ou en français : clé (`Key`, `Réf.`, `ID Exigence`,
-  `Issue key`), titre (`Title`, `Summary`, `Intitulé`), description, critères d'acceptation (`Acceptance
-  criteria`, `Critères d'acceptation`, `Règles de gestion`, un champ personnalisé Jira), priorité
-  (`Priorité`, `Criticité` : « Haute », « Majeure », « Highest », « P1 »…), lien. `columns` désigne une
-  colonne que son nom ne trahit pas. Un critère par ligne dans une cellule, ou par ligne du tableau :
-  une ligne sans clé ni titre complète l'exigence du dessus, des lignes de même clé (ou, sans clé, de
-  même titre) n'en font qu'une. Une colonne de simples numéros (1, 2, 3) numérote les lignes : ce ne sont
-  pas des clés. Un **export CSV de Jira** s'importe tel quel (source `jira`).
-- **du JSON** — une liste d'exigences, `{ requirements: [...] }`, ou le résultat d'une recherche Jira
+- **a table** — CSV or TSV (the `;` separator of a French Excel is understood, as is the
+  Windows-1252 encoding of an old Excel), or Excel `.xlsx` (the sheet `sheet`, the first one by
+  default). Columns are found by their names, in English or in French: key (`Key`, `Réf.`,
+  `ID Exigence`, `Issue key`), title (`Title`, `Summary`, `Intitulé`), description, acceptance criteria
+  (`Acceptance criteria`, `Critères d'acceptation`, `Règles de gestion`, a Jira custom field), priority
+  (`Priorité`, `Criticité`: "Haute", "Majeure", "Highest", "P1"…), link. `columns` names a
+  column its name does not give away. One criterion per line in a cell, or per row of the table:
+  a row with neither key nor title adds to the requirement above, rows with the same key (or, without
+  a key, the same title) make a single one. A column of plain numbers (1, 2, 3) numbers the rows: they
+  are not keys. A **Jira CSV export** is imported as it is (source `jira`).
+- **JSON** — a list of requirements, `{ requirements: [...] }`, or the result of a Jira search
   (`{ issues: [{ key, fields: { summary, description, priority } }] }`).
-- **du Markdown** — un titre par exigence (sa clé en tête : `## SHOP-12 — Titre`), les éléments de ses
-  listes comme critères, une ligne `Priorité :` ou `Lien :`, le reste comme description. Le titre du
-  document et ceux des chapitres (des titres sans liste à eux, au-dessus d'autres) n'en sont pas.
-- **un document Word** (`.docx`) écrit de la même façon : ses titres (styles Titre, Titre 1, Titre 2…),
-  ses listes et ses tableaux sont lus comme du Markdown. Un document écrit autrement ne donne rien sans
-  l'agent, et l'aperçu le dit.
-- **une API** — une **collection Postman** (v2.0, v2.1, reconnue à son `info.schema` ou à son `info` et
-  ses `item`) ou un document **OpenAPI** 3 / **Swagger** 2 en JSON. Chaque requête (chaque opération) est
-  une exigence : sa clé est son `id` Postman (son `operationId`), son titre son nom précédé de ses dossiers
-  (« Auth / Login » ; pour OpenAPI, son `summary` précédé de son premier tag), sa description celle de la
-  requête suivie de sa méthode et de son URL. Ses critères : les comportements que sa description range
-  en liste (ou sous « Acceptance criteria »), une réponse par exemple enregistré ou par réponse documentée
-  (« Answers 401 (Wrong password) »), et le nom de chaque test de ses scripts (`pm.test("…")`). Un dossier
-  n'est pas une exigence, et sa description n'est pas reprise. Le corps des réponses n'est jamais lu :
-  une collection peut donc peser jusqu'à 30 Mo (5 Mo pour les autres fichiers). Lue par l'agent, l'API
-  lui est envoyée sous cette forme, sans les corps. Un OpenAPI en YAML n'est pas lu tel quel : le
-  convertir en JSON, ou le faire lire par l'agent en collant son texte. Ces exigences décrivent une API :
-  `call_api` vérifie le statut d'une réponse, pas encore son contenu.
+- **Markdown** — a heading per requirement (its key first: `## SHOP-12 — Title`), the items of its
+  lists as criteria, a `Priority:` or `Link:` line, the rest as description. The document's title
+  and those of the chapters (headings with no list of their own, above others) are not requirements.
+- **a Word document** (`.docx`) written the same way: its headings (the styles Title, Heading 1,
+  Heading 2…), its lists and its tables are read as Markdown. A document written otherwise gives
+  nothing without the agent, and the preview says so.
+- **an API** — a **Postman collection** (v2.0, v2.1, recognised by its `info.schema` or by its `info`
+  and its `item`) or an **OpenAPI** 3 / **Swagger** 2 document in JSON. Each request (each operation)
+  is a requirement: its key is its Postman `id` (its `operationId`), its title its name preceded by its
+  folders ("Auth / Login"; for OpenAPI, its `summary` preceded by its first tag), its description that
+  of the request followed by its method and its URL. Its criteria: the behaviours its description puts
+  in a list (or under "Acceptance criteria"), one response per saved example or per documented response
+  ("Answers 401 (Wrong password)"), and the name of each test of its scripts (`pm.test("…")`). A folder
+  is not a requirement, and its description is not carried over. The body of the responses is never
+  read: a collection can therefore weigh up to 30 MB (5 MB for the other files). Read by the agent, the
+  API is sent to it in this form, without the bodies. An OpenAPI in YAML is not read as it is:
+  convert it to JSON, or have the agent read it by pasting its text. These requirements describe an
+  API: `call_api` checks the status of a response, not yet its content.
 
-Sans colonne de critères, ceux qu'une description range sous « Acceptance criteria » ou « Critères
-d'acceptation » (y compris le `h3.` et les listes `#` de Jira) en sont extraits.
+Without a criteria column, those a description puts under "Acceptance criteria" or "Critères
+d'acceptation" (including Jira's `h3.` and `#` lists) are extracted from it.
 
-Des critères écrits en **Gherkin** — `Given` / `When` / `Then` / `And` ou `Étant donné` / `Quand` /
-`Alors` / `Et`, une étape par ligne, en liste ou non — donnent un critère par scénario : « Étant donné
-que je suis sur mon profil, quand je coche « Profil public », alors … », précédé de son nom quand une
-ligne `Scénario :` le donne. Une action ou un contexte après un `Alors` ouvre le scénario suivant ; des
-lignes sans `Alors` (« Quand je clique sur A, B s'affiche ») restent des critères à part. C'est vrai
-dans une cellule, un champ de critères Jira, une description ou du Markdown.
+Criteria written in **Gherkin** — `Given` / `When` / `Then` / `And` or `Étant donné` / `Quand` /
+`Alors` / `Et`, one step per line, in a list or not — give one criterion per scenario: "Given
+I am on my profile, when I tick "Public profile", then …", preceded by its name when a
+`Scenario:` line gives it. An action or a context after a `Then` opens the next scenario;
+lines without a `Then` ("When I click on A, B shows") stay criteria of their own. This holds
+in a cell, a Jira criteria field, a description or Markdown.
 
-C'est d'abord un **essai** (`dry_run`, par défaut) : chaque exigence est dite nouvelle, modifiée ou
-inchangée, rien n'est enregistré. Importée à nouveau, une exigence est mise à jour sous sa clé (ou son
-titre) et ses critères inchangés gardent leurs tests ; une exigence modifiée qui a des tests liés est
-signalée. Dans le tableau de bord, le bouton **Import** de la page Requirements prend un fichier (choisi
-ou déposé) ou un texte collé, montre l'aperçu et la colonne de chaque champ (modifiable), puis importe
-dans le projet choisi en tête du panneau : celui du tableau de bord par défaut ; avec « All projects », à
-choisir (« No project » compris, mais exprès).
+It is first a **dry run** (`dry_run`, by default): each requirement is said to be new, changed or
+unchanged, nothing is saved. Imported again, a requirement is updated under its key (or its
+title) and its unchanged criteria keep their tests; a changed requirement that has linked tests is
+flagged. In the dashboard, the *Import* button of the *Requirements* page takes a file (chosen
+or dropped) or a pasted text, shows the preview and the column of each field (which can be changed),
+then imports into the project chosen at the top of the panel: the dashboard's by default; with
+*All projects*, one to choose (*No project* included, but on purpose).
 
-#### N'importe quel document, lu par l'agent
+#### Any document, read by the agent
 
-Une spec Word rédigée librement, un e-mail, des notes, le texte d'un PDF n'ont ni colonnes ni titres à
-reconnaître : c'est à un agent de les lire. Une exigence dit ce que dit sa source, et ses tests le
-vérifient : l'agent reprend le document, il n'invente rien.
+A Word spec written freely, an email, notes, the text of a PDF have neither columns nor headings to
+go by: it is for an agent to read them. A requirement says what its source says, and its tests
+check it: the agent follows the document, it invents nothing.
 
-- **Dans le tableau de bord** : cocher **Have the agent read it** dans l'import, puis choisir un fichier
-  (`.docx`, `.txt`, ou tout fichier accepté) ou coller un texte. Sur un aperçu sans exigence ou qui ne
-  ressemble pas au document, **Have the agent read it** relit le même fichier avec l'agent. L'agent réglé
-  dans Settings (le même que « Propose scenarios ») reçoit le texte du document — un `.docx` en Markdown,
-  avec ses titres, listes et tableaux — et les exigences déjà enregistrées du projet (clé, titre). Ses
-  consignes : garder les clés et les titres du document ; reprendre la clé d'une exigence déjà enregistrée
-  quand c'est la même ; n'écrire que les critères que le document énonce, jamais un critère ni une valeur
-  qu'il ne donne pas ; citer le passage d'où vient chaque exigence ; lister les passages flous ou
-  contradictoires, sans trancher. Il répond en JSON, qu'IziTest vérifie : une clé qui n'est ni dans le
-  document ni dans le projet est retirée (une nouvelle sera donnée) ; le passage cité doit se trouver dans
-  le document ; un critère dont un chiffre, ou la plupart des mots, n'y sont pas est marqué « not in the
-  document as written ». L'aperçu est celui de tout import — nouvelle, modifiée, inchangée —, avec sous
-  chaque exigence le passage d'où elle vient, et en tête les passages à éclaircir. Rien n'est enregistré
-  avant **Import** ; c'est alors l'aperçu qui est enregistré, tel quel : l'agent n'est pas relu, sa
-  réponse suivante pourrait différer de ce que la personne a vérifié. Lire un document prend jusqu'à
-  quelques minutes, 60 000 caractères au plus (une quinzaine de pages) : au-delà, l'importer par parties.
-- **Le PDF** n'est pas lu par IziTest (il faudrait une bibliothèque lourde) : ouvrir le PDF, copier son
-  texte et le coller dans l'import, avec l'agent. Un vieux `.doc` : l'enregistrer en `.docx` dans Word.
-- **En MCP** : l'agent du développeur lit le document lui-même (un PDF, une page wiki, un e-mail), puis
-  passe ses exigences en Markdown à `import_requirements(content, project_id)`, un essai d'abord —
-  `## SHOP-12 — Titre` pour chacune (une clé écrite autrement sur une ligne `Key: US 3.2`), sa
-  description, ses critères en liste, `Priority: high` si le document la donne —, avec les mêmes règles.
-  Il montre l'essai, le passage d'où vient chaque exigence et les passages flous, puis importe
-  (`dry_run: false`) avec l'accord de la personne.
+- **In the dashboard**: tick *Have the agent read it* in the import, then choose a file
+  (`.docx`, `.txt`, or any accepted file) or paste a text. On a preview with no requirement or that
+  does not look like the document, *Have the agent read it* reads the same file again with the agent.
+  The agent set in *Settings* (the same as *Propose scenarios*) gets the document's text — a `.docx`
+  as Markdown, with its headings, lists and tables — and the project's requirements already saved (key,
+  title). Its instructions: keep the document's keys and titles; reuse the key of a requirement already
+  saved when it is the same one; write only the criteria the document states, never a criterion or a
+  value it does not give; quote the passage each requirement comes from; list the passages that are
+  unclear or contradictory, without settling them. It answers in JSON, which IziTest checks: a key that
+  is neither in the document nor in the project is removed (a new one will be given); the quoted
+  passage must be found in the document; a criterion of which a figure, or most of the words, are not
+  in it is marked *not in the document as written*. The preview is that of any import — new, changed,
+  unchanged —, with under each requirement the passage it comes from, and at the top the passages to
+  clear up. Nothing is saved before *Import*; it is then the preview that is saved, as it is: the agent
+  is not asked again, its next answer could differ from what the person checked. Reading a document
+  takes up to a few minutes, 60,000 characters at most (some fifteen pages): beyond that, import it in
+  parts.
+- **A PDF** is not read by IziTest (it would take a heavy library): open the PDF, copy its
+  text and paste it in the import, with the agent. An old `.doc`: save it as `.docx` in Word.
+- **In MCP**: the developer's agent reads the document itself (a PDF, a wiki page, an email), then
+  passes its requirements in Markdown to `import_requirements(content, project_id)`, a dry run first —
+  `## SHOP-12 — Title` for each (a key written otherwise on a `Key: US 3.2` line), its
+  description, its criteria in a list, `Priority: high` if the document gives it —, with the same rules.
+  It shows the dry run, the passage each requirement comes from and the unclear passages, then imports
+  (`dry_run: false`) with the person's agreement.
 
-### Connecteurs : les outils d'où viennent les exigences, et où vont les résultats
+### Connectors: the tools requirements come from, and results go to
 
-Une exigence est un objet d'IziTest, d'où qu'elle vienne. Les outils d'une équipe — Jira, GitHub
-Issues, demain Notion ou Linear — y sont branchés par des **connecteurs** (`lib/connectors`) : un
-fichier par outil, qui déclare comment on l'atteint et ce qu'il sait faire. Trois rôles, un connecteur
-en a un ou plusieurs :
+A requirement is an object of IziTest, wherever it comes from. A team's tools — Jira, GitHub
+Issues, tomorrow Notion or Linear — are plugged into it by **connectors** (`lib/connectors`): one
+file per tool, which declares how it is reached and what it can do. Four roles, a connector
+has one or several:
 
-| Rôle | Ce qu'il fait | Aujourd'hui |
+| Role | What it does | Today |
 | :--- | :--- | :--- |
-| `requirements` | lit les exigences de l'outil : par une requête dans son langage, leurs clés, ou à nouveau (`sync`) pour voir ce qui a changé | Jira (JQL), GitHub Issues (la recherche de GitHub) |
-| `coverage` | dit à l'outil où en est chaque exigence qui en vient : un commentaire d'IziTest, mis à jour ensuite | Jira |
-| `results` | envoie les résultats d'une campagne, mis à jour s'ils l'ont déjà été | Xray (une Test Execution) |
+| `requirements` | reads the tool's requirements: by a query in its language, their keys, or again (`sync`) to see what changed | Jira (JQL), GitHub Issues (GitHub's search) |
+| `coverage` | tells the tool where each requirement that comes from it stands: a comment of IziTest's, updated afterwards | Jira |
+| `results` | sends a campaign's results, updated if they were sent already | Xray (a Test Execution) |
+| `bugs` | sends a bug of IziTest's as an item of the tool, updated if it was sent already | Jira (an issue) |
 
-Le reste est commun à tous, et fait une seule fois :
-- **les réglages** : chaque connecteur a sa carte dans **Settings** (Jira, Xray, GitHub Issues…), faite de
-  ses champs (une adresse, un compte, un jeton) ; un secret est gardé sur la machine et jamais réaffiché
-  (masqué, et redonné masqué il garde celui enregistré) ; « Test the connection » dit si ça marche ; à
-  défaut, des variables d'environnement en tiennent lieu (`JIRA_API_TOKEN`…). Un connecteur qui n'a besoin
-  de rien (GitHub, pour un dépôt public) marche tel quel ;
-- **la lecture** n'écrit rien dans l'outil : un essai d'abord (nouvelle, modifiée, inchangée), puis
-  l'import ; l'exigence garde comme `source` l'id du connecteur (`jira`, `github`), sa clé et son lien ;
-- **l'écriture** ne se fait que sur demande, après un essai qui montre ce qui serait envoyé ; ce qui a été
-  envoyé (le commentaire d'une story, la Test Execution d'une campagne) est retenu
-  (`connector_refs`) : renvoyé, il est mis à jour, pas répété.
+The rest is common to all, and done only once:
+- **the settings**: each connector has its card in *Settings* (Jira, Xray, GitHub Issues…), made of
+  its fields (an address, an account, a token); a secret is kept on the machine and never shown again
+  (masked, and given back masked it keeps the saved one); *Test the connection* says whether it works;
+  failing that, environment variables stand in for them (`JIRA_API_TOKEN`…). A connector that needs
+  nothing (GitHub, for a public repository) works as it is;
+- **reading** writes nothing in the tool: a dry run first (new, changed, unchanged), then the
+  import; the requirement keeps as its `source` the connector's id (`jira`, `github`), its key and its
+  link;
+- **writing** is done only on request, after a dry run that shows what would be sent; what was
+  sent (the comment of a story, the Test Execution of a campaign, the issue of a bug) is remembered
+  (`connector_refs`): sent again, it is updated, not repeated.
 
-| Route ou outil | Rôle |
+| Route or tool | Role |
 | :--- | :--- |
-| `GET /api/connectors` | Les connecteurs : ce que chacun fait, ses champs, ses réglages (secrets masqués) |
-| `PUT /api/connectors/:id` | Ses réglages (`{ values }`) ; son premier champ vide les retire |
-| `POST /api/connectors/:id/test` | Si ces réglages (ou ceux enregistrés) marchent |
-| `GET /api/connectors/:id/scopes` | Par où commencer à lire : les projets d'un site Jira, chacun avec sa requête |
-| `POST /api/connectors/:id/import` | `{ query \| keys \| sync, project_id, dry_run }` : les exigences lues, enregistrées hors essai |
-| `POST /api/connectors/:id/coverage` | `{ keys \| campaign_id, dry_run }` : la couverture envoyée, hors essai |
-| `POST /api/campaigns/:id/send/:connector` | `{ options, dry_run }` : les résultats d'une campagne envoyés, hors essai |
-| `import_from_connector`, `send_coverage`, `send_results` | Les mêmes, pour un agent : leur description liste les connecteurs et ce qu'ils prennent |
+| `GET /api/connectors` | The connectors: what each does, its fields, its settings (secrets masked) |
+| `PUT /api/connectors/:id` | Its settings (`{ values }`); its first field empty removes them |
+| `POST /api/connectors/:id/test` | Whether these settings (or the saved ones) work |
+| `GET /api/connectors/:id/scopes` | Where to start reading: the projects of a Jira site, each with its query |
+| `POST /api/connectors/:id/import` | `{ query \| keys \| sync, project_id, dry_run }`: the requirements read, saved when not a dry run |
+| `POST /api/connectors/:id/coverage` | `{ keys \| campaign_id, dry_run }`: the coverage sent, when not a dry run |
+| `POST /api/campaigns/:id/send/:connector` | `{ options, dry_run }`: a campaign's results sent, when not a dry run |
+| `POST /api/bugs/:id/send/:connector` | `{ options, dry_run }`: a bug sent, when not a dry run |
+| `import_from_connector`, `send_coverage`, `send_results`, `send_bug` | The same, for an agent: their description lists the connectors and what they take |
 
-#### Écrire un connecteur
+#### Writing a connector
 
-Un connecteur est un objet exporté par un fichier de `lib/connectors/`, inscrit dans
-`lib/connectors/index.js` (la liste des connecteurs, en tête). Rien d'autre à toucher : l'API, les outils
-MCP, Settings, l'import et la page d'une campagne le prennent d'eux-mêmes.
+A connector is an object exported by a file of `lib/connectors/`, registered in
+`lib/connectors/index.js` (the list of connectors, at the top). Nothing else to touch: the API, the MCP
+tools, *Settings*, the import and a campaign's page pick it up by themselves.
 
 ```js
 export const notion = {
-  id: 'notion', name: 'Notion',                     // l'id devient la source de ses exigences
-  description: 'Les pages d\'une base Notion, lues comme exigences.',
+  id: 'notion', name: 'Notion',                     // the id becomes the source of its requirements
+  description: 'The pages of a Notion database, read as requirements.',
   settings: {
     fields: [{ name: 'token', label: 'Token', type: 'secret', env: 'NOTION_TOKEN' }],  // url | text | secret, optional
-    hint: 'Où créer le jeton.', link: 'https://www.notion.so/my-integrations',
+    hint: 'Where to create the token.', link: 'https://www.notion.so/my-integrations',
   },
-  async test({ config, fetch }) { /* appelle l'outil */ return 'Reads as …'; },       // une phrase
+  async test({ config, fetch }) { /* calls the tool */ return 'Reads as …'; },        // one sentence
   requirements: {
-    item: 'page', items: 'pages', keys: 'abc123', reads: 'son titre, son texte, ses critères',
+    item: 'page', items: 'pages', keys: 'abc123', reads: 'its title, its text, its criteria',
     query: { label: 'database id', placeholder: '…' },
-    async read({ config, fetch }, { query, keys, known }) {                          // known : déjà importées (sync)
+    async read({ config, fetch }, { query, keys, known }) {                          // known: already imported (sync)
       return { records: [{ key, title, description, criteria: [], priority: 'medium', url }], warnings: [] };
     },
   },
   // coverage: { where, render(requirement, { campaign }) → { body, text }, async post(ctx, requirement, body, { ref }) → { ref, action, url } }
   // results:  { what, options, note, prepare(campaign, options, { ref }) → { target, items, payload }, async send(ctx, prepared, { ref }) → { ref, url } }
+  // bugs:     { what, options, note, prepare(bug, options, { ref, suggestedProject }) → { target, type, summary, text, payload }, async send(ctx, prepared, { ref }) → { ref, action, url }, urlOf(ctx, ref) → its link }
 };
 ```
 
-Le connecteur reçoit `fetch` (une doublure dans ses tests : voir `test/connectors.test.js`), ses réglages,
-et ceux d'un autre (`configOf('jira')`, dont Xray tire l'adresse du site). Il ne touche ni à la base ni
-aux réglages : les clés, les critères trouvés dans une description (« Acceptance criteria »), l'essai,
-ce qui a été envoyé, c'est le cadre commun qui s'en charge.
+The connector receives `fetch` (a stand-in in its tests: see `test/connectors.test.js`), its settings,
+and those of another (`configOf('jira')`, from which Xray takes the site's address). It touches neither
+the database nor the settings: the keys, the criteria found in a description ("Acceptance criteria"),
+the dry run, what was sent — the common frame takes care of all that.
 
-#### Jira : ses stories en exigences (`import_from_connector`, connecteur `jira`)
+#### Jira: its stories as requirements (`import_from_connector`, connector `jira`)
 
-Le site se règle dans le tableau de bord (**Settings → Jira**) : son adresse
-(`https://votre-equipe.atlassian.net`), l'email du compte, et un jeton d'API de ce compte (créé sur
-id.atlassian.com → Security → API tokens). Il est gardé sur la machine, et jamais réaffiché : le tableau de
-bord le montre masqué. « Test the connection » dit sous quel compte IziTest lit. À défaut, `JIRA_BASE_URL`,
-`JIRA_EMAIL` et `JIRA_API_TOKEN` en tiennent lieu. La lecture n'écrit rien dans Jira ; seuls les
-commentaires de couverture (`send_coverage`, plus bas) y écrivent, et seulement quand on le demande.
+The site is set in the dashboard (*Settings → Jira*): its address
+(`https://your-team.atlassian.net`), the account's email, and an API token of that account (created at
+id.atlassian.com → Security → API tokens). It is kept on the machine, and never shown again: the
+dashboard shows it masked. *Test the connection* says under which account IziTest reads. Failing that,
+`JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN` stand in for them. Reading writes nothing in Jira;
+only the coverage comments (`send_coverage`, below) write there, and only when asked.
 
-`import_from_connector(connector: "jira")` lit, par l'API REST v3 de Jira Cloud (la recherche JQL « enhanced », page après page,
-500 stories au plus) :
-- les stories d'une requête JQL (`query`, `project = SHOP AND issuetype = Story ORDER BY key` : une requête
-  bornée, Jira refuse les autres) ;
-- ou celles de leurs clés (`keys`) — une clé que Jira ne connaît pas, ou que ce compte ne voit pas, est
-  dite, les autres sont lues ;
-- ou, `sync: true`, celles déjà importées de Jira (du projet, ou toutes) : pour voir lesquelles ont changé.
+`import_from_connector(connector: "jira")` reads, through the REST API v3 of Jira Cloud (the
+"enhanced" JQL search, page after page, 500 stories at most):
+- the stories of a JQL query (`query`, `project = SHOP AND issuetype = Story ORDER BY key`: a bounded
+  query, Jira refuses the others);
+- or those of their keys (`keys`) — a key Jira does not know, or that this account cannot see, is
+  reported, the others are read;
+- or, `sync: true`, those already imported from Jira (of the project, or all): to see which changed.
 
-Chaque story devient une exigence (source `jira`) : sa clé, son résumé, sa description (le format riche
-d'Atlassian, mis en texte), sa priorité, son lien. Ses critères d'acceptation viennent d'un champ à eux
-(« Acceptance Criteria », un champ personnalisé) quand le site en a un, sinon de la liste sous
-« Acceptance criteria » dans sa description. Comme pour un fichier : un essai d'abord, puis l'import ;
-une story modifiée depuis, qui a des tests liés, est signalée. Dans le tableau de bord : **Requirements
-→ Import → From Jira**, avec les projets du site pour partir d'une requête (« Where to start ») (choisir un projet propose ses
-stories, `issuetype = Story` ; sans type Story, ses tickets sauf les sous-tâches), et « Check the
-imported ones for changes ».
+Each story becomes a requirement (source `jira`): its key, its summary, its description (Atlassian's
+rich format, turned into text), its priority, its link. Its acceptance criteria come from a field of
+their own ("Acceptance Criteria", a custom field) when the site has one, otherwise from the list under
+"Acceptance criteria" in its description. As for a file: a dry run first, then the import;
+a story changed since, which has linked tests, is flagged. In the dashboard:
+*Requirements → Import → From Jira*, with the site's projects to start from a query (*Where to start*)
+(choosing a project proposes its stories, `issuetype = Story`; without a Story type, its issues except
+sub-tasks), and *Check the imported ones for changes*.
 
-#### Dire à Jira où en est chaque story : `send_coverage` (connecteur `jira`)
+#### Telling Jira where each story stands: `send_coverage` (connector `jira`)
 
-`send_coverage(connector: "jira")` écrit sur chaque story, en commentaire, où elle en est dans IziTest : sa couverture
-(`passing`, `failing`, `not run`, `not covered`), chacun de ses critères avec ses tests et leur dernier
-résultat (`✓`, `✗`, `○` sans test), la campagne d'où ça vient, et quand. Pour les stories de `keys`, ou
-celles que vérifient les tests d'une campagne (`campaign_id` : ses exigences importées de Jira, les
-autres laissées de côté). **Un commentaire par story**, celui d'IziTest : envoyé à nouveau, il est mis à
-jour, pas répété ; supprimé dans Jira entre-temps, un nouveau le remplace.
+`send_coverage(connector: "jira")` writes on each story, as a comment, where it stands in IziTest:
+its coverage (`passing`, `failing`, `not run`, `not covered`), each of its criteria with its tests and
+their last result (`✓`, `✗`, `○` without a test), the campaign it comes from, and when. For the
+stories of `keys`, or those the tests of a campaign check (`campaign_id`: its requirements imported
+from Jira, the others left aside). **One comment per story**, IziTest's own: sent again, it is
+updated, not repeated; deleted in Jira in the meantime, a new one replaces it.
 
-C'est d'abord un **essai** (`dry_run`, par défaut) qui montre chaque commentaire : l'agent le montre à
-l'utilisateur et lui demande avant de rappeler avec `dry_run: false`. Une story que Jira refuse (supprimée,
-ce compte n'y a pas droit) est dite, les autres sont commentées. Dans le tableau de bord : le rapport d'une
-campagne, **Send the results → Tell the Jira stories…**, aperçu puis « Send N to Jira ».
+It is first a **dry run** (`dry_run`, by default) that shows each comment: the agent shows it to
+the user and asks them before calling again with `dry_run: false`. A story Jira refuses (deleted,
+this account has no right to it) is reported, the others are commented. In the dashboard: the report
+of a campaign, *Send the results → Tell the Jira stories…*, a preview then *Send N to Jira*.
 
-#### GitHub Issues : ses tickets en exigences (connecteur `github`)
+#### GitHub Issues: its issues as requirements (connector `github`)
 
-Un **dépôt public se lit sans rien régler** ; un jeton (**Settings → GitHub Issues**, à défaut
-`GITHUB_TOKEN`) n'est utile que pour un dépôt privé, ou au-delà de 60 requêtes par heure.
-`import_from_connector(connector: "github")` lit :
-- les tickets d'une recherche GitHub (`query`, `repo:acme/shop is:open label:story` ; `is:issue` est ajouté,
-  les pull requests laissées de côté ; 500 au plus) ;
-- ou ceux de leurs clés (`keys`, `acme/shop#12`) — un ticket introuvable est dit, une pull request aussi ;
-- ou, `sync: true`, ceux déjà importés, relus depuis leur lien.
+A **public repository is read without setting anything**; a token (*Settings → GitHub Issues*, failing
+that `GITHUB_TOKEN`) is only useful for a private repository, or beyond 60 requests an hour.
+`import_from_connector(connector: "github")` reads:
+- the issues of a GitHub search (`query`, `repo:acme/shop is:open label:story`; `is:issue` is added,
+  pull requests left aside; 500 at most);
+- or those of their keys (`keys`, `acme/shop#12`) — an issue that cannot be found is reported, a pull
+  request too;
+- or, `sync: true`, those already imported, read again from their link.
 
-Chaque ticket devient une exigence (source `github`) : sa clé (le nom du dépôt et son numéro, `SHOP-12`),
-son titre, son texte, son lien, sa priorité d'après ses libellés (`priority: high`, `P1`…), et ses critères :
-la liste sous « Acceptance criteria » dans son texte, sinon sa liste de tâches (`- [ ] …`). Rien n'est
-écrit sur GitHub. Deux dépôts de même nom chez deux propriétaires donneraient les mêmes clés : en importer
-un seul par projet IziTest.
+Each issue becomes a requirement (source `github`): its key (the repository's name and its number,
+`SHOP-12`), its title, its text, its link, its priority from its labels (`priority: high`, `P1`…), and
+its criteria: the list under "Acceptance criteria" in its text, otherwise its task list (`- [ ] …`).
+Nothing is written to GitHub. Two repositories of the same name under two owners would give the same
+keys: import only one of them per IziTest project.
 
-#### Concevoir les tests d'une exigence : `design_tests`
+#### Designing the tests of a requirement: `design_tests`
 
-Une seule méthode, quel que soit l'agent qui l'applique. IziTest ne raisonne pas : il expose
-l'exigence, ses cas déjà là, l'appli (le projet, son adresse, ses notes) et les **phrases Gherkin du
-projet** — en disant, pour chacune, quel argument est un sélecteur CSS, et lesquelles sont des étapes
-métier ; les phrases qui nomment un champ par son label (`I fill the field "…" with "…"`, `I select
-"…" in the field "…"`, `I check the field "…"`) n'en demandent aucun —, puis les règles :
+One method only, whichever agent applies it. IziTest does not reason: it lays out
+the requirement, the cases it already has, the app (the project, its address, its notes) and the
+**project's Gherkin phrases** — saying, for each, which argument is a CSS selector, and which are
+business steps; the phrases that name a field by its label (`I fill the field "…" with "…"`,
+`I select "…" in the field "…"`, `I check the field "…"`) ask for none —, then the rules:
 
-1. **Revue de testabilité** : un critère se teste quand il dit ce qu'on fait et ce qu'on voit ensuite,
-   avec ses valeurs. Un mot vague (« rapide », « simple »), un résultat absent, une valeur manquante :
-   le critère est signalé, avec la question à poser à son auteur et une reformulation.
-2. **Ce que l'exigence ne dit pas** mais que sa portée implique (un champ vide, une valeur hors
-   limite) : des règles à ajouter, sauf celles qu'une autre exigence du projet dit déjà (l'agent les
-   voit toutes, avec leurs critères). Pour chaque règle, deux informations, et la raison du niveau
-   en une phrase :
-   - **où elle va** : `this` (cette exigence), `other` (une autre exigence du projet, nommée par sa
-     clé, dont c'est le sujet), ou `project` (tout le projet : la langue des messages, un formulaire
-     envoyé deux fois). Une clé inconnue, ou celle de l'exigence elle-même, ramène la règle à `this` ;
-   - **le niveau où un test la vérifie le mieux** : `e2e` (par les écrans de l'appli : un message, un
-     bouton là ou pas, un parcours), `api` (par son API : une règle à essayer avec beaucoup de
-     valeurs, un refus du serveur), ou `unit` (dans le code, par ses développeurs).
+1. **Testability review**: a criterion can be tested when it says what is done and what is seen
+   afterwards, with its values. A vague word ("fast", "simple"), a missing result, a missing value:
+   the criterion is flagged, with the question to ask its author and a rewording.
+2. **What the requirement does not say** but its scope implies (an empty field, a value out of
+   range): rules to add, except those another requirement of the project already states (the agent
+   sees them all, with their criteria). For each rule, two pieces of information, and the reason for
+   the level in one sentence:
+   - **where it goes**: `this` (this requirement), `other` (another requirement of the project, named
+     by its key, whose subject it is), or `project` (the whole project: the language of the messages, a
+     form sent twice). An unknown key, or that of the requirement itself, brings the rule back to `this`;
+   - **the level at which a test checks it best**: `e2e` (through the app's screens: a message, a
+     button there or not, a journey), `api` (through its API: a rule to try with many
+     values, a refusal from the server), or `unit` (in the code, by its developers).
 
-   Une règle s'écrit dans une exigence quel que soit son niveau. Le niveau dit où va son test, pas
-   s'il faut la dire.
-3. **Les scénarios**, critère par critère, avec une technique : `use_case` (chemin attendu et
-   variantes), `equivalence_partitioning`, `boundary_values`, `decision_table`, `state_transition`,
-   `error_guessing`. Un scénario vérifie un critère, avec des valeurs concrètes, et une priorité.
-4. **Le résultat attendu vient de l'exigence.** Là où elle ne le dit pas, il n'y a pas de scénario à
-   écrire : c'est une question.
-5. **Les étapes en Gherkin**, avec les phrases du projet mot pour mot. Jamais de sélecteur deviné :
-   les phrases qui n'en demandent pas (`I am on`, `I click on the text`, `I should see`) et les étapes
-   métier d'abord ; une étape qu'aucune phrase ne couvre est écrite en clair.
+   A rule is written in a requirement whatever its level. The level says where its test goes, not
+   whether it should be said.
+3. **The scenarios**, criterion by criterion, with a technique: `use_case` (expected path and
+   variants), `equivalence_partitioning`, `boundary_values`, `decision_table`, `state_transition`,
+   `error_guessing`. A scenario checks one criterion, with concrete values, and a priority.
+4. **The expected result comes from the requirement.** Where it does not say it, there is no scenario
+   to write: it is a question.
+5. **The steps in Gherkin**, with the project's phrases word for word. Never a guessed selector:
+   the phrases that ask for none (`I am on`, `I click on the text`, `I should see`) and the business
+   steps first; a step no phrase covers is written in plain words.
 
-Chaque scénario est résolu contre les phrases du projet : **prêt** quand toutes ses étapes le sont —
-le test se crée tel quel (`create_test_from_gherkin(…, requirement, case_id)`) —, sinon ses étapes en
-clair sont **à enregistrer** : un agent les suit dans le navigateur (`start_recording(requirement,
-case_id)`).
+Each scenario is resolved against the project's phrases: **ready** when all its steps are —
+the test is created as it is (`create_test_from_gherkin(…, requirement, case_id)`) —, otherwise its
+steps in plain words are **to record**: an agent follows them in the browser
+(`start_recording(requirement, case_id)`).
 
-- **En MCP**, l'agent du dev lit `design_tests(requirement)`, montre la revue et les scénarios à
-  l'utilisateur, puis garde ce qu'il retient : `save_requirement` pour les critères reformulés ou
-  ajoutés (sur l'autre exigence pour une règle `other`, sur une nouvelle exigence du projet pour une
-  règle `project`), `plan_tests` pour les scénarios (`technique`, `priority`, `rationale`, `gherkin`).
-- **Dans le tableau de bord**, « Propose scenarios » envoie la même méthode à l'agent réglé dans
-  Settings (un modèle par l'API, ou un CLI lancé une fois avec `-p`, sans outils), qui répond en JSON.
-  La proposition est gardée sur l'exigence. La revue s'affiche sous chaque critère concerné (avec
-  « Use this wording »), et les scénarios sont à cocher, groupés par critère.
+- **In MCP**, the dev's agent reads `design_tests(requirement)`, shows the review and the scenarios to
+  the user, then saves what it retains: `save_requirement` for the reworded or added
+  criteria (on the other requirement for an `other` rule, on a new requirement of the project for a
+  `project` rule), `plan_tests` for the scenarios (`technique`, `priority`, `rationale`, `gherkin`).
+- **In the dashboard**, *Propose scenarios* sends the same method to the agent set in
+  *Settings* (a model through the API, or a CLI run once with `-p`, without tools), which answers in JSON.
+  The proposal is kept on the requirement. The review shows under each criterion concerned (with
+  *Use this wording*), and the scenarios are to be ticked, grouped by criterion.
 
-  Ce qui manque s'affiche sous les critères, chaque règle avec son niveau (End to end, API, Unit ·
-  developers) et sa raison. Son bouton dépend de l'endroit où elle va :
-  - **cette exigence** : « Add as a criterion », puis Save avec les autres critères ;
-  - **une autre exigence** : « Add to DOLI-6 », qui l'ajoute à la fin de ses critères ;
-  - **tout le projet** : « Create a requirement », qui crée une exigence du projet avec cette règle
-    comme titre et comme critère.
+  What is missing shows under the criteria, each rule with its level (*End to end*, *API*,
+  *Unit · developers*) and its reason. Its button depends on where it goes:
+  - **this requirement**: *Add as a criterion*, then *Save* with the other criteria;
+  - **another requirement**: *Add to DOLI-6*, which adds it at the end of its criteria;
+  - **the whole project**: *Create a requirement*, which creates a requirement of the project with this
+    rule as its title and as its criterion.
 
-  « Not needed » l'écarte. Placée ou écartée, la règle quitte la proposition
-  (`POST /api/requirements/:ref/design/missing`, `{ text, dismiss }`). Une proposition faite avant
-  ce classement garde ses règles comme règles de cette exigence, sans niveau. « Plan » en fait des cas planifiés, rattachés à leur critère par son
-  texte. Si l'exigence change ensuite, la proposition est marquée comme faite pour une version
-  antérieure.
-- **Un cas planifié** se crée depuis son scénario (« Create » : le modal Gherkin, prérempli, lie le
-  test au cas) ou s'enregistre (« Record » : l'agent reçoit les critères, le scénario à suivre, et la
-  règle des non-conformités). « Scenario » ouvre son Gherkin : modifié, il est revérifié.
+  *Not needed* sets it aside. Placed or set aside, the rule leaves the proposal
+  (`POST /api/requirements/:ref/design/missing`, `{ text, dismiss }`). A proposal made before
+  this classification keeps its rules as rules of this requirement, without a level. *Plan* makes
+  planned cases of the scenarios, attached to their criterion by its text. If the requirement changes
+  afterwards, the proposal is marked as made for an earlier version.
+- **A planned case** is created from its scenario (*Create*: the Gherkin dialog, prefilled, links the
+  test to the case) or recorded (*Record*: the agent gets the criteria, the scenario to follow, and the
+  rule on non-conformities). *Scenario* opens its Gherkin: edited, it is checked again.
 
-### Campagnes : `run_campaign`
+### Campaigns: `run_campaign`
 
-Une campagne rejoue ensemble les tests d'un **projet**, d'une **exigence** (les tests qui y sont liés)
-ou une **liste**, pour une **version** de l'appli (`version: "1.4.0"`, un commit). Chaque test tourne
-dans sa propre fenêtre, fermée après, quelques-uns à la fois (`concurrency`, 3 par défaut, 6 au plus),
-dans une session à la campagne : pas celle de l'agent qui l'a lancée. Un échec est diagnostiqué comme
-au `run_test` ; ces rejeux comptent dans la couverture des exigences (déclencheur `campaign`).
+A campaign replays together the tests of a **project**, of a **requirement** (the tests linked to it)
+or a **list**, for a **version** of the app (`version: "1.4.0"`, a commit). Each test runs in a
+window of its own, closed after, a few at a time (`concurrency`, 3 by default, 6 at most), in a
+session of the campaign's own: not that of the agent that started it. A failure is diagnosed as with
+`run_test`; these replays count in the coverage of the requirements (trigger `campaign`).
 
-**Par étapes.** Une campagne peut aussi jouer ses tests étape après étape (`stages`) : par exemple
-une préparation, puis les tests qui utilisent ce qu'elle a créé.
+**In stages.** A campaign can also run its tests stage after stage (`stages`): for example a
+set-up, then the tests that use what it made.
 
-- Chaque étape joue ses tests **côte à côte** (`parallel`, `concurrency` à la fois) ou **l'un après
-  l'autre**, dans leur ordre (`sequential`). Une étape commence quand la précédente a fini.
-- Une étape marquée `needs_previous` ne part que si tous les tests des étapes d'avant sont passés.
-  Sinon ses tests sont `skipped`, avec la raison : « not run: the stage "Préparation" did not pass ».
-  Le JUnit la reprend dans son `skipped`.
-- Une valeur qu'un test garde (`capture`) est donnée aux tests qui viennent après lui et qui ne la
-  font pas eux-mêmes. Par exemple, un test crée une commande et garde son numéro ; ceux de l'étape
-  suivante l'ouvrent avec `{{order}}`. Dans une étape côte à côte, les tests reçoivent les valeurs
-  gardées avant l'étape ; l'un après l'autre, celles gardées jusque-là.
-- Une connexion, elle, ne passe pas d'un test à l'autre : chaque test se connecte lui-même.
-- Mieux vaut des tests indépendants, chacun avec ses propres données. Les étapes servent à ce qui ne
-  peut pas l'être.
-- `POST /api/campaigns/plan` (un projet, une exigence ou des tests) propose des étapes : un test qui
-  utilise une valeur gardée par un autre passe dans une étape après lui, `needs_previous`. Sans telle
-  valeur, une seule étape.
-- Dans le tableau de bord, *New campaign → Order → In stages* montre cette proposition ; on y nomme
-  les étapes, on choisit côte à côte ou l'un après l'autre, et on déplace les tests d'une étape à
-  l'autre en les glissant, ou avec leurs flèches. Le rapport groupe les tests par étape, avec l'état
-  de chacune. « Run again » rejoue les mêmes étapes.
-- MCP : `run_campaign(stages: [{ name, tests, mode, needs_previous }])`. CI : `--stages stages.json`.
+- Each stage runs its tests **side by side** (`parallel`, `concurrency` at a time) or **one after
+  the other**, in their order (`sequential`). A stage starts when the one before it has finished.
+- A stage marked `needs_previous` starts only if every test of the stages before it passed.
+  Otherwise its tests are `skipped`, with the reason: "not run: the stage "Set-up" did not pass".
+  The JUnit report carries it in its `skipped`.
+- A value a test keeps (`capture`) is given to the tests that come after it and do not make it
+  themselves. For example, a test creates an order and keeps its number; those of the next stage
+  open it with `{{order}}`. In a side-by-side stage, the tests get the values kept before the
+  stage; one after the other, those kept so far.
+- A login, though, does not pass from one test to the next: each test logs in itself.
+- Independent tests, each with its own data, are better. Stages are for what cannot be.
+- `POST /api/campaigns/plan` (a project, a requirement or tests) proposes stages: a test that
+  uses a value kept by another goes in a stage after it, `needs_previous`. Without such a value,
+  a single stage.
+- In the dashboard, *New campaign → Order → In stages* shows this proposal; there you name the
+  stages, choose *Side by side* or *One after the other*, and move the tests from one stage to
+  another by dragging them, or with their arrows. The report groups the tests by stage, with the
+  status of each. *Run again* replays the same stages.
+- MCP: `run_campaign(stages: [{ name, tests, mode, needs_previous }])`. CI: `--stages stages.json`.
 
-Un rejeu qui s'arrête de lui-même dit pourquoi : délai dépassé, ou navigateur fermé, arrêté ou
-rechargé pendant qu'il jouait. Dans ce dernier cas, il échoue tout de suite au lieu d'attendre son
-délai.
+A replay that stops by itself says why: its timeout ran out, or the browser was closed, stopped or
+reloaded while it was running. In that last case, it fails at once instead of waiting for its
+timeout.
 
-**Des tests qui se connectent, côte à côte.** Les fenêtres d'un même Chrome partagent ses cookies, mode
-privé compris : un test qui se connecte comme manager déconnecte celui d'à côté, connecté comme employé,
-et les deux échouent.
+**Tests that log in, side by side.** The windows of one Chrome share its cookies, incognito
+included: a test that logs in as a manager logs out the one beside it, logged in as an employee,
+and both fail.
 
-- **Headless**, chaque voie de la campagne a son propre Chrome sans fenêtre, avec son profil, donc ses
-  cookies. Les tests tournent côte à côte, quoi qu'ils connectent.
-- **Dans le Chrome de l'utilisateur**, les tests d'un site où l'un d'eux se connecte passent un par un ;
-  les autres, côte à côte. Un test se connecte quand il tape un secret (`{{secret.NAME}}`) ou dans un
-  champ de mot de passe. Son site est l'origine de sa première navigation, à défaut l'URL de base de son
-  projet. Le rapport le dit : « One at a time: the 9 tests of http://127.0.0.1:5173, which log in there »
-  (`one_at_a_time` dans l'API).
+- **Headless**, each lane of the campaign has a headless browser of its own, with its profile, hence
+  its cookies. The tests run side by side, whoever they log in as.
+- **In the user's Chrome**, the tests of a site where one of them logs in run one at a time; the
+  others, side by side. A test logs in when it types a secret (`{{secret.NAME}}`) or in a password
+  field. Its site is the origin of its first navigation, failing that the base URL of its
+  project. The report says so: "One at a time: the 9 tests of http://127.0.0.1:5173, which log in there"
+  (`one_at_a_time` in the API).
 
-Le rapport dit :
-- ce qui est passé, ce qui a échoué et pourquoi (la cause du triage) ;
-- **ce qui a régressé** (passait à la dernière campagne où ce test a tourné, quelle qu'elle soit, échoue
-  maintenant) et ce qui a été corrigé. La comparaison se fait test par test : une campagne d'un commit,
-  qui ne joue pas la même liste à chaque fois, se compare quand même. `changes.since` est la plus récente
-  de ces campagnes, `changes.campaigns` toutes ;
-- **où en est chaque exigence**, critère par critère, d'après les rejeux de cette campagne : `passing`,
-  `failing`, `not run` (un de ses tests n'a pas tourné ici), `no test` ;
-- les **non-conformités** : à signaler, pas à « réparer » dans les tests.
+The report says:
+- what passed, what failed and why (the cause from the triage);
+- **what regressed** (passed in the last campaign this test ran in, whichever it was, fails
+  now) and what was fixed. The comparison is made test by test: a campaign for a commit,
+  which does not run the same list every time, is compared all the same. `changes.since` is the most
+  recent of these campaigns, `changes.campaigns` all of them;
+- **where each requirement stands**, criterion by criterion, from this campaign's replays: `passing`,
+  `failing`, `not run` (one of its tests did not run here), `no test`;
+- the **non-conformities**: to report, not to "repair" in the tests.
 
-`run_campaign` attend la fin (10 minutes au plus ; au-delà, `get_campaign(id)` la suit) et répond par le
-rapport. Une liste de tests qui sont tous d'un même projet fait une campagne de ce projet : elle est
-listée avec les siennes, et son JUnit classe ses tests sous le nom du projet. Dans le tableau de bord, la
-page **Campaigns** lance une campagne (un projet, une exigence ou des tests choisis, une version,
-combien à la fois), la suit en direct, l'arrête (les tests en cours finissent, les autres ne démarrent
-pas), la relance, et en donne le **JUnit** et le **rapport HTML**. Une exigence a son bouton « Run its
-tests » ; sur la page **Tests**, des tests cochés partent ensemble avec « Run as campaign ». L'onglet
-**Campaigns** d'un test liste les campagnes où il a tourné et ce qu'il y a donné
+`run_campaign` waits for the end (10 minutes at most; past that, `get_campaign(id)` follows it) and
+answers with the report. A list of tests that all belong to one project makes a campaign of that
+project: it is listed with the project's, and its JUnit report files its tests under the project's
+name. In the dashboard, the *Campaigns* page starts a campaign (a project, a requirement or chosen
+tests, a version, how many at a time), follows it live, stops it (the tests running finish, the
+others do not start), runs it again, and gives its *JUnit* and its *HTML report*. A requirement has
+its *Run its tests* button; on the *Tests* page, checked tests start together with
+*Run as campaign*. A test's *Campaigns* tab lists the campaigns it ran in and how it did in each
 (`GET /api/tests/:name/campaigns`).
 
-Pour une CI ou un terminal, sur une machine où tourne le serveur (et le Chrome de l'extension) :
+For a CI or a terminal, on a machine where the server runs (and the Chrome with the extension):
 
 ```bash
 IZITEST_TOKEN=… node mcp-server/bin/campaign.js --project 3 --version 1.4.0 --junit reports/junit.xml --html reports/campaign.html
 ```
 
-`--requirement REQ-12` ou `--tests a,b` à la place de `--project` ; `--concurrency`, `--name`.
-`IZITEST_URL` donne le serveur (par défaut `http://127.0.0.1:3467`). Code de sortie : 0 si tout passe,
-1 si un test échoue ou n'a pas tourné, 2 si la campagne n'a pas pu être lancée. Dans le JUnit, la cause
-du triage est le `type` de chaque `failure`, et les exigences d'un test sont ses `property
-name="requirement"`. Une campagne laissée en cours par un serveur arrêté est marquée `interrupted` au
-redémarrage.
+`--requirement REQ-12` or `--tests a,b` instead of `--project`; `--concurrency`, `--name`.
+`IZITEST_URL` gives the server (by default `http://127.0.0.1:3467`). Exit code: 0 if every test
+passes, 1 if a test fails or did not run, 2 if the campaign could not be started. In the JUnit
+report, the cause from the triage is the `type` of each `failure`, and a test's requirements are its
+`property name="requirement"`. A campaign left running by a server that stopped is marked
+`interrupted` at the restart.
 
-#### Pour un commit : les tests que le changement touche
+#### For a commit: the tests the change touches
 
-Plutôt que tous les tests d'un projet, une campagne peut jouer **ceux qu'un changement touche**, chacun
-choisi avec sa raison, les autres laissés de côté avec la leur. Le risque est un test laissé de côté
-qui aurait échoué : dans le doute, plus de tests tournent, et la sélection le dit.
+Rather than all the tests of a project, a campaign can run **those a change touches**, each
+chosen with its reason, the others left out with theirs. The risk is a test left out that would
+have failed: when in doubt, more tests run, and the selection says so.
 
-**Ce que chaque test touche** (son empreinte). Un rejeu qui passe depuis sa première étape garde :
-- les pages où il est allé ;
-- les requêtes de données (fetch, XHR) que ses pages ont faites à l'appli, front et API, quel que soit
-  le port. Les scripts, les styles, le serveur de dev et les autres sites ne comptent pas ;
-- les appels HTTP de ses étapes serveur ;
-- les requêtes qui ont échoué quand même, sur tous les sites, avec leur statut (`failed` :
-  `GET /manifest.json 404`), et ses étapes telles qu'elles étaient (`steps_hash`). Quand les mêmes
-  étapes échouent plus tard, une requête qui échouait déjà de la même façon sur ce rejeu réussi
-  n'est pas comptée contre l'appli (voir le triage plus bas).
+**What each test touches** (its footprint). A replay that passes from its first step keeps:
+- the pages it went to;
+- the data requests (fetch, XHR) its pages made to the app, front and API, whatever the port.
+  Scripts, styles, the dev server and other sites do not count;
+- the HTTP calls of its server steps;
+- the requests that failed all the same, on every site, with their status (`failed`:
+  `GET /manifest.json 404`), and its steps as they were (`steps_hash`). When the same steps fail
+  later, a request that already failed the same way on this passing replay is not counted
+  against the app (see the triage below).
 
-Les identifiants sont remplacés par `*` : `GET /api/notes/*`. Sans rejeu qui l'ait gardée, un test n'a
-que ce que ses étapes disent (ses navigations, ses pages), et ce que ses pages appellent n'est pas
-connu.
+Identifiers are replaced by `*`: `GET /api/notes/*`. Without a replay that kept it, a test has only
+what its steps say (its navigations, its pages), and what its pages call is not
+known.
 
-**Comment un fichier changé est pesé** (`lib/regression.js`) :
-- **ignoré** : documentation, les tests de l'appli elle-même (`test/`, `*.test.js`, `*.spec.ts`),
-  réglages d'éditeur et de CI ;
-- **partagé**, donc tous les tests : dépendances (`package.json`, lockfiles), configuration et build
-  (`vite.config.ts`, `.env*`, `Dockerfile`), un middleware, le schéma de la base (migrations, `*.sql`),
-  les styles globaux, `index.html`, les traductions ;
-- **utilisé partout** : son nom ne dit aucune partie de l'appli (`App.tsx`, `server.js`, `api.ts`,
-  `utils.js`, `Header.tsx`). Tous les tests, sauf si `touched` dit ce que le changement touche ;
-- **du code** : les mots de son chemin (`api/src/routes/notes.js` → « note ») sont cherchés dans les
-  routes de chaque test (`POST /api/notes`), puis dans son nom (`ManagerPage.tsx` →
-  `ndf_manager_approuve`, utile quand toutes les pages ont la même URL). Un fichier qui ne mène à
-  aucun test fait tout jouer, sauf si `touched` est donné.
+**How a changed file is weighed** (`lib/regression.js`):
+- **ignored**: documentation, the app's own tests (`test/`, `*.test.js`, `*.spec.ts`),
+  editor and CI settings;
+- **shared**, hence every test: dependencies (`package.json`, lockfiles), configuration and build
+  (`vite.config.ts`, `.env*`, `Dockerfile`), a middleware, the database schema (migrations, `*.sql`),
+  global styles, `index.html`, translations;
+- **used everywhere**: its name says no part of the app (`App.tsx`, `server.js`, `api.ts`,
+  `utils.js`, `Header.tsx`). Every test, unless `touched` says what the change touches;
+- **code**: the words of its path (`api/src/routes/notes.js` → "note") are looked for in the
+  routes of each test (`POST /api/notes`), then in its name (`ManagerPage.tsx` →
+  `ndf_manager_approuve`, useful when all the pages have the same URL). A file that leads to
+  no test makes every test run, unless `touched` is given.
 
-**Choisis aussi** :
-- les tests qui vont sur une route de `touched` (`"POST /api/review/notes/:id/approve"`, `"/notes/*"` ;
-  une route sans méthode couvre ses pages et tout ce qui est en dessous) ;
-- ceux des exigences que le message du commit nomme (`fix(NDF-3): …`) ;
-- un test dont l'empreinte n'est pas connue (aucun rejeu ne l'a gardée) ;
-- un test qui a échoué la dernière fois : le changement le corrige-t-il ?
-- ceux de `include` : le socle à toujours jouer (connexion, parcours principal) ;
-- un test qui garde une valeur (`capture`) qu'un test choisi utilise. Les étapes sont alors proposées
-  toutes seules.
+**Also chosen**:
+- the tests that go to a route of `touched` (`"POST /api/review/notes/:id/approve"`, `"/notes/*"`;
+  a route without a method covers its pages and everything under it);
+- those of the requirements the commit message names (`fix(NDF-3): …`);
+- a test whose footprint is not known (no replay kept it);
+- a test that failed last time: does the change fix it?
+- those of `include`: the base to always run (logging in, the main flow);
+- a test that keeps a value (`capture`) a chosen test uses. The stages are then proposed
+  by themselves.
 
-Une route de `touched` où aucun test ne va est signalée (`uncovered`) : ce que le changement y fait
-n'est pas testé. Un changement qui ne touche aucun test ne lance rien : « Nothing to run ».
+A route of `touched` no test goes to is reported (`uncovered`): what the change does there is
+not tested. A change that touches no test starts nothing: "Nothing to run".
 
-Le premier passage ne choisit presque rien : sans empreinte connue, chaque test est pris. Une campagne
-complète les garde toutes.
+The first time, there is hardly any choice: with no footprint known, every test is taken. A full
+campaign keeps them all.
 
-- **MCP** : `plan_regression(project_id, changed_files, touched?, include?, commit_message?)` montre le
-  choix sans rien lancer. `run_campaign(project_id, changed_files, touched?, include?, commit?)` le
-  lance. L'agent qui a écrit le code connaît ses routes : il les passe dans `touched`.
-- **Le commit** (`commit: { sha, branch, message, dirty }`) est gardé avec la campagne, et son sha
-  court en devient la version. Le rapport le dit, avec les tests choisis et laissés de côté
-  (`commit`, `selection` dans l'API).
-- **CI ou hook git**, depuis le dépôt de l'appli :
+- **MCP**: `plan_regression(project_id, changed_files, touched?, include?, commit_message?)` shows the
+  choice without running anything. `run_campaign(project_id, changed_files, touched?, include?, commit?)`
+  runs it. The agent that wrote the code knows its routes: it passes them in `touched`.
+- **The commit** (`commit: { sha, branch, message, dirty }`) is kept with the campaign, and its short
+  sha becomes the campaign's version. The report says so, with the tests chosen and left out
+  (`commit`, `selection` in the API).
+- **CI or git hook**, from the app's repository:
 
   ```bash
   node mcp-server/bin/campaign.js --project 3 --changed origin/main --include ndf_connexion_employe --headless
   ```
 
-  `--changed <ref>` prend les fichiers changés depuis que la branche a quitté `<ref>`, commités ou
-  non, nouveaux compris. Le commit (`HEAD`, sha, branche, message, `dirty`) est gardé avec la campagne.
-  Autres options :
-  - `--files a,b` : la liste des fichiers ;
-  - `--touched "POST /api/notes"` : les routes touchées ;
-  - `--repo <dossier>` : le dépôt, s'il n'est pas le dossier courant ;
-  - `--plan` : montre le choix et s'arrête.
+  `--changed <ref>` takes the files changed since the branch left `<ref>`, committed or not, new
+  ones included. The commit (`HEAD`, sha, branch, message, `dirty`) is kept with the campaign.
+  Other options:
+  - `--files a,b`: the list of files;
+  - `--touched "POST /api/notes"`: the routes touched;
+  - `--repo <dir>`: the repository, if it is not the current folder;
+  - `--plan`: shows the choice and stops.
 
-  Rien à lancer : code de sortie 0.
-- **API** : `POST /api/campaigns/select` (le choix seul) ; `changed_files`, `touched`, `include` et
-  `commit` dans `POST /api/campaigns`. Rien à lancer : `200 { nothing_to_run, message, selection }`.
-- **Tableau de bord** : *New campaign → What a change touches*, avec le projet, les fichiers et les
-  routes. L'aperçu montre les tests choisis, avec leurs raisons, et ceux laissés de côté. « Run it
-  anyway » en ajoute un. Le rapport a une carte *Chosen for the change*.
+  Nothing to run: exit code 0.
+- **API**: `POST /api/campaigns/select` (the choice only); `changed_files`, `touched`, `include` and
+  `commit` in `POST /api/campaigns`. Nothing to run: `200 { nothing_to_run, message, selection }`.
+- **Dashboard**: *New campaign → What a change touches*, with the project, the files and the
+  routes. The preview shows the tests chosen, with their reasons, and those left out.
+  *Run it anyway* adds one. The report has a *Chosen for the change* card.
 
-#### Rejouer sans fenêtre : le Chrome headless
+#### Replaying without a window: the headless Chrome
 
-Un rejeu ouvre sa fenêtre **sans lui donner le focus** : la fenêtre où l'on est le garde, et la page
-rejouée se croit au premier plan quand même (focus émulé par le debugger, captures d'écran faites par
-lui, qui dessine un onglet caché). Une campagne ouvre donc ses fenêtres sans en voler aucune.
+A replay opens its window **without giving it the focus**: the window you are in keeps it, and the
+replayed page believes it is in the foreground all the same (focus emulated by the debugger,
+screenshots taken by it, which draws a hidden tab). So a campaign opens its windows without taking
+the focus from any.
 
-Pour ne plus les voir du tout, un **Chrome sans fenêtre** : Chrome for Testing (le Chrome de Google
-n'accepte plus d'extension chargée par la ligne de commande), installé une fois depuis le tableau de bord
-(**Settings → Headless browser → Install**, ~150 Mo dans `~/.izitest/browsers`), lancé avec l'extension
-du dépôt et un profil à lui (`~/.izitest/profiles/headless`). Il démarre au premier rejeu demandé
-headless et s'arrête avec le serveur, ou avant : après **10 minutes sans travail** (réglable dans
-**Settings → Headless browser → Stop after**, 0 : jamais). Sans travail, c'est-à-dire :
-- aucune commande en cours ni envoyée depuis ;
-- aucun rejeu ni campagne en cours chez lui (même entre deux tests, ou pendant un pas qui attend) ;
-- aucun test en cours d'enregistrement chez lui (l'agent peut attendre la réponse de l'utilisateur).
+To not see them at all, a **headless browser**: Chrome for Testing (Google's Chrome no longer
+accepts an extension loaded from the command line), installed once from the dashboard
+(*Settings → Headless browser → Install*, ~150 MB in `~/.izitest/browsers`), started with the
+extension of the repository and a profile of its own (`~/.izitest/profiles/headless`). It starts at
+the first replay asked headless and stops with the server, or before: after **10 minutes without
+work** (set in *Settings → Headless browser → Stop after*, 0: never). Without work, that is:
+- no command under way nor sent since;
+- no replay or campaign running in it (even between two tests, or during a step that waits);
+- no test being recorded in it (the agent may be waiting for the user's answer).
 
-Ce que fait la vue *Live* pour lui (lister ses onglets toutes les 3 s, les filmer) ne compte pas. Ce qui
-en a besoin le relance : un rejeu ou une campagne headless, une commande qui le nomme
-(`profile: "headless"`), un agent sans autre navigateur. Une campagne headless de 3 à la fois en lance deux de plus,
-`headless-2` et `headless-3`, chacun avec son profil (`~/.izitest/profiles/headless-2`, …), arrêtés à la
-fin de la campagne. Chacun apprend son nom de la page où il démarre
-(`data:text/html,headless-2#izitest-profile=headless-2`). Son extension s'annonce comme le profil **`headless`** : une
-commande qui ne nomme pas de profil n'y va **jamais**, même s'il s'est connecté le premier (`list_profiles`
-le signale) ; un agent ne s'en sert qu'en le nommant (`profile: "headless"`). Ses pages voient un Chrome
-ordinaire (sans « HeadlessChrome » dans le user agent).
+What the *Live* page does for it (listing its tabs every 3 s, filming them) does not count. What
+needs it starts it again: a headless replay or campaign, a command that names it
+(`profile: "headless"`), an agent with no other browser. A headless campaign of 3 at a time starts
+two more, `headless-2` and `headless-3`, each with its profile (`~/.izitest/profiles/headless-2`, …),
+stopped at the end of the campaign. Each learns its name from the page it starts on
+(`data:text/html,headless-2#izitest-profile=headless-2`). Its extension registers as the
+**`headless`** profile: a command that names no profile **never** goes to it, even if it connected
+first (`list_profiles` points it out); an agent uses it only by naming it (`profile: "headless"`).
+Its pages see an ordinary Chrome (no "HeadlessChrome" in the user agent).
 
-- **Tableau de bord** : l'option « Headless — no window » (menu du bouton Run d'un test, formulaire de
-  campagne, Settings), une seule préférence retenue ; « Run as campaign » et « Run its tests » la
-  suivent ; « Run again » refait comme la campagne d'origine. Pas en debug ni avec « Use Agent » : le
-  premier se regarde pas à pas, le second répare dans le Chrome de l'utilisateur. La fenêtre d'un rejeu
-  headless est fermée après.
-- **MCP** : `run_campaign(…, headless: true)`.
-- **CI** : `node mcp-server/bin/campaign.js --project 3 --headless`.
-- **API** : `GET /api/headless` (installé, en cours d'installation, lancé, connecté, les voies connectées,
+- **Dashboard**: the *Headless — no window* option (a test's *Run options*, *New campaign*) and
+  *Run headless by default* (*Settings → Headless browser*), a single preference remembered; *Run
+  as campaign* and *Run its tests* follow it; *Run again* does as the original campaign did. Not in
+  debug nor with *Use Agent*: the first is watched step by step, the second repairs in the user's
+  Chrome. The window of a headless replay is closed after.
+- **MCP**: `run_campaign(…, headless: true)`.
+- **CI**: `node mcp-server/bin/campaign.js --project 3 --headless`.
+- **API**: `GET /api/headless` (installed, being installed, started, connected, the lanes connected,
   `idle_minutes`), `POST /api/headless/install|start|stop`, `PUT /api/headless/settings { idle_minutes }`
-  (minutes entières, 0 à 1440) ; `headless: true` dans `POST /api/tests/:name/execute` et `POST
+  (whole minutes, 0 to 1440); `headless: true` in `POST /api/tests/:name/execute` and `POST
   /api/campaigns`.
 
-#### Le parcours relu avant d'être sauvé
+Its profile is its own: cookies, sessions and storage are not those of the user's Chrome. A
+test of an app behind a login logs in itself.
 
-À `stop_recording`, avant de sauver, le serveur relit les étapes (`lib/recording-review.js`, sans
-modèle) et cherche ce qui passerait une fois puis échouerait à l'exécution suivante :
-- le **nom d'un élément choisi par sa place**, écrit tel quel dans une étape suivante : la vérification
-  que « Penne rigate » est dans la liste, après avoir pris le premier résultat d'une recherche de
-  pâtes. Le nom est d'abord ce que le libellé de l'élément cliqué dit que celui des autres cartes ne
-  dit pas (« Lait demi-écrémé UHT » dans « Ajouter le produit : Lait demi-écrémé UHT à une liste ») ;
-  une étape suivante le nomme si elle le contient en entier, ses échappements CSS défaits
-  (`Supprimer\ le\ produit\ \:\ Lait\ demi-écrémé\ UHT…`). Sans ces libellés, ce sont les mots de la
-  carte : il en faut au moins deux, que toutes ses voisines ne lisent pas (« Afficher le prix »,
-  « 500g », le mot cherché) — un mot seul est souvent celui du site. Tout est lu au clic : la carte de
-  l'élément choisi (un bouton qui ne dit rien, une icône, est lu avec la carte où il est) et ses
-  voisines, gardés avec la variable (`pickedText`, `otherTexts`, `pickedLabel`, `otherLabels`) ;
-- une **valeur tapée**, écrite telle quelle (ou encodée dans une URL) dans le sélecteur ou la valeur
-  attendue d'une étape suivante.
+#### The recording read over before it is saved
 
-Le nom d'un élément choisi par sa place, quand son libellé le donne et que le sélecteur du clic le
-trouve par sa place (pas par ce nom), est **corrigé par le serveur lui-même** : juste après le choix,
-une étape `capture` garde son nom (`{{product_name}}`, lu dans l'attribut d'où vient le libellé, les
-mots autour ôtés par un `pattern`), et les étapes qui le nommaient l'écrivent `{{product_name}}` — leur
-sélecteur, leur valeur attendue, leurs locators. La réponse de `stop_recording` le dit. Au rejeu, la
-2ᵉ carte d'une autre recherche donne son propre nom, et c'est lui qu'on retire de la liste.
+At `stop_recording`, before saving, the server reads the steps over (`lib/recording-review.js`,
+without a model) and looks for what would pass once, then fail at the next run:
+- the **name of an item picked by its place**, written as it was in a later step: the check that
+  "Penne rigate" is in the list, after taking the first result of a search for pasta. The name is
+  first what the label of the element clicked says that the labels of the other cards do not
+  ("Lait demi-écrémé UHT" in "Ajouter le produit : Lait demi-écrémé UHT à une liste");
+  a later step names it if it holds it whole, its CSS escapes undone
+  (`Supprimer\ le\ produit\ \:\ Lait\ demi-écrémé\ UHT…`). Without these labels, it is the words of the
+  card: it takes at least two that its neighbours do not all read (they all read "Afficher le prix",
+  "500g", the word searched for) — a single word is often the site's. Everything is read at the
+  click: the card of the item picked (a button that says nothing, an icon, is read with the card it
+  is in) and its neighbours, kept with the variable (`pickedText`, `otherTexts`, `pickedLabel`,
+  `otherLabels`);
+- a **value typed**, written as it was (or encoded in a URL) in the selector or the expected value
+  of a later step.
 
-Pour le reste, s'il en trouve, le test **n'est pas encore sauvé** : la réponse liste ces étapes avec leur `action_id`
-et comment les corriger pendant que la page est encore là (`record_step(action_id, remove: true)`,
-`capture_value`, `add_assertion` avec `{{valeur}}`). Le second appel à `stop_recording` sauve, corrigé
-ou non. Une valeur tapée que vérifie l'URL encodée (`p%C3%A2tes` pour « pâtes ») est désormais reliée à
-sa variable d'elle-même : une vérification d'URL compare aussi l'URL décodée.
+The name of an item picked by its place, when its label gives it and the click's selector finds
+the element by its place (not by that name), is **fixed by the server itself**: right after the pick,
+a `capture` step keeps its name (`{{product_name}}`, read from the attribute the label comes from, the
+words around it removed by a `pattern`), and the steps that named it write it `{{product_name}}` — their
+selector, their expected value, their locators. The answer of `stop_recording` says so. On a replay,
+the 2nd card of another search gives its own name, and that is the one removed from the list.
 
-#### Un test écrit en Gherkin d'abord
+For the rest, if it finds any, the test **is not saved yet**: the answer lists these steps with
+their `action_id` and how to fix them while the page is still there
+(`record_step(action_id, remove: true)`, `capture_value`, `add_assertion` with `{{value}}`). The
+second call to `stop_recording` saves, fixed or not. A typed value that the encoded URL checks
+(`p%C3%A2tes` for "pâtes") is now linked to its variable by itself: a URL check also compares the
+decoded URL.
 
-Dans le tableau de bord, **New test → Gherkin** : l'utilisateur décrit ce que le test vérifie,
-**Generate Gherkin** fait écrire le scénario à l'agent (`POST /api/projects/:id/scenario/write
-{ name, description }` → `{ gherkin, phrases }`), avec la bibliothèque du projet : ses étapes métier
-d'abord, ses phrases génériques avec les éléments de l'application par leur nom, jamais un sélecteur
-deviné. Ce qu'aucune ne dit, il l'écrit comme une **nouvelle étape**, dans les mots du métier. Un compte, un
-mot de passe, un code : un secret du projet (`{{secret.NAME}}`, il en reçoit les noms, jamais les valeurs)
-ou une valeur de ses jeux de données (`{{users[1].email}}`), jamais un compte inventé ; quand aucun ne
-convient, la valeur reste vide (`""`), et l'agent qui enregistre la demande à l'utilisateur (`ask_user`).
-Le scénario s'affiche, modifiable ; chaque phrase est lue contre la bibliothèque au fil de la saisie
-(`POST /api/projects/:id/scenario/check { gherkin }` → `phrases`), et la fenêtre compte à part les étapes
-métier du projet (listées), les phrases génériques que tout projet a (aller sur, cliquer, voir…) et les
-nouvelles (listées). Chaque phrase est :
-- `library` : une étape métier du projet, jouée d'un coup (`play_business_step`) ;
-- `phrase` : une phrase de la bibliothèque, sur un élément que le projet connaît (l'agent reçoit son
-  sélecteur) ou sur un sélecteur ;
-- `find` : une phrase de la bibliothèque sur un élément que le projet ne connaît pas, écrit par son nom
-  (« je clique sur "Vider le panier" ») : à trouver sur la page ;
-- `new` : une phrase qu'aucune définition ne dit.
+#### A test written in Gherkin first
 
-**Create test** fait enregistrer le test par l'agent, dans le navigateur, sa console et son navigateur
-affichés : `start_recording(name, project_id, scenario)` répond les phrases numérotées et comment faire
-chacune ; avant les actions de chaque phrase, `start_phrase(number, phrase)`. À `stop_recording` :
-- chaque nouvelle phrase devient une **étape métier** du projet, faite des étapes enregistrées pour elle,
-  ses valeurs entre guillemets ses paramètres quand les étapes les utilisent (une variable du test,
-  une valeur tapée) ; une phrase sans étape, ou dont les étapes ne se suivent pas, ne l'est pas, et la
-  réponse le dit ;
-- l'élément d'une phrase qui le nomme est celui-là : l'élément de l'étape est fusionné avec celui du
-  projet qui porte ce nom, ou nommé ainsi s'il n'y en a pas — sauf un élément que l'utilisateur a nommé
-  autrement.
+In the dashboard, *New test → Gherkin*: the user describes what the test checks,
+*Generate Gherkin* has the agent write the scenario (`POST /api/projects/:id/scenario/write
+{ name, description }` → `{ gherkin, phrases }`), with the project's library: its business steps
+first, its generic phrases with the application's elements by name, never a guessed selector.
+What none says, it writes as a **new step**, in the words of the domain. An account, a
+password, a code: a secret of the project (`{{secret.NAME}}`, it gets their names, never the values)
+or a value of its datasets (`{{users[1].email}}`), never an invented account; when none
+fits, the value stays empty (`""`), and the agent recording asks the user for it (`ask_user`).
+The scenario is shown, editable; each phrase is read against the library as you type
+(`POST /api/projects/:id/scenario/check { gherkin }` → `phrases`), and the window counts separately the
+project's business steps (listed), the generic phrases every project has (go to, click, see…) and the
+new ones (listed). Each phrase is:
+- `library`: a business step of the project, played in one go (`play_business_step`);
+- `phrase`: a phrase of the library, on an element the project knows (the agent gets its
+  selector) or on a selector;
+- `find`: a phrase of the library on an element the project does not know, written by its name
+  ("I click on "Empty the cart""): to be found on the page;
+- `new`: a phrase no definition says.
 
-Le test se lit alors comme le scénario a été écrit. L'agent enregistre toujours, même quand toutes les
-phrases sont déjà dans la bibliothèque : le test est vérifié sur l'application avant d'être sauvé. Un
-cas d'une exigence prêt (« Create ») passe par le même enregistrement.
+*Create test* has the agent record the test, in the browser, its console and its browser
+shown: `start_recording(name, project_id, scenario)` answers with the numbered phrases and how to do
+each; before the actions of each phrase, `start_phrase(number, phrase)`. At `stop_recording`:
+- each new phrase becomes a **business step** of the project, made of the steps recorded for it,
+  its values in quotes its parameters when the steps use them (a variable of the test,
+  a typed value); a phrase without a step, or whose steps do not follow one another, does not, and the
+  answer says so;
+- the element of a phrase that names it is that one: the step's element is merged with the
+  project's element that has this name, or named so if there is none — except an element the user
+  named otherwise.
 
-#### Les fenêtres après une exécution ou un enregistrement
+The test then reads as the scenario was written. The agent always records, even when every
+phrase is already in the library: the test is checked on the application before it is saved. A
+ready case of a requirement (*Create*) goes through the same recording.
 
-Dans le Chrome de l'utilisateur, la fenêtre qu'IziTest a ouverte pour une exécution ou un enregistrement
-reste ouverte par défaut une fois le travail fini. L'utilisateur choisit de la faire fermer dans **Settings →
-Browser windows**, dans le menu du bouton Run d'un test (« After the run, its window ») ou dans la fenêtre
-**New test → AI Agent** (« Close the window once the test is saved ») ; c'est un seul réglage pour tout le
-monde, gardé par le serveur (`lib/run-windows.js`) :
+#### The windows after a run or a recording
 
-- `after_run` : `keep` (elle reste ouverte, par défaut), `passed` (elle se ferme quand le test passe ; celle
-  d'un échec reste ouverte, pour être regardée), `always` (elle se ferme, réussie ou en échec : un échec
-  garde sa capture et sa vidéo dans *Runs*). Pour les exécutions du tableau de bord et `run_test` ; avec
-  `run_test`, une exécution en échec garde toujours sa fenêtre, puisque l'agent y répare l'étape, et
-  `close_window` décide pour cet appel. Jamais une exécution en debug, qui se suit pas à pas, ni un
-  onglet de l'utilisateur (« Open in a new window » décoché, `new_window: false`).
-- `after_recording` : la fenêtre où le test a été enregistré se ferme dès que `stop_recording` l'a
-  sauvé (pas un enregistrement annulé faute d'étape) ; la réponse le dit à l'agent, et son prochain
-  `navigate` ouvre une nouvelle fenêtre.
+In the user's Chrome, the window IziTest opened for a run or a recording stays open by default
+once the work is done. The user chooses to have it closed in *Settings → Browser windows*, in a
+test's *Run options* (*After the run, its window*) or in the *New test → AI Agent* window
+(*Close the window once the test is saved*); it is a single setting for everyone, kept by the
+server (`lib/run-windows.js`):
 
-Seule une fenêtre ouverte par IziTest est fermée (`close_window` refuse toute autre), avec les popups
-que ses pages ont ouvertes. Une campagne ferme déjà la fenêtre de chaque test à la fin du test, et le
-Chrome sans fenêtre celle de chaque exécution.
+- `after_run`: `keep` (it stays open, by default), `passed` (it closes when the test passes; a
+  failed run's stays open, to be looked at), `always` (it closes, passed or failed: a failed run
+  keeps its screenshot and its video in *Runs*). For the dashboard's runs and `run_test`; with
+  `run_test`, a failed run always keeps its window, since the agent repairs the step there, and
+  `close_window` decides for that call. Never a debug run, which is followed step by step, nor a
+  tab of the user's (*Open in a new window* unchecked, `new_window: false`).
+- `after_recording`: the window the test was recorded in closes as soon as `stop_recording` has
+  saved it (not a recording cancelled for lack of steps); the answer tells the agent, and its next
+  `navigate` opens a new window.
 
-- **API** : `GET /api/settings/windows` → `{ after_run, after_recording }` ; `PUT /api/settings/windows
-  { after_run?, after_recording? }` (ce qui n'est pas donné ne change pas ; une valeur fausse → 400).
+Only a window IziTest opened is closed (`close_window` refuses any other), with the popups
+its pages opened. A campaign already closes each test's window at the end of the test, and the
+headless browser that of each run.
 
-Son profil est le sien : cookies, sessions et stockage ne sont pas ceux du Chrome de l'utilisateur. Un
-test d'une appli derrière une connexion se connecte lui-même.
+- **API**: `GET /api/settings/windows` → `{ after_run, after_recording }`; `PUT /api/settings/windows
+  { after_run?, after_recording? }` (what is not given does not change; a wrong value → 400).
 
-#### Envoyer une campagne à Xray : `send_results` (connecteur `xray`)
+#### Sending a campaign to Xray: `send_results` (`xray` connector)
 
-La clé d'API de Xray se règle dans le tableau de bord (**Settings → Xray**) : son client id et son secret,
-créés dans Jira → Apps → Xray → API Keys (par un administrateur). Le secret est gardé sur la machine et
-jamais réaffiché ; « Test the API key » vérifie que Xray la prend. À défaut, `XRAY_CLIENT_ID` et
-`XRAY_CLIENT_SECRET` en tiennent lieu ; `XRAY_BASE_URL` désigne un Xray régional
+Xray's API key is set in the dashboard (*Settings → Xray*): its client id and its secret,
+created in Jira → Apps → Xray → API Keys (by an administrator). The secret is kept on the machine and
+never shown again; *Test the connection* checks that Xray takes it. Without it, `XRAY_CLIENT_ID` and
+`XRAY_CLIENT_SECRET` stand in for it; `XRAY_BASE_URL` names a regional Xray
 (`https://eu.xray.cloud.getxray.app`).
 
-`send_results(connector: "xray", id, options)` envoie les résultats d'une campagne terminée, par l'import JSON de Xray Cloud
-(`/api/v2/import/execution`) :
-- une **Test Execution** dans le projet Jira `options.project_key` — par défaut celui des stories que couvrent ses
-  tests, quand elles sont toutes d'un même projet —, ajoutée au Test Plan `options.test_plan_key` s'il est donné ;
-  son résumé est « IziTest — <campagne> (<version>) », sa description les totaux, les régressions, les
-  non-conformités ;
-- chaque test d'IziTest est un **test Generic** de Xray, créé au premier envoi puis retrouvé par sa
-  définition `izitest:<nom>`, libellé `izitest`, **lié aux stories qu'il couvre** (ses exigences importées
-  de Jira) : Xray en montre la couverture ;
-- son résultat : `PASSED`, `FAILED` avec l'étape, l'erreur et le triage en commentaire, ou `TODO` s'il n'a
-  pas tourné ; ses heures de début et de fin.
+`send_results(connector: "xray", id, options)` sends the results of a finished campaign, through
+Xray Cloud's JSON import (`/api/v2/import/execution`):
+- a **Test Execution** in the Jira project `options.project_key` — by default that of the stories its
+  tests cover, when they all belong to one project —, added to the Test Plan
+  `options.test_plan_key` if it is given; its summary is "IziTest — <campaign> (<version>)", its
+  description the totals, the regressions, the non-conformities;
+- each IziTest test is a **Generic test** of Xray, created at the first send then found again by its
+  definition `izitest:<name>`, labelled `izitest`, **linked to the stories it covers** (its requirements
+  imported from Jira): Xray shows their coverage;
+- its result: `PASSED`, `FAILED` with the step, the error and the triage as a comment, or `TODO` if it
+  did not run; its start and end times.
 
-Envoyée à nouveau, la campagne **met à jour sa Test Execution** (sa clé est gardée) : ses résultats, pas
-ses champs (Xray peut ne pas avoir le droit de réécrire ses dates, sur un projet « team-managed »), et
-les mêmes tests, retrouvés par leur définition ; supprimée dans Jira entre-temps, une nouvelle est créée. C'est d'abord un **essai** (`dry_run`, par défaut) qui dit ce
-qui serait envoyé : l'agent le montre et demande avant d'envoyer. Dans le tableau de bord : le rapport
-d'une campagne, **Send the results → Send to Xray…** (le projet et le Test Plan, l'aperçu, puis l'envoi), et
-la Test Execution une fois envoyée. Xray demande un projet où ses types de tickets (Test, Test Execution)
-sont activés ; sur un projet « team-managed », passer d'abord par sa configuration Xray.
+Sent again, the campaign **updates its Test Execution** (its key is kept): its results, not
+its fields (Xray may not be allowed to rewrite its dates, on a "team-managed" project), and
+the same tests, found again by their definition; deleted in Jira in the meantime, a new one is
+created. It is first a **dry run** (`dry_run`, by default) that says what would be sent: the agent
+shows it and asks before sending. In the dashboard: a campaign's report,
+*Send the results → Send to Xray…* (the project and the Test Plan, the preview, then the sending),
+and the Test Execution once sent. Xray needs a project where its issue types (Test, Test Execution)
+are enabled; on a "team-managed" project, go through its Xray configuration first.
 
-### Exploration autonome : `explore_app`
+### Autonomous exploration: `explore_app`
 
-L'explorateur parcourt un site tout seul et rapporte ce qui ne va pas sans qu'aucune assertion
-n'ait été écrite. Depuis `url`, il visite les pages du même site (même origine, en largeur, en
-suivant leurs liens, `max_pages` au plus — 8 par défaut) et, sur chacune, contrôle :
+The explorer walks a site on its own and reports what goes wrong without any assertion
+having been written. From `url`, it visits the pages of the same site (same origin, breadth first,
+following their links, `max_pages` at most — 8 by default) and, on each, checks:
 
-| Contrôle | Ce qui est signalé |
+| Check | What is reported |
 | :--- | :--- |
-| `console` | les erreurs que la page écrit dans la console, et les exceptions qu'elle lève (`Uncaught …`) |
-| `network` | les requêtes répondues 4xx/5xx ou en échec (le favicon excepté) |
-| `links` | les liens vers les pages du site qui ne répondent pas (demandés depuis la page, avec ses cookies ; les liens vers d'autres sites ne sont pas suivis : beaucoup refusent une requête qui n'est pas d'un navigateur) |
-| `a11y` | les règles d'accessibilité enfreintes, par axe-core (WCAG 2.1 A/AA et bonnes pratiques), d'impact *serious* ou *critical* (`include_moderate` pour plus) |
+| `console` | the errors the page writes in the console, and the exceptions it throws (`Uncaught …`) |
+| `network` | the requests answered 4xx/5xx or failed (the favicon excepted) |
+| `links` | the links to the site's pages that do not answer (requested from the page, with its cookies; links to other sites are not followed: many refuse a request that does not come from a browser) |
+| `a11y` | the accessibility rules broken, by axe-core (WCAG 2.1 A/AA and best practices), of *serious* or *critical* impact (`include_moderate` for more) |
 
-Avec `interact` (par défaut), il clique aussi sur chaque contrôle inoffensif de la page — boutons,
-onglets, menus, nommés — et regarde ce que chaque clic fait écrire ou échouer. Jamais ce qui
-supprime, paie, commande, déconnecte, envoie, confirme ou annule (en français comme en anglais), ni
-un lien (il est suivi, pas cliqué). La page est rechargée après un clic qui l'a changée. Aucun
-formulaire n'est envoyé : pour explorer en profondeur (remplir, valider), l'agent connecté utilise
-`check_page` sur la page où il est.
+With `interact` (by default), it also clicks each harmless control of the page — buttons,
+tabs, menus, named — and looks at what each click makes the page write or fail. Never what
+deletes, pays, orders, logs out, sends, confirms or cancels (in French as in English), nor
+a link (it is followed, not clicked). The page is reloaded after a click that changed it. No
+form is submitted: to explore in depth (fill in, submit), the connected agent uses
+`check_page` on the page it is on.
 
-Chaque bug est gardé une fois (même type, même page, même clic, même message, requête, lien ou
-règle) : une exploration suivante le compte à nouveau sans le dupliquer, un bug marqué corrigé et
-revu est rouvert, un bug écarté reste écarté. Chaque nouveau bug reçoit un test qui le reproduit,
-`bug_<id>_<type>` : la page, le clic qui l'a causé, une seconde, puis le contrôle qui échoue tant que
-le bug est là — et passe le jour où il est corrigé. Ce test est rejoué aussitôt (`confirm`) : le bug
-est marqué *reproduit* s'il échoue bien sur ce contrôle. L'exploration tourne dans sa propre fenêtre,
-fermée à la fin, comme celles des tests rejoués. Compter de 2 à 10 s par page : Chrome ralentit une
-page dans une fenêtre en arrière-plan.
+Each bug is kept once (same kind, same page, same click, same message, request, link or
+rule): a later exploration counts it again without duplicating it, a bug marked fixed and
+seen again is reopened, a dismissed bug stays dismissed. Each new bug gets a test that reproduces it,
+`bug_<id>_<kind>`: the page, the click that caused it, a second, then the check that fails as long as
+the bug is there — and passes the day it is fixed. This test is replayed at once (`confirm`): the bug
+is marked *reproduced by its test* if it does fail on this check. The exploration runs in a window of
+its own, closed at the end, like those of replayed tests. Allow 2 to 10 s per page: Chrome slows down
+a page in a background window.
 
-Les quatre contrôles sont aussi des types d'assertion (`add_assertion`) : ajouté à un test qui
-échoue dessus, un tel contrôle n'est pas refusé — le test reproduit alors le bug ; s'il passe, il en
-protège. Un test de bug qui échoue est diagnostiqué `app_regression` : la page a toujours le bug.
+The four checks are also assertion types (`add_assertion`): added to a test that
+fails on it, such a check is not refused — the test then reproduces the bug; if it passes, it
+guards against it. A bug's test that fails is diagnosed `app_regression`: the page still has the bug.
 
-Le tableau de bord a une page **Bugs** : lancer une exploration (URL, nombre de pages, clics ; l'URL de
-base du projet pour commencer, et l'exploration est rattachée à ce projet), suivre la dernière, et la
-liste des bugs du projet du tableau de bord, du plus grave au moins grave, filtrée par statut, type,
-origine et gravité, avec leur test et les actions *Fixed*, *Dismiss*, *Reopen*. `/bugs?bug=12` n'en montre
-qu'un. API : `GET /api/bugs?status=&project_id=`, `PUT /api/bugs/:id`, `GET|POST /api/explorations`.
+The dashboard has a *Bugs* page: start an exploration (*Start URL*, *Pages*, *Click controls*; the
+project's base URL to start from, and the exploration is attached to that project), follow the
+latest, and the list of the bugs of the dashboard's current project, from the most to the least
+severe, filtered by status, kind, origin and severity, with their test and the actions *Fixed*,
+*Dismiss*, *Reopen*. `/bugs?bug=12` shows only one. API: `GET /api/bugs?status=&project_id=`,
+`PUT /api/bugs/:id`, `GET|POST /api/explorations`.
 
-#### Les bugs que rencontre un test
+#### The bugs a test meets
 
-**Par défaut, un échec n'ouvre pas de bug tout seul** : une personne lit l'exécution et signale le bug
-depuis son rapport (onglet *Runs* du test, bouton **Report a bug** sur une exécution en échec). Le bug
-est ouvert avec ce que l'exécution sait (son étape en échec, l'attendu et le lu, la page, la campagne),
-quel que soit le diagnostic, et l'exécution y est liée (bouton *Bug #N*). Un diagnostic peut se
-tromper : ouverts tout seuls, des bugs dus au test remplissaient la page Bugs. `run_test` dit quand le
-diagnostic met l'échec sur l'appli, pour que l'agent le signale à l'utilisateur. Route :
+**By default, a failure does not open a bug by itself**: a person reads the run and reports the bug
+from its report (the test's *Runs* tab, *Report a bug* button on a failed run). The bug
+is opened with what the run knows (its failed step, what was expected and what was read, the page,
+the campaign), whatever the diagnosis, and the run is linked to it (*Bug #N* button). A diagnosis
+can be wrong: opened by themselves, bugs due to the test filled the *Bugs* page. `run_test` says
+when the diagnosis puts the failure on the app, so that the agent reports it to the user. Route:
 `POST /api/executions/{id}/bug`.
 
-Cochée dans le projet (*Projects → Edit → Open a bug automatically when a test fails*, `auto_bugs`), la
-règle d'avant s'applique : un test dont l'échec est mis sur le compte de l'appli ouvre aussi un bug dans
-cette page. Cela vaut pour un échec en campagne, par `run_test` ou depuis le tableau de bord, quand le
-diagnostic dit :
-- `non_conformity` : l'appli ne fait pas ce que dit l'exigence. Type *Non-conformity*, gravité haute.
-- `app_regression` : l'appli échoue là où le test passait. Type *Regression*, gravité haute si une
-  requête de l'appli a répondu 5xx ou rien, moyenne sinon. Les requêtes que le triage met de côté
-  (un manifeste, le script d'analytics d'un autre site bloqué par un proxy…) ne comptent pas.
+When it is checked in the project (*Projects → Edit → Open a bug automatically when a test fails*,
+`auto_bugs`), the earlier rule applies: a test whose failure is put on the app also opens a bug in
+this page. This holds for a failure in a campaign, through `run_test` or from the dashboard, when the
+diagnosis says:
+- `non_conformity`: the app does not do what the requirement says. Kind *Non-conformity*, high severity.
+- `app_regression`: the app fails where the test used to pass. Kind *Regression*, high severity if a
+  request of the app answered 5xx or nothing, medium otherwise. The requests the triage sets aside
+  (a manifest, another site's analytics script blocked by a proxy…) do not count.
 
-Un `app_regression` de confiance faible, quand rien sur la page ne dit que l'appli a failli, n'ouvre pas
-de bug. Un échec dû au test (`test_drift`, `timing`, `test_outdated`, `session_state`) ou à
-l'environnement n'en ouvre pas non plus.
+A low-confidence `app_regression`, when nothing on the page says the app failed, opens no
+bug. A failure due to the test (`test_drift`, `timing`, `test_outdated`, `session_state`) or to
+the environment opens none either.
 
-Le bug garde :
-- son titre, qui dit le critère non respecté puis ce qui a mal tourné : « NDF-2 criterion 3 not met:
-  POST /api/notes/*/submit answered 400 », ou « expected "42,50", the page shows "…42,00 €…" ». Sans
-  valeur attendue ni requête de l'appli en échec, l'étape et son intention : « step 7 (Open Create
-  User Request) fails ». Une requête mise de côté par le triage ne donne jamais son nom à un bug ;
-- le diagnostic, l'étape, les requêtes refusées, le message de la page ;
-- les critères d'exigence que le test vérifie ;
-- la campagne, avec son commit.
+The bug keeps:
+- its title, which says the criterion not met, then what went wrong: "NDF-2 criterion 3 not met:
+  POST /api/notes/*/submit answered 400", or "expected "42,50", the page shows "…42,00 €…"". Without
+  an expected value or a failed request of the app, the step and its intent: "step 7 (Open Create
+  User Request) fails". A request set aside by the triage never gives its name to a bug;
+- the diagnosis, the step, the requests refused, the page's message;
+- the requirement criteria the test checks;
+- the campaign, with its commit.
 
-Son test de reproduction est le test qui a échoué : aucun autre n'est créé. L'exécution est liée au
+Its reproduction test is the test that failed: no other is created. The run is linked to the
 bug.
 
-Le même échec, sur le même test, la même étape et la même ligne de jeu de données, est **le même
-bug** : il compte une occurrence de plus. Un bug *Fixed* revu repasse *Open* ; un bug *Dismissed* le
-reste.
+The same failure, on the same test, the same step and the same dataset row, is **the same
+bug**: it counts one more occurrence. A *Fixed* bug seen again goes back to *Open*; a *Dismissed* bug stays
+so.
 
-Quand le test **repasse, depuis sa première étape**, ses bugs passent *Fixed*, avec l'exécution qui les
-a vus corrigés, sauf si le test a changé depuis le bug : ses commandes, paramètres ou contrôles. Un
-test changé peut passer parce qu'il ne vérifie plus ce qui échouait ; le bug reste alors ouvert, et la
-page Bugs comme `run_test` disent de vérifier à la main. Le rejeu d'une réparation en cours de
-vérification n'ouvre ni ne ferme de bug.
+When the test **passes again, from its first step**, its bugs become *Fixed*, with the run that
+saw them fixed, unless the test has changed since the bug: its commands, parameters or checks. A
+changed test may pass because it no longer checks what was failing; the bug then stays open, and the
+*Bugs* page and `run_test` both say to check by hand. The replay of a repair being
+verified neither opens nor closes a bug.
 
-La campagne liste les bugs que ses tests ont rencontrés, nouveaux ou déjà vus, et ceux qu'elle a vus
-corrigés : dans son rapport (texte, HTML, carte *Bugs* du tableau de bord), et à côté de chaque test en
-échec. `run_test` dit le bug ouvert ou revu, puis ceux que le test passé a corrigés.
+The campaign lists the bugs its tests met, new or already seen, and those it saw
+fixed: in its report (text, HTML, the dashboard's *Bugs* card), and beside each failed
+test. `run_test` says the bug opened or seen again, then those the passing test fixed.
 
-#### Signaler et traiter un bug : `report_bug`, `update_bug`, `send_bug`
+#### Reporting and handling a bug: `report_bug`, `update_bug`, `send_bug`
 
-`report_bug` garde un bug qu'une personne décrit avec ses mots : `title`, `description` (ce qui se
-passe et comment y arriver), `expected`, `page_url`, `severity`, `priority`, `assignee`,
-`project_id`, `requirement`. Le bug n'a pas encore de test. La réponse dit à l'agent comment le
-reproduire : suivre le signalement dans le navigateur, puis enregistrer le test `bug_<id>_repro`, qui
-finit par un contrôle du comportement **attendu**. Ce test échoue tant que le bug est là ; quand il
-passe, le bug se ferme seul. Le nom du test suffit à le lier au bug. Si l'agent ne reproduit pas le
-bug, il n'enregistre rien et dit ce qu'il a essayé. Dans le tableau de bord : *Bugs → Report a bug*,
-puis *Reproduce*.
+`report_bug` keeps a bug a person describes in their own words: `title`, `description` (what
+happens and how to get there), `expected`, `page_url`, `severity`, `priority`, `assignee`,
+`project_id`, `requirement`. The bug has no test yet. The answer tells the agent how to
+reproduce it: follow the report in the browser, then record the test `bug_<id>_repro`, which
+ends on a check of the **expected** behaviour. This test fails as long as the bug is there; when it
+passes, the bug closes by itself. The test's name is enough to link it to the bug. If the agent does
+not reproduce the bug, it records nothing and says what it tried. In the dashboard:
+*Bugs → Report a bug*, then *Reproduce*.
 
-`update_bug` traite un bug : `priority` (urgence de la correction), `assignee`, `severity`, `title`,
-`repro_test`, et `status` :
+`update_bug` handles a bug: `priority` (how urgent the fix is), `assignee`, `severity`, `title`,
+`repro_test`, and `status`:
 
-| Statut | Sens |
+| Status | Meaning |
 |---|---|
-| `open` | À corriger. |
-| `to_retest` | Les développeurs le disent corrigé : son test doit le confirmer. S'il passe, le bug est *fixed* ; s'il échoue, il repasse *open*. |
-| `deferred` | Vrai bug, pas corrigé pour l'instant. Il le reste s'il est revu, et se ferme si son test passe. |
-| `duplicate` | Le même qu'un autre (`duplicate_of`). |
-| `fixed` | Posé par le test qui repasse ; à la main seulement quand aucun test ne peut le montrer. |
-| `dismissed` | Pas un bug. |
+| `open` | To be fixed. |
+| `to_retest` | The developers say it is fixed: its test has to confirm it. If it passes, the bug is *fixed*; if it fails, it goes back to *open*. |
+| `deferred` | A real bug, not fixed for now. It stays so if it is seen again, and closes if its test passes. |
+| `duplicate` | The same as another (`duplicate_of`). |
+| `fixed` | Set by the test passing again; by hand only when no test can show it. |
+| `dismissed` | Not a bug. |
 
-`list_bugs` accepte ces statuts, et `unresolved` : *open*, *to_retest* et *deferred*.
+`list_bugs` takes these statuses, and `unresolved`: *open*, *to_retest* and *deferred*.
 
-`send_bug` envoie le bug au gestionnaire de tickets de l'équipe (connecteur `jira`, rôle `bugs`) :
-ce qui ne va pas, ce qui était attendu, le test qui le reproduit, l'exigence touchée. C'est un
-**essai à blanc par défaut** : la réponse montre ce qui serait écrit. `dry_run: false` écrit, et
-l'agent ne le fait que sur un oui explicite de la personne. `project_key` dit le projet Jira ; à
-défaut, celui de l'exigence touchée quand elle vient de Jira. Renvoyé, le même ticket est mis à jour
-(titre et description). IziTest ne relit pas le statut du ticket Jira.
+`send_bug` sends the bug to the team's issue tracker (`jira` connector, `bugs` role):
+what goes wrong, what was expected, the test that reproduces it, the requirement it breaks. It is a
+**dry run by default**: the answer shows what would be written. `dry_run: false` writes, and
+the agent does so only on the person's explicit yes. `project_key` names the Jira project; without
+it, that of the requirement it breaks when that one comes from Jira. Sent again, the same issue is updated
+(title and description). IziTest does not read back the status of the Jira issue.
 
-### Risque produit, plan de test et rapports
+### Product risk, test plan and reports
 
-`save_requirement` prend `likelihood` et `impact` (`low`, `medium`, `high`) : la probabilité que
-l'exigence casse et ce que cela coûte. Les deux donnent son niveau de risque. `design_tests` prévoit
-plus de cas pour un risque haut, une campagne joue ses tests en premier, et les rapports la nomment
-tant qu'elle ne passe pas : c'est le risque résiduel.
+`save_requirement` takes `likelihood` and `impact` (`low`, `medium`, `high`): how likely the
+requirement is to break and what that costs. Both give its risk level. `design_tests` plans
+more cases for a high risk, a campaign runs its tests first, and the reports name it
+as long as it does not pass: that is the residual risk.
 
-`run_campaign` prend un plan de test : `objective`, `scope_note` et `exit_criteria`.
+`run_campaign` takes a test plan: `objective`, `scope_note` and `exit_criteria`.
 
-| Critère | Atteint quand |
+| Criterion | Met when |
 |---|---|
-| `high_requirements_passing` | Chaque exigence de priorité haute ou de risque haut que la campagne vérifie passe. |
-| `no_open_high_bug` | Aucun bug de gravité haute rencontré par la campagne n'est *open* ou *to_retest*. Un bug *deferred* ne compte pas. |
-| `min_coverage` | La part des critères d'acceptation qu'un test de la campagne a joués atteint ce pourcentage. |
-| `min_pass_rate` | La part des tests réussis atteint ce pourcentage. |
+| `high_requirements_passing` | Every requirement of high priority or high risk the campaign checks passes. |
+| `no_open_high_bug` | No high-severity bug the campaign met is *open* or *to_retest*. A *deferred* bug does not count. |
+| `min_coverage` | The share of the acceptance criteria a test of the campaign ran reaches this percentage. |
+| `min_pass_rate` | The share of the tests that passed reaches this percentage. |
 
-`get_campaign` donne alors le verdict, critère par critère avec la valeur mesurée, et le risque
-résiduel. Le rapport HTML d'une campagne finie qui a un plan est son rapport de clôture. L'API :
-`POST /api/campaigns` prend les mêmes champs, `PUT /api/campaigns/:id` change le plan d'une campagne
-existante. En ligne de commande : `--objective`, `--scope-note`, `--require-high`, `--no-high-bug`,
-`--min-coverage`, `--min-pass-rate` ; le code de sortie suit alors le verdict.
+`get_campaign` then gives the verdict, criterion by criterion with the value measured, and the
+residual risk. The HTML report of a finished campaign that has a plan is its completion report. The API:
+`POST /api/campaigns` takes the same fields, `PUT /api/campaigns/:id` changes the plan of an existing
+campaign. On the command line: `--objective`, `--scope-note`, `--require-high`, `--no-high-bug`,
+`--min-coverage`, `--min-pass-rate`; the exit code then follows the verdict.
 
-`get_progress_report` donne le rapport d'avancement d'une période (`project_id`, `from`, `to` ; les
-7 derniers jours par défaut) : exécutions et taux de réussite, campagnes et verdicts, exigences par
-couverture et par risque, bugs ouverts et corrigés avec leur tendance, obstacles, risque résiduel,
-suite prévue. La même chose en page à imprimer ou à envoyer :
-`/api/reports/progress.html?project_id=&from=&to=`, et dans la page *Reports* du tableau de bord.
+`get_progress_report` gives the progress report of a period (`project_id`, `from`, `to`; the
+last 7 days by default): runs and pass rate, campaigns and verdicts, requirements by
+coverage and by risk, bugs opened and fixed with their trend, what is in the way, residual risk,
+what comes next. The same as a page to print or send:
+`/api/reports/progress.html?project_id=&from=&to=`, and in the dashboard's *Reports* page.
 
-### Triage et réparation d'un test qui échoue
+### Triage and repair of a failing test
 
-Un échec est diagnostiqué au moment où il arrive, sur la page où il s'est produit (la fenêtre du
-rejeu y reste), que le test soit lancé par `run_test` ou depuis le tableau de bord — pas en debug pas
-à pas. Le diagnostic est déterministe — il n'appelle aucun modèle : l'agent connecté reste celui qui
-raisonne sur les cas ambigus, avec les preuves qu'on lui donne. Il est gardé avec l'exécution, montré
-dans la sortie de `run_test` (section `=== TRIAGE ===`), dans la fenêtre d'exécution et dans
-l'historique du tableau de bord.
+A failure is diagnosed the moment it happens, on the page where it occurred (the replay's
+window stays there), whether the test is started by `run_test` or from the dashboard — not in
+step-by-step debug. The diagnosis is deterministic — it calls no model: the connected agent remains the one that
+reasons about the ambiguous cases, with the evidence it is given. It is kept with the run, shown
+in the output of `run_test` (section `=== TRIAGE ===`), in the run's live window and in
+the dashboard's run history.
 
-| Cause | Ce que ça veut dire | Réparation proposée |
+| Cause | What it means | Repair proposed |
 | :--- | :--- | :--- |
-| `test_drift` | Le test a cassé, pas forcément l'appli : aucun localisateur ne trouve plus l'élément, mais la page a un élément qui lui ressemble clairement (même nom ou nom proche, même rôle, même placeholder, même test ID), ou le texte qu'une assertion lit est ailleurs, dans un seul élément | `relocate` : l'étape pointe vers cet élément (sélecteur, localisateurs, rôle et nom) |
-| `timing` | L'élément est là maintenant, sous un sélecteur de l'étape ; ou l'assertion passe 1,5 s plus tard | `wait` : une attente insérée avant l'étape |
-| `changed_value` | Une assertion lit une autre valeur : régression, ou changement voulu (nouveau libellé) | `expect`, **à juger par une personne** : attendre la nouvelle valeur. Jamais pour la valeur d'une variable, ni pour un long texte lu par « contient » |
-| `disabled` | L'élément est là mais désactivé | — |
-| `app_regression` | L'élément a disparu, ou la valeur a changé, et la page signale une erreur (`role="alert"`, requête de l'appli en 4xx/5xx ou sans réponse, citée dans le résumé : « POST /api/notes/111/submit answered 400 ») ; ou elle n'affiche pas la valeur que le test a saisie ; ou l'étape cherche ce que le test a créé (une ligne trouvée par `{{description}}`) et la page ne montre plus cette valeur nulle part | — : à signaler, pas à « réparer » |
-| `environment` | La page ne s'est pas chargée (erreur réseau, page servie en 5xx) | — |
-| `test_outdated` | Une assertion lit une autre valeur, et l'exigence que le test vérifie dit cette valeur-là maintenant (« le statut « À soumettre » ») et plus l'attendue : l'exigence a changé, le test n'a pas suivi. Avant, c'était une `non_conformity`, et l'agent qui venait de mettre l'exigence à jour s'entendait dire de ne pas toucher au test | `expect` sans revue : attendre ce que dit l'exigence |
-| `session_state` | Une étape de connexion ne trouve pas le formulaire, et la page propose de se déconnecter (« Se déconnecter », « Log out ») : le navigateur était déjà connecté, par un rejeu d'avant. Une étape « de connexion » tape un mot de passe ou un secret, ou précède de peu celle qui le fait | — : faire partir le test déconnecté (une première étape vers l'URL de déconnexion de l'appli, ou une voie headless à lui), sans toucher à ses étapes de connexion |
-| `unknown` | Rien de tout ça, ou plusieurs éléments ressemblent autant à celui cherché, ou montrent tous le texte qu'une assertion lit (le statut de chaque ligne d'une liste) | — |
+| `test_drift` | The test broke, not necessarily the app: no locator finds the element any more, but the page has an element that clearly resembles it (same or similar name, same role, same placeholder, same test ID), or the text an assertion reads is elsewhere, in a single element | `relocate`: the step points at this element (selector, locators, role and name) |
+| `timing` | The element is there now, under a selector of the step; or the assertion passes 1.5 s later | `wait`: a wait inserted before the step |
+| `changed_value` | An assertion reads another value: a regression, or an intended change (new wording) | `expect`, **for a person to judge**: expect the new value. Never for the value of a variable, nor for a long text read by "contains" |
+| `disabled` | The element is there but disabled | — |
+| `app_regression` | The element has disappeared, or the value has changed, and the page reports an error (`role="alert"`, a request of the app in 4xx/5xx or without an answer, quoted in the summary: "POST /api/notes/111/submit answered 400"); or it does not show the value the test typed; or the step looks for what the test created (a row found by `{{description}}`) and the page no longer shows that value anywhere | — : to report, not to "repair" |
+| `environment` | The page did not load (network error, page served in 5xx) | — |
+| `test_outdated` | An assertion reads another value, and the requirement the test checks says that value now ("the status "À soumettre"") and no longer the expected one: the requirement changed, the test did not follow. Before, it was a `non_conformity`, and the agent that had just updated the requirement was told not to touch the test | `expect` without review: expect what the requirement says |
+| `session_state` | A login step does not find the form, and the page offers to log out ("Se déconnecter", "Log out"): the browser was already logged in, by an earlier replay. A "login" step types a password or a secret, or comes shortly before the one that does | — : make the test start logged out (a first step to the app's logout URL, or a headless lane of its own), without touching its login steps |
+| `unknown` | None of these, or several elements resemble the one looked for equally, or all show the text an assertion reads (the status of each row of a list) | — |
 
-Une requête en échec n'est pas une erreur de la page quand elle a été redemandée ensuite avec succès,
-ou quand c'est un 401 ou 403 suivi d'une requête réussie vers le même site : c'est la vérification de
-session avant la connexion (`GET /api/auth/me` en 401, puis la connexion et les notes en 200). Elle
-faisait dire « la page signale une erreur » sur toute appli avec une connexion.
+A failed request is not an error of the page when it was asked again later with success,
+or when it is a 401 or 403 followed by a successful request to the same site: it is the session
+check before the login (`GET /api/auth/me` in 401, then the login and the notes in 200). It
+made the triage say "the page reports an error" on every app with a login.
 
-Une requête qui échoue sur toutes les pages ne dit rien de l'échec d'un test. Le triage la met de
-côté, avec sa raison, et ne la compte pas contre l'appli :
-- un manifeste, une balise ou un ping (`manifest.json`, `*.webmanifest`, `beacon`, type `manifest`
-  ou `ping`) : le navigateur les demande, pas l'appli ;
-- une requête vers un autre site que celui de l'appli. Le site de l'appli est le domaine de la page,
-  des URL où le test navigue et de l'URL de base du projet, sous-domaines compris : `api.exemple.com`
-  est l'appli d'`app.exemple.com`, `cdn.pendo.io` ne l'est pas ;
-- une requête d'analytics sans réponse (Pendo, Google Analytics, Cloudflare Insights, Segment,
-  Hotjar, Sentry…, ou un chemin `analytics`, `collect`, `telemetry`, `tracking`) : un proxy ou un
-  bloqueur l'arrête ;
-- une requête abandonnée par le navigateur (`net::ERR_ABORTED` : la page a été quittée avant la
-  réponse ; `net::ERR_BLOCKED_BY_CLIENT` : une extension l'a bloquée) ;
-- une requête qui échouait déjà, avec le même statut, sur le dernier rejeu réussi des mêmes étapes
-  du test. Ce rejeu garde ses requêtes en échec dans son empreinte. Un 500 là où ce rejeu avait un
-  404 compte. Si le test a changé depuis, ou si aucun rejeu réussi ne les a encore gardées, cette
-  règle ne joue pas.
+A request that fails on every page says nothing of a test's failure. The triage sets it
+aside, with its reason, and does not count it against the app:
+- a manifest, a beacon or a ping (`manifest.json`, `*.webmanifest`, `beacon`, type `manifest`
+  or `ping`): the browser asks for them, not the app;
+- a request to another site than the app's. The app's site is the domain of the page,
+  of the URLs the test navigates to and of the project's base URL, subdomains included: `api.example.com`
+  is the app of `app.example.com`, `cdn.pendo.io` is not;
+- an analytics request with no answer (Pendo, Google Analytics, Cloudflare Insights, Segment,
+  Hotjar, Sentry…, or a path `analytics`, `collect`, `telemetry`, `tracking`): a proxy or a
+  blocker stops it;
+- a request given up by the browser (`net::ERR_ABORTED`: the page was left before the
+  answer; `net::ERR_BLOCKED_BY_CLIENT`: an extension blocked it);
+- a request that already failed, with the same status, on the last passing replay of the same steps
+  of the test. That replay keeps its failed requests in its footprint. A 500 where that replay had a
+  404 counts. If the test has changed since, or if no passing replay has kept them yet, this
+  rule does not apply.
 
-Exemple sur un portail de gestion des identités, le 12 novembre 2026. Sur chaque page, `GET /manifest.json` répondait
-404, les scripts de Pendo et de Cloudflare Insights restaient sans réponse et
-`GET /ECMv6/api/idw/personalizations/1` répondait 404 :
-- **Avant** : chaque élément que le rejeu ne trouvait pas devenait un `app_regression`, puis une
-  `non_conformity` de REQ-37 ou REQ-38. Huit bugs ont été ouverts en un jour, en gravité haute, avec
-  des titres comme « REQ-38 not met: GET /manifest.json answered 404 ».
-- **Maintenant** : le manifeste, Pendo et Cloudflare sont mis de côté. `personalizations` l'est aussi
-  dès qu'un rejeu réussi l'a vue échouer. L'échec est alors `unknown`, en confiance faible, et
-  n'ouvre pas de bug. Avant ce rejeu réussi, ce 404 de l'API de l'appli compte encore.
+Example on an identity management portal, on 12 November 2026. On every page, `GET /manifest.json` answered
+404, Pendo's and Cloudflare Insights' scripts got no answer and
+`GET /ECMv6/api/idw/personalizations/1` answered 404:
+- **Before**: every element the replay did not find became an `app_regression`, then a
+  `non_conformity` of REQ-37 or REQ-38. Eight bugs were opened in one day, at high severity, with
+  titles like "REQ-38 not met: GET /manifest.json answered 404".
+- **Now**: the manifest, Pendo and Cloudflare are set aside. `personalizations` is too
+  as soon as a passing replay has seen it fail. The failure is then `unknown`, at low confidence, and
+  opens no bug. Before that passing replay, this 404 of the app's API still counts.
 
-Une étape qui cherche ce que le test a créé n'est jamais « réparée » vers un autre élément. Exemple
-avec « Notes de frais » : une note de 200 € (le plafond transport) est refusée à tort à la soumission.
-Le test attendait sa ligne au statut « Soumise », puis la vérifiait sur la page du manager :
-- **Avant** : l'attente échouait sans rien dire et le test échouait 7 étapes plus loin. Le triage
-  trouvait « Soumise » sur la première ligne du tableau, celle d'une autre note, concluait à un
-  `test_drift`, et proposait de vérifier cette ligne-là. Acceptée, cette réparation aurait fait
-  repasser le test sur la note de quelqu'un d'autre et caché le bug.
-- **Maintenant** : le test échoue sur l'attente, en `non_conformity` au critère 3 de NDF-2, avec le
-  400 de la soumission. Aucune réparation n'est proposée.
+A step that looks for what the test created is never "repaired" towards another element. Example
+with "Notes de frais": an expense note of €200 (the transport ceiling) is wrongly refused when submitted.
+The test waited for its row at the status "Soumise", then checked it on the manager's page:
+- **Before**: the wait failed without saying anything and the test failed 7 steps further on. The triage
+  found "Soumise" on the first row of the table, that of another note, concluded it was a
+  `test_drift`, and proposed to check that row. Accepted, this repair would have made
+  the test pass again on someone else's note and hidden the bug.
+- **Now**: the test fails on the wait, as a `non_conformity` on criterion 3 of NDF-2, with the
+  400 of the submission. No repair is proposed.
 
-Les preuves accompagnent le diagnostic : l'adresse de la page, ses alertes, les requêtes en échec
-(celles mises de côté à part, chacune avec sa raison : « Not counted against the app: … »), les
-meilleurs candidats avec leur score, et combien de fois le test est passé avant.
+The evidence comes with the diagnosis: the page's address, its alerts, the failed requests
+(those set aside apart, each with its reason: "Not counted against the app: …"), the
+best candidates with their score, and how many times the test passed before.
 
-Une réparation n'est jamais appliquée toute seule. `verify_repair` (ou **Verify** dans l'historique)
-rejoue le test avec elle, sans l'enregistrer, avec les variables et substitutions de l'exécution qui
-a échoué : vérifiée si tout le test passe, assertions comprises. `resolve_repair` (**Apply** /
-**Reject**) l'enregistre ou l'écarte ; une autre réparation encore ouverte pour la même étape est
-alors remplacée (`superseded`). Une réparation qui trouve son élément autrement peut s'appliquer à toutes
-les étapes qui agissent sur lui (`all_uses`, voir « Les éléments d'un projet »). Une étape modifiée depuis la proposition n'est pas réparée à
-l'aveugle (`stale`). Le même échec revu propose la même réparation : elle est réutilisée, pas
-dupliquée. Les rejeux de vérification apparaissent dans l'historique avec le déclencheur `repair`.
+A repair is never applied by itself. `verify_repair` (or *Verify* in the run history)
+replays the test with it, without saving it, with the variables and substitutions of the run that
+failed: verified if the whole test passes, assertions included. `resolve_repair` (*Apply* /
+*Reject*) saves it or discards it; another repair still open for the same step is
+then replaced (`superseded`). A repair that finds its element another way can apply to all
+the steps that act on it (`all_uses`, see "The elements of a project"). A step modified since the
+proposal is not repaired blindly (`stale`). The same failure seen again proposes the same repair: it
+is reused, not duplicated. The verification replays appear in the history with the trigger `repair`.
 
-Les étapes du rejeu sont numérotées comme dans le test : une assertion placée au milieu décalait
-d'un cran toutes les étapes suivantes, et l'échec était signalé (et réparé) sur la mauvaise. Une étape
-du navigateur qui échoue après une étape serveur (une capture, un appel d'API) garde aussi son
-numéro et son diagnostic. Avant, les résultats de son segment se perdaient au retour, et l'échec
-arrivait sans étape ni diagnostic.
+The steps of the replay are numbered as in the test: an assertion placed in the middle used to shift
+every following step by one, and the failure was reported (and repaired) on the wrong one. A browser
+step that fails after a server step (a capture, an API call) also keeps its
+number and its diagnosis. Before, the results of its segment were lost on the way back, and the failure
+arrived without a step or a diagnosis.
 
 ### Visual Regression Testing (VRT)
 
-Pour activer le VRT lors de l'enregistrement :
+To enable VRT when recording:
 ```javascript
-start_recording("mon_test", { use_vrt: true })
+start_recording("my_test", { use_vrt: true })
 ```
 
-Puis ajoutez une assertion visuelle rétroactive :
+Then add a retroactive visual assertion:
 ```javascript
-add_retroactive_vrt("mon_test", { step_order: 3, selector: "#header" })
+add_retroactive_vrt("my_test", { step_order: 3, selector: "#header" })
 ```
 
-| Paramètre | Type | Description |
+| Parameter | Type | Description |
 | :--- | :--- | :--- |
-| `test_name` | string | Nom du test |
-| `step_order` | number | Position de l'étape de référence (1-indexed) |
-| `selector` | string | (Optionnel) Sélecteur CSS pour cibler un élément spécifique |
+| `test_name` | string | Name of the test |
+| `step_order` | number | Position of the reference step (1-indexed) |
+| `selector` | string | (Optional) CSS selector to target a specific element |
 
 ---
 [< Previous: Usage](usage.md) | [Next: Multi-Account Management >](multi-account.md)

@@ -1,115 +1,115 @@
-# Sessions parallèles 🧵
+# Parallel sessions 🧵
 
-Plusieurs agents peuvent piloter le navigateur **en même temps**, chacun dans sa propre
-fenêtre Chrome, sans se marcher dessus.
+Several agents can drive the browser **at the same time**, each in its own Chrome
+window, without stepping on each other.
 
-## Le principe
+## The principle
 
-**Une connexion MCP = une session = une fenêtre.**
+**One MCP connection = one session = one window.**
 
-Une session possède, à elle seule :
+A session has, all to itself:
 
-| Ce qui est isolé | Pourquoi ça compte |
+| What is isolated | Why it matters |
 |---|---|
-| L'onglet de travail | Chaque commande est épinglée à l'onglet de la session. Un `click` sans `tabId` ne peut plus atterrir dans la fenêtre d'un autre agent. |
-| La carte de refs (`@eX`) | Le `snapshot` de l'agent B n'écrase plus celui de l'agent A — qui, sinon, cliquait silencieusement sur le mauvais élément. |
-| L'enregistrement en cours | Deux agents peuvent enregistrer deux tests simultanément sans que les steps s'entrelacent. |
-| L'historique d'actions (`act_N`) | `fix_test_step` ne voit que les actions de sa propre session. |
+| The working tab | Each command is pinned to the session's tab. A `click` without `tabId` can no longer land in another agent's window. |
+| The ref map (`@eX`) | Agent B's `snapshot` no longer overwrites agent A's — which, otherwise, silently clicked the wrong element. |
+| The recording in progress | Two agents can record two tests at the same time without their steps interleaving. |
+| The action history (`act_N`) | `fix_test_step` only sees the actions of its own session. |
 
-Il n'y a **rien à faire** pour en profiter : chaque agent qui se connecte au serveur
-obtient sa session automatiquement, et sa fenêtre s'ouvre au premier `navigate()`.
+There is **nothing to do** to benefit from it: each agent that connects to the server
+gets its session automatically, and its window opens at the first `navigate()`.
 
-### `navigate()` d'abord, toujours
+### `navigate()` first, always
 
-Une session **sans fenêtre refuse d'agir**. Un `snapshot` ou un `execute_js` avant le
-premier `navigate()` échoue avec :
+A session **without a window refuses to act**. A `snapshot` or an `execute_js` before the
+first `navigate()` fails with:
 
 > This session has no window of its own yet, so there is no tab to act on. Call navigate()
 > first — it opens one — or pass an explicit tabId to work in a tab that already exists.
 
-Il n'y a volontairement **aucun repli sur l'onglet au premier plan** : cet onglet est soit
-le travail d'un autre agent, soit la page que l'utilisateur est en train de lire. La
-renvoyer à un agent divulguerait ce que l'utilisateur a sous les yeux.
+There is deliberately **no fallback to the foreground tab**: that tab is either another
+agent's work, or the page the user is reading. Handing it to an agent would disclose
+what the user is looking at.
 
-Pour agir délibérément dans un onglet existant, passe un `tabId` explicite. `get_tabs()`
-les liste avec le **propriétaire** de chacun :
+To act deliberately in an existing tab, pass an explicit `tabId`. `get_tabs()` lists
+them with the **owner** of each:
 
-| `owner` | Signification |
+| `owner` | Meaning |
 |---|---|
-| ton id de session | ta fenêtre de travail |
-| un autre id de session | un autre agent y travaille — n'y touche pas |
-| `user` | un onglet de l'utilisateur — n'agis pas dessus sans qu'on te le demande |
+| your session id | your working window |
+| another session id | another agent is working there — do not touch it |
+| `user` | one of the user's tabs — do not act on it unless you are asked to |
 
-### Les popups ouvertes par une page
+### Popups opened by a page
 
-Une fenêtre qu'une page de la session ouvre elle-même (`window.open`, « Continuer avec
-Google ») **appartient à la session**. `click` renvoie son `newTabId`, avec lequel on la pilote,
-et `get_tabs()` l'affiche avec le même `owner`, plus un champ `openedFrom` qui donne la fenêtre
-de travail d'origine. Les commandes sans `tabId` restent dans la fenêtre de travail : elles ne
-basculent jamais dans la popup.
+A window that a page of the session opens itself (`window.open`, "Continue with
+Google") **belongs to the session**. `click` returns its `newTabId`, with which you drive it,
+and `get_tabs()` shows it with the same `owner`, plus an `openedFrom` field that gives the
+working window it came from. Commands without `tabId` stay in the working window: they never
+switch to the popup.
 
-- `close_window({ tabId: <onglet de la popup> })` ferme **seulement la popup**.
-- `close_window()` ferme la fenêtre de travail **et les popups qu'elle a ouvertes**.
+- `close_window({ tabId: <the popup's tab> })` closes **only the popup**.
+- `close_window()` closes the working window **and the popups it opened**.
 
-Une popup ouverte depuis une fenêtre de l'utilisateur reste à l'utilisateur. Après un rechargement
-de l'extension, le serveur ne restitue que les fenêtres de travail : une popup encore ouverte
-redevient `user` et se ferme à la main.
+A popup opened from one of the user's windows stays the user's. After the extension is
+reloaded, the server only restores the working windows: a popup still open becomes `user`
+again and is closed by hand.
 
-## Le cas particulier : plusieurs agents sur une seule connexion
+## The special case: several agents on a single connection
 
-Les sous-agents (`Task` dans Claude Code, par exemple) parlent tous à travers la connexion
-MCP de leur parent. Pour eux, « une connexion = une session » ne suffit pas : ils
-partageraient une seule fenêtre.
+Subagents (`Task` in Claude Code, for example) all talk through their parent's MCP
+connection. For them, "one connection = one session" is not enough: they would share
+a single window.
 
-Chaque sous-agent choisit alors un nom de session distinct et le passe à chaque appel :
+Each subagent then picks a distinct session name and passes it on every call:
 
 ```js
-open_session({ session: "recherche-A" })          // optionnel, informatif
+open_session({ session: "recherche-A" })          // optional, informative
 navigate({ url: "https://exemple.fr", session: "recherche-A" })
 snapshot({ purposeFilter: "click", session: "recherche-A" })
 click({ ref: "@e5", session: "recherche-A" })
-close_session({ name: "recherche-A" })            // ferme sa fenêtre
+close_session({ name: "recherche-A" })            // closes its window
 ```
 
-Un autre sous-agent fait la même chose avec `session: "recherche-B"` : deux fenêtres, deux
-jeux de refs, aucune interférence.
+Another subagent does the same with `session: "recherche-B"`: two windows, two sets of
+refs, no interference.
 
-### Outils de session
+### Session tools
 
-| Outil | Rôle |
+| Tool | Role |
 |---|---|
-| `open_session` | Réclame une session (ou décrit celle dans laquelle on se trouve déjà). |
-| `list_sessions` | Liste les sessions actives et la fenêtre de chacune — pratique pour vérifier l'isolation. |
-| `close_session` | Ferme une session nommée et sa fenêtre. |
+| `open_session` | Claims a session (or describes the one you are already in). |
+| `list_sessions` | Lists the active sessions and the window of each — handy to check the isolation. |
+| `close_session` | Closes a named session and its window. |
 
-Quand un agent se déconnecte, l'état de sa session est libéré mais **sa fenêtre reste
-ouverte** : une reconnexion SSE arrive avec un nouvel identifiant, donc fermer
-automatiquement détruirait une fenêtre de travail au moindre incident réseau. C'est
-`close_window` (ou `close_session` pour une session nommée) qui ferme, explicitement, en
-fin de tâche. Le serveur log les fenêtres laissées ouvertes. Si l'utilisateur l'a choisi
-(**Settings → Browser windows**), la fenêtre d'un enregistrement est aussi fermée quand
-`stop_recording` a sauvé le test, et celle d'un `run_test` réussi à la fin de l'exécution
-(voir [mcp-tools.md](mcp-tools.md), « Les fenêtres après une exécution ou un enregistrement »).
+When an agent disconnects, its session's state is freed but **its window stays
+open**: an SSE reconnection arrives with a new id, so closing automatically would
+destroy a working window at the slightest network incident. It is `close_window` (or
+`close_session` for a named session) that closes, explicitly, at the end of the
+task. The server logs the windows left open. If the user has chosen so
+(**Settings → Browser windows**), the window of a recording is also closed once
+`stop_recording` has saved the test, and that of a successful `run_test` at the end of the run
+(see [mcp-tools.md](mcp-tools.md), "The windows after a run or a recording").
 
-## Le serveur est unique et partagé
+## A single, shared server
 
-IziTest Agent n'a qu'**un** pont WebSocket vers Chrome (port 3466) et **un** endpoint MCP
-(port 3467). Un deuxième serveur ne peut pas fonctionner : il refuse de démarrer sur un
-port déjà pris, plutôt que de tuer celui qui tourne.
+IziTest Agent has only **one** WebSocket bridge to Chrome (port 3466) and **one** MCP endpoint
+(port 3467). A second server cannot work: it refuses to start on a port already taken,
+rather than kill the one that is running.
 
-Les agents ne démarrent donc jamais le serveur directement. Ils passent par :
+So agents never start the server directly. They go through:
 
 ```bash
 node mcp-server/bin/ensure-server.js
 ```
 
-qui démarre le serveur **seulement s'il n'est pas déjà là**, et qui est sûr quand plusieurs
-processus l'appellent au même instant : un verrou exclusif désigne un seul démarreur, les
-autres attendent que `/health` réponde. Les logs partent dans `mcp-server/data/server.log`.
+which starts the server **only if it is not already there**, and which is safe when several
+processes call it at the same instant: an exclusive lock names a single starter, the
+others wait for `/health` to answer. The logs go to `mcp-server/data/server.log`.
 
-Dans ce dépôt, un hook `SessionStart` (`.claude/settings.json`) l'appelle automatiquement.
+In this repository, a `SessionStart` hook (`.claude/settings.json`) calls it automatically.
 
-Les clients se connectent ensuite en SSE :
+Clients then connect over SSE:
 
 ```json
 {
@@ -119,44 +119,44 @@ Les clients se connectent ensuite en SSE :
 }
 ```
 
-> **Le mode stdio (`server.js --stdio`) reste réservé à un agent unique.** Il démarre son
-> propre pont WebSocket, donc deux agents en stdio se disputeraient le port 3466. Pour du
-> parallèle, c'est SSE.
+> **The stdio mode (`server.js --stdio`) stays reserved for a single agent.** It starts its
+> own WebSocket bridge, so two agents in stdio would fight over port 3466. For parallel
+> work, it is SSE.
 
-### `MCP_HOST` ajoute une interface, il n'en retire pas
+### `MCP_HOST` adds an interface, it does not remove one
 
-Le serveur écoute **toujours** sur loopback. `MCP_HOST` ajoute une interface
-supplémentaire (LAN, Tailscale) ; il ne remplace plus loopback.
+The server **always** listens on loopback. `MCP_HOST` adds an extra interface
+(LAN, Tailscale); it no longer replaces loopback.
 
-Sans ça, `MCP_HOST=100.x.y.z` rendait le serveur injoignable depuis sa propre machine :
-ni le tableau de bord, ni `.mcp.json`, ni le rechargement de l'extension ne pouvaient
-l'atteindre. Ajouter loopback n'élargit rien — c'est la posture par défaut, accessible
-seulement depuis la machine qui fait déjà tourner le navigateur piloté.
+Without that, `MCP_HOST=100.x.y.z` made the server unreachable from its own machine:
+neither the dashboard, nor `.mcp.json`, nor the extension reload could reach it.
+Adding loopback widens nothing — it is the default posture, reachable only from the
+machine that already runs the piloted browser.
 
-### Avec un jeton
+### With a token
 
-Dès que `MCP_HOST` sort de la machine, `IZITEST_TOKEN` est obligatoire, et il est
-exigé **sur les deux interfaces** (loopback comprise). Deux conséquences locales :
+As soon as `MCP_HOST` goes beyond the machine, `IZITEST_TOKEN` is mandatory, and it is
+required **on both interfaces** (loopback included). Two local consequences:
 
-- `.mcp.json` doit porter l'en-tête — sans jamais écrire le secret dans le fichier :
+- `.mcp.json` must carry the header — without ever writing the secret in the file:
 
   ```json
   "headers": { "Authorization": "Bearer ${IZITEST_TOKEN:-}" }
   ```
 
-- `npm run build` dans `extension/` lit le même jeton depuis l'environnement pour pouvoir
-  recharger l'extension.
+- `npm run build` in `extension/` reads the same token from the environment to be able to
+  reload the extension.
 
-Il faut donc que `IZITEST_TOKEN` soit exporté dans le shell où tournent Claude Code
-et les builds — la même valeur que celle passée au serveur. Sinon le build affiche
-« requires a token and IZITEST_TOKEN is not set in this shell » et l'outil MCP
-répond 403.
+So `IZITEST_TOKEN` must be exported in the shell where Claude Code and the builds
+run — the same value as the one given to the server. Otherwise the build prints
+"requires a token and IZITEST_TOKEN is not set in this shell" and the MCP tool
+answers 403.
 
-## Recharger l'extension après un build
+## Reloading the extension after a build
 
-`npm run build` (et chaque rebuild de `npm run watch`) **recharge l'extension dans Chrome
-tout seul** : le serveur pousse la demande sur le WebSocket qu'il tient déjà, et
-l'extension s'auto-redémarre via `chrome.runtime.reload()`. Plus besoin de passer par
+`npm run build` (and each rebuild of `npm run watch`) **reloads the extension in Chrome
+by itself**: the server pushes the request down the WebSocket it already holds, and the
+extension restarts itself through `chrome.runtime.reload()`. No more need to go through
 `chrome://extensions`.
 
 ```bash
@@ -165,61 +165,61 @@ cd extension && npm run build
 # → [IziTest] Extension reloaded in Chrome (1 profile).
 ```
 
-Le rechargement est **vérifié, pas supposé** : une extension rechargée lâche sa socket et
-se réenregistre, et c'est ce réenregistrement que le serveur attend avant de répondre.
-Une extension qui tourne sur une build antérieure à ce mécanisme ignore simplement le
-message — le build le dit, au lieu d'annoncer un succès qui n'a pas eu lieu.
+The reload is **verified, not assumed**: a reloaded extension drops its socket and
+registers again, and it is this new registration that the server waits for before answering.
+An extension running a build from before this mechanism simply ignores the
+message — the build says so, instead of announcing a success that did not happen.
 
-> **Amorçage** : le tout premier rechargement après l'arrivée de cette fonctionnalité doit
-> se faire **à la main** dans `chrome://extensions`, puisque l'extension chargée ne connaît
-> pas encore le message. Une seule fois ; ensuite elle se recharge seule.
+> **Bootstrapping**: the very first reload after this feature arrives must be done
+> **by hand** in `chrome://extensions`, since the loaded extension does not know the
+> message yet. Once only; after that it reloads by itself.
 
-Si le serveur n'est pas lancé, ou qu'aucune extension n'est connectée, le build affiche
-quoi faire et **n'échoue jamais**. `IZITEST_NO_RELOAD=1` désactive le mécanisme.
+If the server is not running, or no extension is connected, the build prints what to
+do and **never fails**. `IZITEST_NO_RELOAD=1` disables the mechanism.
 
-Un redémarrage de l'extension vide `chrome.storage.session`, donc elle oublie quelle
-fenêtre appartient à quelle session. Le serveur, lui, s'en souvient : dès que l'extension
-se reconnecte, il lui **réattribue** les fenêtres de ses sessions (`restore_owned_windows`).
-Sans ça, `close_window` refuserait ces fenêtres et la résolution d'onglet cesserait d'être
-cloisonnée après chaque rebuild.
+A restart of the extension empties `chrome.storage.session`, so it forgets which window
+belongs to which session. The server, for its part, remembers: as soon as the extension
+reconnects, it **assigns back** to it the windows of its sessions (`restore_owned_windows`).
+Without that, `close_window` would refuse these windows and tab resolution would stop being
+isolated after each rebuild.
 
-> Le rechargement coupe le WebSocket : une commande en vol est perdue. Évite donc de
-> rebuilder pendant qu'un agent travaille.
+> The reload cuts the WebSocket: a command in flight is lost. So avoid rebuilding
+> while an agent is working.
 >
-> L'endpoint qui déclenche tout ça, `POST /api/dev/reload-extension`, suit le même régime
-> que le reste de `/api/` : loopback par défaut, jeton requis dès que `MCP_HOST` sort de
-> la machine.
+> The endpoint that triggers all this, `POST /api/dev/reload-extension`, follows the same
+> rules as the rest of `/api/`: loopback by default, token required as soon as `MCP_HOST`
+> goes beyond the machine.
 
-## Voir ce que l'extension raconte
+## Seeing what the extension says
 
-La console du service worker n'est visible qu'en ouvrant ses DevTools à la main, ce qui
-rend un run de test aveugle à ce que l'extension signale. Elle renvoie donc tout ce qui
-atterrirait dans la liste « Erreurs » de `chrome://extensions` au serveur :
-
-```bash
-curl -X DELETE http://127.0.0.1:3467/api/dev/extension-errors   # avant le run
-curl        http://127.0.0.1:3467/api/dev/extension-errors      # après
-```
-
-Un run peut ainsi affirmer qu'il n'a produit **aucune** erreur d'extension, au lieu de
-l'espérer. Les entrées de type `dead-tab` sont des rejets bénins (un onglet fermé entre
-temps) : ils sont signalés ici mais tenus hors de la liste d'erreurs de Chrome.
-
-## Ce qui n'est *pas* isolé
-
-Les sessions partagent **le même profil Chrome**, donc les mêmes cookies et les mêmes
-connexions. Deux sessions ne peuvent pas être authentifiées sur deux comptes différents du
-même site.
-
-Pour ça, il faut de vrais profils Chrome séparés — voir [multi-account.md](multi-account.md)
-— et passer `profile: "<id>"` en plus de `session`.
-
-## Vérifier que ça marche
+The service worker's console is only visible by opening its DevTools by hand, which
+leaves a test run blind to what the extension reports. So it sends to the server
+everything that would land in the "Errors" list of `chrome://extensions`:
 
 ```bash
-cd mcp-server && npm test   # isolation, 5 sessions concurrentes, refus de l'onglet au premier plan
-cd extension  && npm test   # registre des fenêtres sous concurrence, résolution d'onglet
+curl -X DELETE http://127.0.0.1:3467/api/dev/extension-errors   # before the run
+curl        http://127.0.0.1:3467/api/dev/extension-errors      # after
 ```
 
-En conditions réelles : lance deux agents, puis demande à l'un d'eux `list_sessions()`.
-Deux lignes avec deux `window=` différents, c'est gagné.
+A run can thus assert that it produced **no** extension error, instead of hoping
+so. Entries of type `dead-tab` are benign rejections (a tab closed in the
+meantime): they are reported here but kept out of Chrome's error list.
+
+## What is *not* isolated
+
+Sessions share **the same Chrome profile**, so the same cookies and the same
+logins. Two sessions cannot be signed in to two different accounts of the same
+site.
+
+For that, you need real, separate Chrome profiles — see [multi-account.md](multi-account.md)
+— and to pass `profile: "<id>"` in addition to `session`.
+
+## Checking that it works
+
+```bash
+cd mcp-server && npm test   # isolation, 5 concurrent sessions, refusal of the foreground tab
+cd extension  && npm test   # window registry under concurrency, tab resolution
+```
+
+In real conditions: start two agents, then ask one of them for `list_sessions()`.
+Two lines with two different `window=`, and it works.
