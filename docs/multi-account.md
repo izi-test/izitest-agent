@@ -16,18 +16,38 @@ chmod +x scripts/launch-profile.sh
 ./scripts/launch-profile.sh <profile-name>
 ```
 
-On Windows, in PowerShell:
-```powershell
-.\scripts\launch-profile.ps1 <profile-name>
+### On Windows
+
+From the `izitest-agent` folder, in Command Prompt or in PowerShell:
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\launch-profile.ps1 <profile-name>
 ```
+
+Typed as `.\scripts\launch-profile.ps1 <profile-name>`, PowerShell refuses the script by default
+(`running scripts is disabled on this system`). `-ExecutionPolicy Bypass` lets this one script
+run and changes no setting.
+
+The script starts Google Chrome, or Microsoft Edge where Chrome is not installed, and lists the
+steps that put the extension in that browser. To use Edge where Chrome is installed too, start
+it yourself, in Command Prompt, the profile's name in place of `admin`:
+
+```bat
+start msedge --user-data-dir="%USERPROFILE%\.izitest\profiles\admin" --no-first-run --silent-debugger-extension-api
+```
+
+Two Edge profiles opened with their own folders, each named in the extension's popup, are
+driven by name and share neither cookies nor local storage (checked with Edge 158).
 
 ### Example: an administrator and a customer
 1.  **Launch Profile 1**: `./scripts/launch-profile.sh admin`
 2.  **Launch Profile 2**: `./scripts/launch-profile.sh customer`
+    (on Windows, the command of [On Windows](#on-windows), once with `admin`, once with `customer`)
 3.  In **each** window that opens:
-    - Go to `chrome://extensions`.
+    - Go to `chrome://extensions` (in Edge, it leads to `edge://extensions`).
     - Enable **Developer Mode**.
     - Click **Load unpacked** and select the `extension/dist` folder.
+      [Where Edge puts these two](installation.md#what-to-install).
     - Click the extension icon in the toolbar.
     - Set the `Profile ID` to match your launch name (e.g., `admin`).
 

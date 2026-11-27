@@ -8,7 +8,7 @@
   },
   "scripts": {
     "headless:install": "npm --prefix mcp-server run headless:install",
-    "setup": "npm --prefix mcp-server install && npm --prefix mcp-server/frontend install && npm --prefix mcp-server/frontend run build && npm --prefix extension install && npm --prefix extension run build",
+    "setup": "cd mcp-server && npm install && cd frontend && npm install && npm run build && cd ../../extension && npm install && npm run build",
     "start": "npm --prefix mcp-server start",
     "test": "npm --prefix mcp-server test && npm --prefix extension test",
     "arena": "node scripts/serve-arena.mjs"

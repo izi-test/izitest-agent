@@ -4,7 +4,6 @@
 //   - CLI mode: spawns external CLI (claude, copilot, gemini…) with -p flag
 //     For Claude CLI, uses --resume <session_id> for conversation continuity.
 
-import { spawn } from 'child_process';
 import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -18,6 +17,7 @@ import { datasetLines } from '../datasets.js';
 import { secretLines } from '../secrets.js';
 import { writeAgentMcpConfig, dashboardToolName } from './cli-mcp.js';
 import { cliModel, cliModelArgs } from './cli-model.js';
+import { spawnCliProcess, stopCliProcess } from './cli-spawn.js';
 
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 3467;
 
@@ -229,11 +229,12 @@ export function spawnCli(command, args, { signal, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
     log(`[Agent Chat CLI] Spawning: ${command} ${args.map(a => a.length > 100 ? a.substring(0, 100) + '...' : a).join(' ')}`);
 
-    const child = spawn(command, args, {
+    // On Windows, what the .cmd of a CLI installed with npm starts (lib/agent/cli-spawn.js).
+    const child = spawnCliProcess(command, args, {
       env: { ...process.env, PATH: process.env.PATH },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const stop = () => { if (child.exitCode == null) child.kill('SIGTERM'); };
+    const stop = () => stopCliProcess(child);
     signal?.addEventListener('abort', stop, { once: true });
     const timer = timeoutMs ? setTimeout(stop, timeoutMs) : null;
 

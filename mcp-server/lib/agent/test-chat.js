@@ -12,7 +12,7 @@
 // - The window closed, the agent's browser window is closed too; the conversation stays.
 // - A secret's value is never kept nor sent: what is said goes through redact() (lib/secrets.js).
 
-import { spawn } from 'child_process';
+import { spawnCliProcess, stopCliProcess } from './cli-spawn.js';
 import { randomBytes } from 'crypto';
 import { unlinkSync } from 'fs';
 import { db, parseJson } from '../db.js';
@@ -181,7 +181,7 @@ function stopChild(entry) {
   const child = entry.child;
   if (!child || child.exitCode != null) return;
   entry.stopped = true;
-  try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } }
+  stopCliProcess(child);
 }
 
 /** The conversations nobody wrote in for IDLE_MS give their browser window back. */
@@ -326,7 +326,7 @@ export function activityLine(tool, input) {
  * — and resolves once it is over. `signal` aborted (the page went away, or Stop): the agent is
  * stopped, what it said so far kept. Throws { status, message } when it cannot start.
  */
-export async function sendTestMessage(testName, text, { headless = false, send, signal, spawnCli = spawn } = {}) {
+export async function sendTestMessage(testName, text, { headless = false, send, signal, spawnCli = spawnCliProcess } = {}) {
   const fail = (status, message) => Object.assign(new Error(message), { status });
   const message = typeof text === 'string' ? text.trim() : '';
   if (!message) throw fail(400, 'message is required');

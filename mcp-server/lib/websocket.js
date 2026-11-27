@@ -71,6 +71,17 @@ export function isHeadlessProfile(profileId) {
   return headlessProfiles.has(profileId);
 }
 
+/**
+ * Gives the profile `from` the name `to`, where it stands among the others: the first Chrome that
+ * connected stays where a command naming no profile goes. A profile already named `to` gives way,
+ * as it does to a browser registering under its name.
+ */
+function renameProfile(from, to) {
+  const renamed = [...profiles].filter(([id]) => id !== to).map(([id, ws]) => [id === from ? to : id, ws]);
+  profiles.clear();
+  for (const [id, ws] of renamed) profiles.set(id, ws);
+}
+
 /** Where a command that names no profile goes: the first Chrome with windows that connected. */
 function defaultWs() {
   for (const [profileId, ws] of profiles) {
@@ -192,6 +203,14 @@ export function startWebSocketServer(port) {
         const msg = JSON.parse(data.toString());
 
         if (msg.type === 'register') {
+          // The same browser under another name (its profile renamed in the extension's popup):
+          // its former name is no longer a profile. Kept, it stayed listed until the server
+          // restarted and, that browser closed, what names no profile waited for it.
+          if (registeredProfileId && registeredProfileId !== msg.profileId && profiles.get(registeredProfileId) === ws) {
+            renameProfile(registeredProfileId, msg.profileId);
+            headlessProfiles.delete(registeredProfileId);
+            log(`Profile renamed: ${registeredProfileId} → ${msg.profileId}`);
+          }
           registeredProfileId = msg.profileId;
           profiles.set(msg.profileId, ws);
           // Just started: as if it had just had work, not idle since it last ran.
