@@ -1,219 +1,215 @@
-# Vue en direct 📺
+# Live view 📺
 
-Voir depuis le Poste de pilotage ce que fait un agent dans son onglet, en direct et étape par
-étape, sans le perturber.
+Watch from the cockpit what an agent does in its tab, live and step by step, without
+disturbing it.
 
 ## Routes
 
-Toutes exigent le même jeton que le reste (`?token=…` ou `Authorization: Bearer …`). Elles
-sont en lecture seule : GET uniquement, sauf le réglage.
+All of them require the same token as everything else (`?token=…` or `Authorization: Bearer …`).
+They are read-only: GET only, except the setting.
 
-| Route | Réponse |
+| Route | Response |
 |---|---|
-| `GET /live/sessions` | Les sessions actives : `name`, `client` (nom et version annoncés par le client MCP), `windowId`, `tabs` (`tabId`, `url`, `title`, `active`, `viewers`, `recording`, `popup`), `lastAction` (`tool`, `at`, `endedAt`, `status`, `frameId`), `recording` (onglets enregistrés) |
-| `GET /live/tabs/{tabId}/stream?fps=10` | Flux MJPEG (`multipart/x-mixed-replace`), utilisable tel quel dans un `<img src>` |
-| `GET /live/frames/{frameId}.jpg` | Une image conservée |
-| `GET /live/tabs/{tabId}/recording` | Les images de l'onglet depuis le début de sa session (JSON, avec `src` de chaque image) |
-| `GET /live/tabs/{tabId}/recording?format=mjpeg&speed=4` | La même chose rejouée en MJPEG, au rythme d'origine (×`speed`, pauses coupées à 2 s) |
-| `GET /live/settings` · `PUT /live/settings {"enabled": false}` | Le réglage qui coupe tout |
-| `PUT /live/settings {"continuousRecording": false}` | Coupe seulement l'enregistrement continu |
+| `GET /live/sessions` | The active sessions: `name`, `client` (name and version announced by the MCP client), `windowId`, `tabs` (`tabId`, `url`, `title`, `active`, `viewers`, `recording`, `popup`), `lastAction` (`tool`, `at`, `endedAt`, `status`, `frameId`), `recording` (the tabs being recorded) |
+| `GET /live/tabs/{tabId}/stream?fps=10` | MJPEG stream (`multipart/x-mixed-replace`), usable as is in an `<img src>` |
+| `GET /live/frames/{frameId}.jpg` | One kept image |
+| `GET /live/tabs/{tabId}/recording` | The tab's images since its session started (JSON, with the `src` of each image) |
+| `GET /live/tabs/{tabId}/recording?format=mjpeg&speed=4` | The same, replayed as MJPEG at its original pace (×`speed`, pauses cut to 2 s) |
+| `GET /live/settings` · `PUT /live/settings {"enabled": false}` | The setting that turns everything off |
+| `PUT /live/settings {"continuousRecording": false}` | Turns off continuous recording only |
 
-## Le flux
+## The stream
 
-- Une image à chaque changement d'écran, au plus `fps` par seconde (1 à 30, 10 par défaut),
-  en JPEG qualité 60, 1280 px de large au plus.
-- La première image arrive tout de suite, même si la page ne bouge pas.
-- Au plus **2 spectateurs par onglet** : le troisième reçoit un `429`.
-- Le flux s'arrête dès que le dernier spectateur se déconnecte.
-- Un spectateur trop lent saute des images, mais reçoit toujours la dernière, celle qui montre
-  l'écran actuel.
-- Seuls les onglets des agents sont visibles : fenêtres ouvertes par IziTest Agent et popups
-  ouvertes depuis elles. Un onglet de l'utilisateur répond `403`.
+- One image each time the screen changes, at most `fps` per second (1 to 30, 10 by default),
+  as JPEG quality 60, at most 1280 px wide.
+- The first image arrives at once, even if the page does not move.
+- At most **2 viewers per tab**: the third gets a `429`.
+- The stream stops as soon as the last viewer disconnects.
+- A viewer that is too slow skips images, but always gets the last one, the one that shows
+  the current screen.
+- Only the agents' tabs are visible: windows opened by IziTest Agent and popups opened from
+  them. A tab of the user's answers `403`.
 
-**Onglet en arrière-plan.** Chrome ne peint plus un onglet caché (autre onglet au premier
-plan, fenêtre réduite ou recouverte), et le screencast se tait. L'extension capture alors
-l'onglet au rythme demandé et n'envoie que les images qui diffèrent de la précédente. Le flux
-continue donc sans rien mettre au premier plan.
+**Tab in the background.** Chrome no longer paints a hidden tab (another tab in front, the
+window minimized or covered), and the screencast goes quiet. The extension then captures the
+tab at the requested rate and sends only the images that differ from the one before. So the
+stream goes on without bringing anything to the front.
 
-## Dans le tableau de bord
+## In the dashboard
 
-Le tableau de bord montre ce flux à trois endroits.
+The dashboard shows this stream in three places.
 
-- **La page *Live*** (menu de gauche, `/watch`) : chaque agent connecté, avec les onglets de sa
-  fenêtre ; celui de l'agent qui a agi en dernier est montré, un clic en montre un autre. C'est là
-  qu'on suit un agent qui travaille dans le navigateur sans fenêtre, quand Chrome n'a pas
-  l'extension.
+- **The *Live* page** (left menu, `/watch`): each connected agent, with the tabs of its
+  window; the tab of the agent that acted last is shown, a click shows another. This is where
+  you follow an agent working in the headless browser, when Chrome does not have the
+  extension.
 
-- **Créer un test avec l'agent IA** : la fenêtre s'élargit dès que l'agent démarre. Le
-  navigateur est à gauche, le journal de l'agent à droite. Le formulaire se replie en une
-  ligne qui rappelle la demande ; il revient si l'agent échoue ou est arrêté, pour réessayer.
-- **Exécuter un test** : le panneau des étapes s'élargit, avec le navigateur à côté. C'est la
-  seule façon de voir une exécution headless.
+- **Creating a test with the AI agent**: the window widens as soon as the agent starts. The
+  browser is on the left, the agent's log on the right. The form folds into one line that
+  recalls the request; it comes back if the agent fails or is stopped, to try again.
+- **Running a test**: the steps panel widens, with the browser beside it. It is the only
+  way to see a headless run.
 
-À la fin, la dernière image reste affichée.
+At the end, the last image stays on screen.
 
-Le serveur dit quel onglet montrer dans le flux d'événements de la course, et le redit si
-l'onglet change :
+The server says which tab to show in the run's event stream, and says it again if the tab
+changes:
 
 ```json
 { "type": "live", "tabId": 123 }
 ```
 
-- **Pour l'agent CLI** : il se connecte au serveur MCP avec l'identifiant de sa course
-  (`/sse?run=run-…`). Les sessions qu'il ouvre portent cet identifiant, et le serveur suit
-  l'onglet de celle qu'il a utilisée en dernier (`followRun` dans `lib/live.js`).
-- **Pour l'agent interne du tableau de bord** : il reçoit l'identifiant directement.
-- **Pour un test** : dès qu'une étape renvoie l'onglet où elle s'est jouée.
+- **For the CLI agent**: it connects to the MCP server with the id of its run
+  (`/sse?run=run-…`). The sessions it opens carry this id, and the server follows the tab of
+  the one it used last (`followRun` in `lib/live.js`).
+- **For the dashboard's internal agent**: it gets the id directly.
+- **For a test**: as soon as a step returns the tab it was played in.
 
-Le tableau de bord lit le flux avec `fetch`, pas avec un `<img>`, pour pouvoir dire pourquoi
-il est refusé (vue en direct coupée, trop de spectateurs). En développement, le proxy de Vite
-transmet `/live` en ajoutant le jeton, comme pour `/api`. Il compte comme l'un des
-2 spectateurs de l'onglet.
+The dashboard reads the stream with `fetch`, not with an `<img>`, so that it can say why it
+is refused (live view turned off, too many viewers). In development, Vite's proxy forwards
+`/live` and adds the token, as it does for `/api`. It counts as one of the tab's
+2 viewers.
 
-## Le curseur
+## The cursor
 
-La souris que pilote IziTest (protocole DevTools) n'a pas d'image à elle : un clic tombait sans que
-rien ne le montre. Chaque déplacement et chaque appui de cette souris est donc dessiné dans la page,
-par l'extension (`extension/src/cursor.ts`, `dom/cursor.ts`) :
+The mouse IziTest drives (DevTools protocol) has no image of its own: a click landed with nothing
+to show it. So each move and each press of this mouse is drawn in the page, by the extension
+(`extension/src/cursor.ts`, `dom/cursor.ts`):
 
-- une flèche bleue qui glisse jusqu'au point visé (350 ms) ;
-- un cercle bleu qui s'élargit là où elle appuie.
+- a blue arrow that glides to the point it aims at (350 ms);
+- a blue circle that widens where it presses.
 
-On la voit dans la vue en direct, dans les images par action et dans la fenêtre elle-même. Elle
-reste là où elle était quand une nouvelle page se charge.
+It shows in the live view, in the images kept per action and in the window itself. It stays
+where it was when a new page loads.
 
-- **Jamais dans le chemin** : elle ne prend aucun clic (`pointer-events: none`), n'a pas de texte et
-  vit dans un shadow root.
-- **Masquée pendant une capture** comparée à une référence (`screenshot`, VRT), qui sinon
-  différerait par elle.
-- **Seulement dans les onglets pilotés** : la souris de l'utilisateur n'est jamais suivie.
-- **Un clic fait par script** (`el.click()`, pour une case à cocher) ne la déplace pas : il ne passe
-  pas par la souris.
+- **Never in the way**: it takes no click (`pointer-events: none`), has no text and lives in a
+  shadow root.
+- **Hidden during a capture** that is compared with a reference (`screenshot`, VRT), which would
+  otherwise differ because of it.
+- **Only in the piloted tabs**: the user's mouse is never followed.
+- **A click made by script** (`el.click()`, for a checkbox) does not move it: it does not go
+  through the mouse.
 
-## Une image par action
+## One image per action
 
-Après chaque `navigate`, `click`, `fill`, `select`, `keyboard` et `act`, l'image de l'onglet
-est gardée une fois la page stabilisée (100 ms sans changement du DOM, 300 ms au plus). Son
-identifiant revient dans le résultat :
+After each `navigate`, `click`, `fill`, `select`, `keyboard` and `act`, the image of the tab
+is kept once the page has settled (100 ms without a change to the DOM, 300 ms at most). Its
+id comes back in the result:
 
 ```json
 { "success": true, "tag": "button", "changes": ["…"], "frameId": "mv9kgok0-33292a14c0a1" }
 ```
 
-- Si l'action échoue, l'identifiant termine le message d'erreur : `… (frameId: mv9kgok0-…)`.
-- `act` donne un `frameId` par étape et un dernier pour la page telle qu'il la laisse.
-- Cela coûte environ 80 ms par action.
+- If the action fails, the id ends the error message: `… (frameId: mv9kgok0-…)`.
+- `act` gives one `frameId` per step and a last one for the page as it leaves it.
+- This costs about 80 ms per action.
 
-Ces images sont prises que quelqu'un regarde ou non : aucune étape ne manque.
+These images are taken whether someone is watching or not: no step is missing.
 
-## Enregistrement continu
+## Continuous recording
 
-Tant qu'une session a sa fenêtre de travail ouverte, son onglet est enregistré, même sans
-spectateur.
+As long as a session has its working window open, its tab is recorded, even with no
+viewer.
 
-- **Quoi** : une image à chaque changement d'écran, au plus 2 par seconde, en JPEG qualité 50,
-  1280 px de large au plus. La dernière image d'une rafale est toujours gardée.
-- **Rangement** : dans `/live/tabs/{tabId}/recording` avec `kind: "stream"`, mêlées aux images
-  d'action.
-- **Quels onglets** : l'onglet de travail de la session, l'onglet au premier plan de sa fenêtre
-  (celui qu'un clic a ouvert, par exemple) et celui des popups ouvertes depuis elle. Pas les
-  onglets de l'utilisateur.
-- **Démarrage et arrêt** : l'enregistrement commence dès la première action, et la liste est
-  revue toutes les 3 s. Il s'arrête quand la fenêtre se ferme ou que la session se termine ;
-  ses images restent.
-- **Limite par session** : les 300 images de flux les plus récentes
-  (`IZITEST_LIVE_SESSION_MAX_FRAMES`), plus **toutes** les images d'action, qui ne sont
-  jamais retirées par cette limite.
-- **Coût** :
-  - onglet visible : le screencast n'envoie rien tant que la page ne bouge pas ;
-  - onglet caché : l'extension demande chaque demi-seconde à la page si quelque chose a
-    changé (DOM, défilement, saisie, redimensionnement), et ne capture que dans ce cas, ou au
-    plus toutes les 5 s (canvas, animations CSS) ;
-  - les images identiques à la précédente ne sont pas gardées.
-- **Avec un spectateur** : le même screencast sert les deux, en qualité 60 pour le spectateur ;
-  la copie enregistrée est réencodée en qualité 50.
+- **What**: one image each time the screen changes, at most 2 per second, as JPEG quality 50,
+  at most 1280 px wide. The last image of a burst is always kept.
+- **Where they go**: in `/live/tabs/{tabId}/recording` with `kind: "stream"`, mixed with the
+  action images.
+- **Which tabs**: the session's working tab, the tab in front in its window (the one a click
+  opened, for example) and the tab of the popups opened from it. Not the user's tabs.
+- **Start and stop**: recording starts at the first action, and the list is checked again
+  every 3 s. It stops when the window closes or the session ends; its images stay.
+- **Limit per session**: the 300 most recent stream images
+  (`IZITEST_LIVE_SESSION_MAX_FRAMES`), plus **all** the action images, which this limit
+  never removes.
+- **Cost**:
+  - visible tab: the screencast sends nothing as long as the page does not move;
+  - hidden tab: every half second the extension asks the page whether something has
+    changed (DOM, scrolling, typing, resizing), and captures only in that case, or every
+    5 s at the latest (canvas, CSS animations);
+  - images identical to the one before are not kept.
+- **With a viewer**: the same screencast serves both, at quality 60 for the viewer;
+  the recorded copy is re-encoded at quality 50.
 
-Quand l'enregistrement continu est coupé, un onglet regardé garde encore une image du flux par
-seconde (`IZITEST_LIVE_RECORD_INTERVAL_MS`), comme avant.
+When continuous recording is turned off, a watched tab still keeps one image of the stream per
+second (`IZITEST_LIVE_RECORD_INTERVAL_MS`), as before.
 
-Les images sont gardées **24 h** dans `mcp-server/data/live/` (20 000 au plus,
-`IZITEST_LIVE_MAX_FRAMES`). L'enregistrement d'une session reste consultable 24 h après
-sa fin.
+The images are kept **24 h** in `mcp-server/data/live/` (20,000 at most,
+`IZITEST_LIVE_MAX_FRAMES`). A session's recording can still be viewed for 24 h after
+it ends.
 
-## Lecture seule
+## Read-only
 
-- Tout passe par le protocole DevTools, sur la session de débogage que l'agent utilise déjà :
-  `Page.startScreencast` et `Page.captureScreenshot`. Aucun onglet n'est activé, aucune
-  fenêtre ne passe au premier plan ni ne change de propriétaire.
-  (L'outil `screenshot`, lui, utilise `captureVisibleTab`, qui doit activer l'onglet.)
-- Rien n'est dessiné sur la page : pas de cadre, pas de bandeau.
-- Aucun snapshot n'est fait : les refs `@eX` de l'agent ne bougent pas.
-- La seule chose posée dans l'onglet est un `MutationObserver` dans le monde isolé de
-  l'extension, pour savoir quand la page est stable. La page ne le voit pas.
+- Everything goes through the DevTools protocol, on the debugging session the agent already
+  uses: `Page.startScreencast` and `Page.captureScreenshot`. No tab is activated, no
+  window comes to the front or changes owner.
+  (The `screenshot` tool, for its part, uses `captureVisibleTab`, which has to activate the tab.)
+- Nothing is drawn on the page: no border, no bar.
+- No snapshot is taken: the agent's `@eX` refs do not move.
+- The only thing put in the tab is a `MutationObserver` in the extension's isolated
+  world, to know when the page is stable. The page does not see it.
 
-## Couper
+## Turning it off
 
-- `PUT /live/settings {"enabled": false}` : arrête tous les flux, ne prend plus d'image
-  après les actions, et toutes les routes `/live/*` répondent `503`. Le réglage est gardé en
-  base et survit à un redémarrage. `{"enabled": true}` rallume.
-- `IZITEST_LIVE=off` dans l'environnement du serveur : coupé, et impossible à
-  rallumer sans redémarrer.
-- `PUT /live/settings {"continuousRecording": false}` : coupe seulement l'enregistrement
-  continu. Le flux en direct et les images d'action continuent. Le réglage est gardé en base.
-  `IZITEST_LIVE_RECORD=off` le verrouille jusqu'au redémarrage.
+- `PUT /live/settings {"enabled": false}`: stops every stream, takes no more images
+  after actions, and all the `/live/*` routes answer `503`. The setting is kept in the
+  database and survives a restart. `{"enabled": true}` turns it back on.
+- `IZITEST_LIVE=off` in the server's environment: turned off, and impossible to
+  turn back on without a restart.
+- `PUT /live/settings {"continuousRecording": false}`: turns off continuous recording
+  only. The live stream and the action images go on. The setting is kept in the database.
+  `IZITEST_LIVE_RECORD=off` locks it until the restart.
 
-Les images déjà gardées ne sont pas effacées ; elles disparaissent au bout de 24 h.
+The images already kept are not erased; they disappear after 24 h.
 
 ## CORS
 
-Le Poste de pilotage tourne sur une autre origine. Avec un jeton, les GET sous `/live/`
-répondent donc `Access-Control-Allow-Origin: *`. Ils exigent toujours le jeton et ne
-modifient rien. Les autres routes gardent leur politique.
+The cockpit runs on another origin. With a token, GET requests under `/live/` therefore
+answer `Access-Control-Allow-Origin: *`. They still require the token and change
+nothing. The other routes keep their policy.
 
-Sans jeton, seules les pages locales et les origines de `IZITEST_ALLOWED_ORIGINS` peuvent
-lire `/live/` : ces images montrent les onglets de l'utilisateur, et n'importe quel site
-ouvert dans le Chrome piloté pourrait sinon les lire. Un Poste de pilotage hébergé ailleurs
-doit être ajouté à cette liste (`IZITEST_ALLOWED_ORIGINS=https://pilotage.example.com`).
-Un `<img src>` sur le flux MJPEG, qui n'envoie pas d'`Origin`, s'affiche toujours. Voir
+Without a token, only local pages and the origins in `IZITEST_ALLOWED_ORIGINS` can
+read `/live/`: these images show the user's tabs, and any site open in the piloted
+Chrome could otherwise read them. A cockpit hosted elsewhere must be added to this
+list (`IZITEST_ALLOWED_ORIGINS=https://pilotage.example.com`).
+An `<img src>` on the MJPEG stream, which sends no `Origin`, always displays. See
 [security.md](security.md).
 
-## Limites
+## Limits
 
-- Les actions de l'agent autonome du tableau de bord (`agent-executor`) ne laissent pas encore
-  d'image ; seuls les outils MCP le font.
-- `scroll` ne laisse pas d'image (il n'est pas dans la liste demandée) ; le flux le montre.
-- Le flux d'un onglet caché coûte une capture par période (`1/fps`) tant que quelqu'un
-  regarde. Le screencast d'un onglet visible ne coûte rien quand la page ne bouge pas.
-- Sur un onglet caché, un changement purement visuel (vidéo, canvas, animation CSS) n'est vu
-  qu'à la capture de sécurité, toutes les 5 s.
-- Après un redémarrage de l'extension, le flux reprend de lui-même dans les 5 s.
+- The actions of the dashboard's autonomous agent (`agent-executor`) do not leave an image
+  yet; only the MCP tools do.
+- `scroll` leaves no image (it is not in the requested list); the stream shows it.
+- The stream of a hidden tab costs one capture per period (`1/fps`) as long as someone
+  is watching. The screencast of a visible tab costs nothing when the page does not move.
+- On a hidden tab, a purely visual change (video, canvas, CSS animation) is only seen
+  at the safety capture, every 5 s.
+- After a restart of the extension, the stream resumes by itself within 5 s.
 
-## La vidéo d'une exécution
+## The video of a run
 
-Une exécution trop rapide pour être suivie en direct se revoit. L'extension enregistre l'onglet de
-chaque exécution dès qu'il est connu (après l'étape qui l'ouvre) : une image à chaque changement
-d'écran, 5 par seconde au plus. À la fin, la vidéo est **gardée si le test a échoué**, ou si
-**Record video** est coché ; sinon elle est jetée.
+A run too fast to follow live can be watched again. The extension records the tab of each run as
+soon as it is known (after the step that opens it): one image each time the screen changes, 5 per
+second at most. At the end, the video is **kept if the test failed**, or if **Record video** is
+ticked; otherwise it is thrown away.
 
-- **Où la cocher** : options d'exécution d'un test (*Run* → *Record video*), formulaire d'une
-  campagne (*Record video of every test*), `run_test(…, record_video: true)` et
+- **Where to tick it**: a test's run options (*Run* → *Record video*), a campaign's form
+  (*Record video of every test*), `run_test(…, record_video: true)` and
   `run_campaign(…, record_video: true)`.
-- **Où la voir** : onglet *Runs* du test, bouton **Video** sur l'exécution. Le lecteur la rejoue à son
-  rythme (×0,25 à ×2, les pauses de plus de 2 s raccourcies), les étapes à côté : l'étape à l'écran
-  est surlignée, un clic sur une étape y amène la vidéo. Espace : lecture ou pause ; flèches : image
-  par image ; Échap : fermer.
-- **Routes** : `GET /api/executions/{id}/video` (les images et leurs instants, avec les étapes et leurs
-  heures) et `GET /api/executions/{id}/video/{n}` (l'image n, JPEG).
-- **Conservation** : `data/videos/{id}/`, 30 jours (`IZITEST_VIDEO_DAYS`), 3000 images au plus par
-  exécution (`IZITEST_VIDEO_MAX_FRAMES`). Les vidéos des exécutions supprimées partent au
-  démarrage du serveur, puis une fois par jour. `IZITEST_RUN_VIDEO=off` n'enregistre aucune
-  exécution.
-- **Ce qu'elle montre** : l'écran tel qu'il était, donc aussi ce qui a été tapé en clair (un e-mail).
-  Un mot de passe reste masqué dans son champ.
-- **Une connexion par un autre site** (Keycloak, un SSO) ou une page qui change pendant une
-  vérification refait la connexion de l'extension à l'onglet : le serveur redemande l'enregistrement
-  toutes les 1,5 s pendant l'exécution, et la vidéo continue sans trou.
-- Le bandeau d'IziTest (« RUNNING — Step 3/5 … ») figure sur la vidéo. Il est caché aux locators et
-  aux snapshots : une étape « Pick Spain among the suggestions » ne trouve plus « Spain » dans le
-  bandeau.
-
+- **Where to see it**: the test's *Runs* tab, the **Video** button on the run. The player replays
+  it at its own pace (×0.25 to ×2, pauses longer than 2 s shortened), with the steps beside it: the
+  step on screen is highlighted, a click on a step takes the video there. Space: play or pause;
+  arrows: image by image; Esc: close.
+- **Routes**: `GET /api/executions/{id}/video` (the images and their times, with the steps and
+  their times) and `GET /api/executions/{id}/video/{n}` (image n, JPEG).
+- **Retention**: `data/videos/{id}/`, 30 days (`IZITEST_VIDEO_DAYS`), 3000 images at most per
+  run (`IZITEST_VIDEO_MAX_FRAMES`). The videos of deleted runs go when the server starts,
+  then once a day. `IZITEST_RUN_VIDEO=off` records no run.
+- **What it shows**: the screen as it was, so also what was typed in clear (an e-mail).
+  A password stays masked in its field.
+- **A login through another site** (Keycloak, an SSO) or a page that changes during a
+  check redoes the extension's connection to the tab: the server asks for the recording again
+  every 1.5 s during the run, and the video goes on without a gap.
+- IziTest's bar ("RUNNING — Step 3/5 …") is in the video. It is hidden from locators and
+  snapshots: a step "Pick Spain among the suggestions" no longer finds "Spain" in the
+  bar.

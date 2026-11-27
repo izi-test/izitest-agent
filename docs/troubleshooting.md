@@ -1,364 +1,363 @@
 # Troubleshooting 🔧
 
-Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
+This guide helps you solve common problems with IziTest Agent.
 
-**Sous Windows** : là où une commande diffère, sa forme Windows suit, pour l'Invite de commandes.
-Pour PowerShell, voir [les commandes qui diffèrent](installation.md#commands-that-differ). Les
-erreurs de l'installation elle-même sont dans
+**On Windows**: where a command differs, its Windows form follows, for Command Prompt.
+For PowerShell, see [the commands that differ](installation.md#commands-that-differ). The
+errors of the installation itself are in
 [When something fails](installation.md#when-something-fails).
 
 ---
 
-## Problèmes de connexion
+## Connection problems
 
-### "No profiles connected" / "Aucun profil connecté"
+### "No profiles connected"
 
-**Symptôme** : Claude répond qu'aucun profil n'est connecté.
+**Symptom**: Claude answers that no profile is connected.
 
-**Causes possibles** :
+**Possible causes**:
 
-0. **Chrome n'a pas le droit d'avoir des extensions** (poste d'entreprise)
-   - Installez le navigateur sans fenêtre d'IziTest : *Settings → Headless browser → Install*
-   - Sans Chrome avec l'extension, les agents y travaillent ; suivez-les dans la page *Live*
+0. **Chrome may not have extensions** (a company computer)
+   - Install IziTest's headless browser: *Settings → Headless browser → Install*
+   - With no Chrome with the extension, agents work in it; follow them in the *Live* page
 
-1. **L'extension Chrome n'est pas installée**
-   - Vérifiez que l'extension est chargée dans `chrome://extensions/`
-   - Activez le "Mode développeur" en haut à droite
-   - Cliquez sur "Charger l'extension non empaquetée" et sélectionnez le dossier `extension/dist`
-   - Dans Edge, la même adresse mène à `edge://extensions/`. « Mode développeur » est en bas du
-     menu de gauche, derrière ☰ quand la fenêtre est étroite. « Charger l'extension décompressée »
-     est sur la ligne « Options pour les développeurs » qui apparaît alors : dans une fenêtre
-     étroite, c'est la première de ses trois icônes, sans son nom
-   - Dans Edge, sans le mode développeur, l'extension est là mais « désactivée » (« Pour utiliser
-     cette extension, activez le mode développeur. »)
+1. **The Chrome extension is not installed**
+   - Check that the extension is loaded in `chrome://extensions/`
+   - Turn on *Developer mode* (top right)
+   - Click *Load unpacked* and choose the `extension/dist` folder
+   - In Edge, the same address leads to `edge://extensions/`. *Developer mode* is at the bottom of
+     the menu on the left, behind ☰ when the window is narrow. *Load unpacked* is on the
+     *Developer options* line that then appears: in a narrow window, it is the first of its
+     three icons, without its name
+   - In Edge, without developer mode, the extension is there but turned off (*To use this
+     extension, turn on developer mode.*)
 
-2. **L'extension n'est pas connectée au serveur**
-   - Cliquez sur l'icône IziTest Agent dans la barre Chrome
-   - Vérifiez que le statut affiche "Connected" (vert)
-   - Si "Disconnected", cliquez sur "Reconnect"
+2. **The extension is not connected to the server**
+   - Click the IziTest Agent icon in Chrome's toolbar
+   - Check that the status reads *Online* (green)
+   - If it reads *Offline*, click *Save & Reconnect*
 
-3. **Le serveur WebSocket ne tourne pas**
-   - Vérifiez que rien n'utilise le port 3466 :
+3. **The WebSocket server is not running**
+   - Check that nothing uses port 3466:
    ```bash
    lsof -i :3466
    ```
-   Sous Windows (le nombre qui termine la ligne est le numéro du processus qui l'occupe) :
+   On Windows (the number that ends the line is the number of the process that holds it):
    ```bat
    netstat -ano | findstr LISTENING | findstr :3466
    ```
-   - Si occupé, changez de port : `export WS_PORT=3458` (sous Windows : `set WS_PORT=3458`)
+   - If it is taken, change the port: `export WS_PORT=3458` (on Windows: `set WS_PORT=3458`)
 
-4. **Pare-feu / antivirus**
-   - Assurez-vous que localhost (127.0.0.1) n'est pas bloqué
-   - Les ports 3466 et 3467 doivent être accessibles en local
+4. **Firewall / antivirus**
+   - Make sure localhost (127.0.0.1) is not blocked
+   - Ports 3466 and 3467 must be reachable locally
 
 ---
 
-## Erreurs MCP
+## MCP errors
 
-### "MCP server not found" / Claude ne voit pas les outils
+### "MCP server not found" / Claude does not see the tools
 
-**Symptôme** : Les outils IziTest Agent n'apparaissent pas dans Claude.
+**Symptom**: The IziTest Agent tools do not appear in Claude.
 
-**Solutions** :
+**Solutions**:
 
-1. **Vérifiez la configuration Claude Desktop** :
+1. **Check the Claude Desktop configuration**:
    ```json
    {
      "mcpServers": {
        "izitest-agent": {
          "command": "node",
          "args": [
-           "/CHEMIN/ABSOLU/vers/izitest-agent/mcp-server/server.js",
+           "/ABSOLUTE/PATH/to/izitest-agent/mcp-server/server.js",
            "--stdio"
          ]
        }
      }
    }
    ```
-   > **Important** : Le flag `--stdio` est obligatoire !
+   > **Important**: The `--stdio` flag is required!
 
-   > **Sous Windows** : dans ce fichier, écrivez le chemin avec des `/`
-   > (`"C:/izitest-agent/mcp-server/server.js"`) ou en doublant chaque `\`
-   > (`"C:\\izitest-agent\\mcp-server\\server.js"`). Avec des `\` simples, le fichier n'est plus
-   > du JSON valide.
+   > **On Windows**: in this file, write the path with `/`
+   > (`"C:/izitest-agent/mcp-server/server.js"`) or with each `\` doubled
+   > (`"C:\\izitest-agent\\mcp-server\\server.js"`). With single `\`, the file is no longer
+   > valid JSON.
 
-2. **Redémarrez Claude Desktop** après modification de la config
+2. **Restart Claude Desktop** after changing the config
 
-3. **Vérifiez les permissions** :
+3. **Check the permissions**:
    ```bash
-   ls -la /chemin/vers/izitest-agent/mcp-server/server.js
+   ls -la /path/to/izitest-agent/mcp-server/server.js
    ```
-   Sous Windows (le fichier doit être listé) :
+   On Windows (the file must be listed):
    ```bat
-   dir C:\chemin\vers\izitest-agent\mcp-server\server.js
+   dir C:\path\to\izitest-agent\mcp-server\server.js
    ```
 
-4. **Testez le serveur manuellement** :
+4. **Test the server by hand**:
    ```bash
    cd mcp-server
    node server.js --stdio
    ```
-   Vous devriez voir le serveur démarrer sans erreur.
+   You should see the server start without an error.
 
-### `self-signed certificate in certificate chain` à l'installation du navigateur sans fenêtre
+### `self-signed certificate in certificate chain` when installing the headless browser
 
-Le réseau de l'entreprise inspecte HTTPS avec son propre certificat. Avec Node 22.15 / 23.8 ou plus
-récent, IziTest fait confiance aux certificats du système. Sinon : `NODE_EXTRA_CA_CERTS` vers le
-certificat racine de l'entreprise, ou un Chrome for Testing décompressé à la main et
+The company's network inspects HTTPS with its own certificate. With Node 22.15 / 23.8 or later,
+IziTest trusts the system's certificates. Otherwise: `NODE_EXTRA_CA_CERTS` pointing to the
+company's root certificate, or a Chrome for Testing unzipped by hand and
 `IZITEST_CHROME_PATH` ([installation](installation.md#5-replay-without-windows-optional)).
 
-### Un clic « réussi » qui ne fait rien, puis l'étape suivante échoue
+### A click that "succeeds" and does nothing, then the next step fails
 
-L'application affichait le bouton avant de savoir y répondre. Le rejeu attend maintenant qu'il soit
-cliquable (rien par-dessus, immobile, actif) et reclique une fois si le premier clic n'a rien changé.
-Un lien qui tient sur deux lignes (un nom long dans un tableau) est cliqué au milieu de sa première
-ligne : le milieu de son cadre tombait entre les deux, sur la cellule autour.
-Si l'étape échoue encore avec « Not clicked: … covered by … », augmentez le délai d'attente du projet.
+The application showed the button before it could respond to it. The replay now waits until it can
+be clicked (nothing over it, not moving, enabled) and clicks once more if the first click changed
+nothing. A link that runs over two lines (a long name in a table) is clicked in the middle of its
+first line: the middle of its box fell between the two, on the cell around it.
+If the step still fails with "Not clicked: … covered by …", raise the project's wait for an element.
 
-### « Concurrent Sessions Exceeded »
+### "Concurrent Sessions Exceeded"
 
-L'application limite le nombre de sessions ouvertes par compte, et vider les cookies ne ferme pas une
-session côté serveur. Terminez chaque test qui se connecte par une déconnexion : une étape métier
-(« je me déconnecte de … ») ou des étapes dont l'intention le dit (« Se déconnecter », « Log out »).
-Quand le test échoue avant elle, le rejeu la joue quand même, dans l'onglet du test, après le
-diagnostic : le rapport montre ces étapes jouées après l'échec, et le verdict reste l'échec.
+The application limits the number of sessions open per account, and clearing the cookies does not
+close a session on the server's side. End each test that logs in with a logout: a business step
+("I log out of …") or steps whose intent says so ("Se déconnecter", "Log out").
+When the test fails before it, the replay plays it anyway, in the test's tab, after the
+diagnosis: the report shows these steps played after the failure, and the verdict stays a failure.
 
-### « Access Denied » sur la page de connexion au rejeu
+### "Access Denied" on the login page at replay
 
-L'application refuse la page de connexion à qui a déjà une session. Dans le navigateur sans fenêtre,
-chaque test part déconnecté : vérifiez que *Projects → Edit → Each test starts logged out* est coché.
-Dans votre Chrome, rien n'est nettoyé : déconnectez-vous de l'application avant le rejeu.
+The application refuses the login page to someone who already has a session. In the headless
+browser, each test starts logged out: check that *Projects → Edit → Each test starts logged out* is
+ticked. In your Chrome, nothing is cleared: log out of the application before the replay.
 
-### "Command failed" / Les actions ne fonctionnent pas
+### "Command failed" / Actions do not work
 
-**Symptôme** : Les commandes comme `navigate` ou `click` échouent.
+**Symptom**: Commands such as `navigate` or `click` fail.
 
-**Vérifications** :
+**Checks**:
 
-1. **Le navigateur est-il ouvert ?** IziTest Agent contrôle une instance Chrome existante
-2. **Le bon profil est-il sélectionné ?** Utilisez `list_profiles` pour vérifier
-3. **La page est-elle chargée ?** Attendez que la page charge avant d'interagir
+1. **Is the browser open?** IziTest Agent controls an existing Chrome instance
+2. **Is the right profile selected?** Use `list_profiles` to check
+3. **Is the page loaded?** Wait for the page to load before interacting
 
 ---
 
-## Problèmes avec les éléments
+## Problems with elements
 
-### "Element not found" / Élément introuvable
+### "Element not found"
 
-**Symptôme** : Claude ne trouve pas un élément qui semble visible.
+**Symptom**: Claude does not find an element that seems visible.
 
-**Solutions** :
+**Solutions**:
 
-1. **Utilisez le protocole de découverte** :
-   - Commencez toujours par un `screenshot()` pour voir les éléments annotés
-   - Utilisez les références `@eX` plutôt que les sélecteurs CSS
+1. **Use the discovery protocol**:
+   - Always start with a `screenshot()` to see the annotated elements
+   - Use the `@eX` references rather than CSS selectors
 
-2. **Attendez le chargement** :
+2. **Wait for the page to load**:
    ```
-   "Attends que .mon-element apparaisse"
+   "Wait for .my-element to appear"
    ```
 
-3. **Vérifiez les iframes** : IziTest Agent ne peut pas accéder aux éléments dans des iframes cross-origin
+3. **Check the iframes**: IziTest Agent cannot reach elements in cross-origin iframes
 
-4. **Éléments dynamiques** : Utilisez `snapshot(includeHidden=true)` pour les menus déroulants, modals, etc.
+4. **Dynamic elements**: Use `snapshot(includeHidden=true)` for dropdown menus, modals, etc.
 
-### Les clics ne fonctionnent pas
+### Clicks do not work
 
-**Symptôme** : Le click semble réussir mais rien ne se passe.
+**Symptom**: The click seems to succeed but nothing happens.
 
-**Causes** :
-- L'élément peut être recouvert par un overlay
-- L'élément nécessite un clic spécifique (double-clic, clic droit)
-- C'est un élément custom (React, Vue) qui nécessite un event spécifique
+**Causes**:
+- The element may be covered by an overlay
+- The element needs a specific click (double click, right click)
+- It is a custom element (React, Vue) that needs a specific event
 
-**Solutions** :
+**Solutions**:
 ```javascript
-// Utilisez execute_js pour un clic précis
-"Exécute ce JavaScript : document.querySelector('.mon-bouton').dispatchEvent(new MouseEvent('click', {bubbles: true}))"
+// Use execute_js for a precise click
+"Run this JavaScript: document.querySelector('.my-button').dispatchEvent(new MouseEvent('click', {bubbles: true}))"
 ```
 
 ---
 
-## Problèmes de tests enregistrés
+## Problems with recorded tests
 
 ### "Test not found"
 
-**Symptôme** : Impossible de charger un test sauvegardé.
+**Symptom**: A saved test cannot be loaded.
 
-**Vérifications** :
+**Checks**:
 ```bash
-# Vérifiez la base de données
+# Check the database
 ls -la mcp-server/data/
 ```
 
-La base SQLite devrait exister. Si elle est corrompue, vous pouvez la recréer :
+The SQLite database should exist. If it is corrupted, you can recreate it:
 ```bash
 rm mcp-server/data/tests.db
 cd mcp-server && node -e "require('./lib/db.js').initDatabase()"
 ```
 
-Sous Windows, `dir mcp-server\data` liste le dossier. La base est `izitest.db`, avec ses fichiers
-`izitest.db-wal` et `izitest.db-shm`. Pour repartir d'une base vide, arrêtez d'abord le serveur :
-tant qu'il tourne, Windows refuse d'y toucher (« … utilisé par un autre processus »). Mettez ensuite
-ces fichiers de côté :
+On Windows, `dir mcp-server\data` lists the folder. The database is `izitest.db`, with its files
+`izitest.db-wal` and `izitest.db-shm`. To start again from an empty database, stop the server first:
+while it runs, Windows refuses to touch it ("… being used by another process"). Then set
+these files aside:
 
 ```bat
 mkdir mcp-server\data\old
 move mcp-server\data\izitest.db* mcp-server\data\old
 ```
 
-Au démarrage suivant, le serveur crée une base neuve. Vos projets et vos tests restent dans `old`.
+At the next start, the server creates a new database. Your projects and your tests stay in `old`.
 
-### Le test échoue à une étape spécifique
+### The test fails at a specific step
 
-**Symptôme** : Un test fonctionnait avant mais échoue maintenant.
+**Symptom**: A test used to work but fails now.
 
-**Causes courantes** :
-- La structure du site a changé
-- Un popup/cookie banner bloque l'interaction
-- Le site charge plus lentement
+**Common causes**:
+- The structure of the site has changed
+- A popup/cookie banner blocks the interaction
+- The site loads more slowly
 
-**Solutions** :
-1. Si l'erreur dit « not found within 10 s » et que la page met du temps à charger, augmentez le
-   délai d'attente du projet : *Projects → Edit → Wait for an element* (10 s par défaut, jusqu'à
+**Solutions**:
+1. If the error says "not found within 10 s" and the page takes time to load, raise the
+   project's wait for an element: *Projects → Edit → Wait for an element* (10 s by default, up to
    120 s)
-2. Sur la page du test, *Ask the agent* : « ce test échoue, répare-le ». L'agent relance le
-   test, refait l'étape là où il s'est arrêté, l'enregistre et confirme en le rejouant
-3. Avec votre propre agent : `fix_test_step` pour mettre à jour l'étape problématique
-4. Ajoutez une étape `wait` avant l'étape qui échoue
-5. Utilisez `add_assertion` pour vérifier l'état avant de continuer
+2. On the test's page, *Ask the agent*: "this test fails, repair it". The agent runs the test
+   again, redoes the step where it stopped, records it and confirms by replaying it
+3. With your own agent: `fix_test_step` to update the failing step
+4. Add a `wait` step before the step that fails
+5. Use `add_assertion` to check the state before going on
 
-### *Ask the agent* répond « works with Claude Code for now »
+### *Ask the agent* answers "works with Claude Code for now"
 
-**Symptôme** : sur la page d'un test, la fenêtre *Ask the agent* affiche un message au lieu de
-la conversation, et la zone de saisie est grisée.
+**Symptom**: on a test's page, the *Ask the agent* window shows a message instead of the
+conversation, and the input area is greyed out.
 
-**Cause** : la conversation d'un test a besoin d'un agent qui garde les outils d'IziTest d'un
-message à l'autre. Aujourd'hui c'est Claude Code. L'agent API et les autres CLI (Copilot, Gemini,
-opencode) ne le peuvent pas encore.
+**Cause**: a test's conversation needs an agent that keeps IziTest's tools from one message to
+the next. Today that is Claude Code. The API agent and the other CLIs (Copilot, Gemini,
+opencode) cannot do it yet.
 
-**Solution** : *Settings → AI agent → CLI*, fournisseur *Claude Code*.
+**Solution**: *Settings → AI agent → CLI*, provider *Claude Code*.
 
-### L'agent d'un test « ne se souvient plus »
+### A test's agent "no longer remembers"
 
-**Symptôme** : dans la conversation d'un test, l'agent relit le test depuis le début au lieu de
-continuer.
+**Symptom**: in a test's conversation, the agent reads the test again from the start instead of
+going on.
 
-**Cause** : chaque message reprend la session de Claude Code. Si elle a été nettoyée (ou si le
-serveur tourne sur une autre machine), l'agent repart du test tel qu'il est et de l'historique de
-la conversation. Rien n'est perdu de ce qui a été changé dans le test.
+**Cause**: each message resumes Claude Code's session. If it was cleaned up (or if the
+server runs on another machine), the agent starts again from the test as it is and from the
+conversation's history. Nothing that was changed in the test is lost.
 
-### « Cannot find context with specified id » dans une vérification
+### "Cannot find context with specified id" in a check
 
-**Symptôme** : une vérification juste après un clic qui change de page échoue avec
+**Symptom**: a check right after a click that changes the page fails with
 `Error: Protocol error (Runtime.evaluate): {"code":-32000,"message":"Cannot find context with specified id"}`.
 
-**Cause** : la connexion gardée pour l'onglet pointait encore vers la page d'avant. Depuis cette
-version, `execute_js` (qui sert aussi aux vérifications) se reconnecte à la page et relance la
-lecture, comme le font déjà les actions du rejeu. Reconstruisez l'extension
-(`npm --prefix extension run build`) et, sans fenêtre, redémarrez le Chrome headless.
+**Cause**: the connection kept for the tab still pointed to the previous page. Since this
+version, `execute_js` (which checks use too) reconnects to the page and runs the read again,
+as the replay's actions already do. Rebuild the extension
+(`npm --prefix extension run build`) and, when running headless, restart the headless Chrome.
 
-### Une étape sans locators échoue tout de suite (« Element not found », « is covered »)
+### A step without locators fails right away ("Element not found", "is covered")
 
-Une étape enregistrée avec seulement un sélecteur ou un texte, sans locators, attend maintenant
-comme les autres : jusqu'au délai du projet (10 s par défaut), tant que son élément n'est pas
-encore là ou qu'un voile de chargement le couvre. Si elle échoue encore après ce délai, son
-sélecteur ne correspond à rien sur la page : corrigez l'étape (`fix_test_step`, ou choisissez un
-élément du projet dans l'éditeur d'étape).
+A step recorded with only a selector or a text, without locators, now waits like the others: up
+to the project's wait (10 s by default), as long as its element is not there yet or a loading
+overlay covers it. If it still fails after that wait, its selector matches nothing on the page:
+fix the step (`fix_test_step`, or choose one of the project's elements in the step editor).
 
-### Un clic sur un lien de menu « réussit » mais la page ne change pas
+### A click on a menu link "succeeds" but the page does not change
 
-Sur une page qui finit de se dessiner, le premier clic peut être perdu alors que le DOM bouge
-encore. Pour un lien vers une autre page, le rejeu ne compte plus que l'ouverture de cette page
-comme effet du clic. Sans elle, il reclique une fois.
+On a page that is still being drawn, the first click can be lost while the DOM is still
+moving. For a link to another page, the replay now counts only the opening of that page as the
+click's effect. Without it, it clicks once more.
 
-Si l'étape passe quand même par « variable », le clic a été enregistré comme le choix d'un
-élément de liste (variable `list_item`). Ce chemin ne fait pas ces contrôles. Pour un menu, ce
-n'est pas une donnée du test : retirez la variable de l'étape pour qu'elle soit jouée par ses
-locators. Les enregistrements faits depuis cette version ne font plus de variable d'un clic dans
-un menu, une barre d'onglets ou un menu latéral : seuls les tests plus anciens en ont.
+If the step still goes through "variable", the click was recorded as the choice of a list
+item (a `list_item` variable). That path does not make these checks. For a menu, it is not a
+piece of the test's data: remove the variable from the step so that it is played by its
+locators. Recordings made since this version no longer make a variable of a click in a menu, a
+tab bar or a side menu: only older tests have them.
 
-### Un clic part sur un autre élément qui porte le même texte
+### A click goes to another element that has the same text
 
-Les locators d'une étape cherchent tous en même temps. Un texte (« chocolat ») peut être sur la page
-avant l'élément voulu (la liste de suggestions pas encore ouverte). Désormais, un locator moins
-précis trouvé en premier attend jusqu'à 1 s un locator plus précis (CSS, test ID, attribut, nom
-accessible) encore en recherche, et c'est lui qui est pris s'il arrive. Le rapport dit par quel
-locator l'étape a été trouvée (« via css », « via text ») : un clic « via text » sur une étape qui a
-un sélecteur précis mérite un coup d'œil.
+A step's locators all look at the same time. A text ("chocolat") can be on the page before the
+element wanted (the list of suggestions not open yet). Now, a less precise locator found
+first waits up to 1 s for a more precise locator (CSS, test ID, attribute, accessible name) still
+looking, and that one is taken if it comes. The report says which locator the step was found by
+("via css", "via text"): a click "via text" on a step that has a precise selector deserves a
+look.
 
-### Un clic « réussit » mais rien ne s'ouvre, une exécution sur deux
+### A click "succeeds" but nothing opens, one run in two
 
-L'étape du clic est verte, et c'est la suivante qui échoue : la fenêtre, le menu ou le formulaire
-que le clic devait ouvrir n'est pas là (« not found within 10 s »). Sur la vidéo de l'exécution, la
-page est encore en train de se dessiner au moment du clic (images vides, panier en attente).
+The click's step is green, and it is the next one that fails: the window, the menu or the form
+the click was to open is not there ("not found within 10 s"). In the run's video, the page is
+still being drawn when the click is made (empty images, the cart still waiting).
 
-Le clic venait juste après une action qui ouvrait cette page : le bouton était affiché, mais les
-scripts de la page n'avaient pas encore tourné, et rien ne l'écoutait. Le rejeu attend maintenant que
-la page ait fini de se charger avant d'agir (jusqu'à 15 s), puis reclique un clic resté sans aucun
-effet. Si le problème persiste, la page branche ses boutons après son chargement : ajoutez, juste
-avant le clic, la vérification d'un élément qui n'apparaît qu'une fois la page prête (onglet
-*Steps* du test) — le rejeu attend là qu'il soit affiché.
+The click came right after an action that opened this page: the button was shown, but the page's
+scripts had not run yet, and nothing was listening to it. The replay now waits for the page to have
+finished loading before it acts (up to 15 s), then clicks once more when a click had no effect at
+all. If the problem persists, the page wires its buttons after it has loaded: add, right
+before the click, a check of an element that appears only once the page is ready (the test's
+*Steps* tab) — the replay waits there until it is shown.
 
-### Une vérification de fin de test échoue alors qu'elle passait à l'enregistrement
+### A check at the end of the test fails though it passed when recording
 
-Les vérifications sont toutes à la fin du test, après plusieurs actions. À l'enregistrement, l'agent
-laissait à chaque page le temps de se charger ; au rejeu, les actions s'enchaînent, et une action
-peut interrompre le chargement amené par la précédente (un onglet cliqué juste après un autre). La
-capture de l'échec montre la page telle qu'elle était.
+The checks are all at the end of the test, after several actions. While recording, the agent gave
+each page the time to load; at replay, the actions follow one another, and an action can
+interrupt the loading that the one before started (a tab clicked right after another). The
+failure's screenshot shows the page as it was.
 
-Placez chaque vérification juste après l'action dont elle vérifie le résultat (onglet *Steps* du
-test, boutons *Move up* / *Move down*) : au rejeu, elle attend là que ce qu'elle vérifie apparaisse avant l'action
-suivante. Les agents le font désormais pendant l'enregistrement.
-
----
-
-## Problèmes de performance
-
-### Les commandes sont lentes
-
-**Causes** :
-- Trop d'onglets ouverts
-- Chrome surcharge
-- Le site web est lent
-
-**Optimisations** :
-- Fermez les onglets inutiles
-- Utilisez `snapshot(compact=true)` pour réduire la taille des données
-- Limitez la profondeur avec `maxDepth` dans snapshot
+Put each check right after the action whose result it checks (the test's *Steps* tab, the
+*Move up* / *Move down* buttons): at replay, it waits there for what it checks to appear before
+the next action. Agents now do so while recording.
 
 ---
 
-## Diagnostics avancés
+## Performance problems
 
-### Vérifier l'état du système
+### Commands are slow
+
+**Causes**:
+- Too many tabs open
+- Chrome is overloaded
+- The website is slow
+
+**Optimizations**:
+- Close the tabs you do not need
+- Use `snapshot(compact=true)` to reduce the size of the data
+- Limit the depth with `maxDepth` in snapshot
+
+---
+
+## Advanced diagnostics
+
+### Check the state of the system
 
 ```bash
-# 1. Vérifier le serveur WebSocket
+# 1. Check the WebSocket server
 curl http://127.0.0.1:3467/health
 
-# 2. Vérifier les profils connectés
-# Dans Claude : "Liste les profils connectés"
+# 2. Check the connected profiles
+# In Claude: "List the connected profiles"
 
-# 3. Vérifier les logs
-# Dans le dossier mcp-server, consultez les erreurs dans la console
+# 3. Check the logs
+# In the mcp-server folder, look at the errors in the console
 ```
 
-Sous Windows, dans PowerShell, tapez `curl.exe` à la place de `curl`. Un serveur démarré en
-arrière-plan (`npm --prefix mcp-server run ensure`) n'a pas de console : ses messages sont dans
+On Windows, in PowerShell, type `curl.exe` in place of `curl`. A server started in the
+background (`npm --prefix mcp-server run ensure`) has no console: its messages are in
 `mcp-server\data\server.log`.
 
-### Mode debug
+### Debug mode
 
-Pour voir les communications en temps réel :
+To see the communications in real time:
 
 ```bash
 cd mcp-server
 DEBUG=* node server.js --stdio
 ```
 
-Sous Windows :
+On Windows:
 
 ```bat
 cd mcp-server
@@ -366,48 +365,48 @@ set DEBUG=*
 node server.js --stdio
 ```
 
-### Réinitialisation complète
+### Full reset
 
-Si tout semble bloqué :
+If everything seems stuck:
 
 ```bash
-# 1. Arrêtez Claude Desktop
+# 1. Quit Claude Desktop
 
-# 2. Tuez les processus en cours
+# 2. Kill the running processes
 killall "Google Chrome"
 pkill -f "izitest-agent"
 
-# 3. Vérifiez les ports
+# 3. Check the ports
 lsof -i :3466,3467
 
-# 4. Redémarrez Chrome avec le profil
+# 4. Restart Chrome with the profile
 ./scripts/launch-profile.sh default
 
-# 5. Réinstallez l'extension si nécessaire
+# 5. Reinstall the extension if needed
 
-# 6. Redémarrez Claude Desktop
+# 6. Restart Claude Desktop
 ```
 
-Sous Windows, les étapes 2 à 4 se font ainsi, depuis le dossier d'IziTest :
+On Windows, steps 2 to 4 are done this way, from IziTest's folder:
 
-- **Fermer le navigateur des tests.** Cette commande ferme toutes les fenêtres de Chrome, les
-  vôtres comprises. Pour Edge, écrivez `msedge.exe`.
+- **Close the tests' browser.** This command closes every Chrome window, yours
+  included. For Edge, write `msedge.exe`.
 
   ```bat
   taskkill /IM chrome.exe /F
   ```
 
-- **Arrêter le serveur.** La première commande montre qui écoute sur ses deux ports. Le nombre
-  qui termine la ligne va à la place de `<numéro>` dans la seconde. Relancée ensuite, la
-  première ne doit plus rien afficher.
+- **Stop the server.** The first command shows what listens on its two ports. The number
+  that ends the line goes in place of `<number>` in the second. Run again afterwards, the
+  first must no longer show anything.
 
   ```bat
   netstat -ano | findstr LISTENING | findstr ":3466 :3467"
-  taskkill /PID <numéro> /T /F
+  taskkill /PID <number> /T /F
   ```
 
-- **Redémarrer le navigateur avec le profil.** La commande démarre Chrome, ou Edge là où Chrome
-  n'est pas installé.
+- **Restart the browser with the profile.** The command starts Chrome, or Edge where Chrome
+  is not installed.
 
   ```bat
   powershell -ExecutionPolicy Bypass -File scripts\launch-profile.ps1 default
@@ -415,26 +414,26 @@ Sous Windows, les étapes 2 à 4 se font ainsi, depuis le dossier d'IziTest :
 
 ---
 
-## Obtenir de l'aide
+## Getting help
 
-Si le problème persiste :
+If the problem persists:
 
-1. **Collectez les informations** :
-   - Version de Chrome (`chrome://version`)
-   - Sortie de `curl http://127.0.0.1:3467/health`
-   - Messages d'erreur exacts
+1. **Collect the information**:
+   - Chrome's version (`chrome://version`)
+   - The output of `curl http://127.0.0.1:3467/health`
+   - The exact error messages
 
-2. **Vérifiez les logs** :
-   - Console Claude Desktop (Help > Toggle Developer Tools)
-   - Console du navigateur Chrome (F12)
-   - Console du service worker de l'extension (`chrome://extensions/` > Service Worker)
-   - Dans Edge, les mêmes adresses mènent à `edge://version` et `edge://extensions/`, où le lien
-     du service worker s'appelle « travailleur du service »
+2. **Check the logs**:
+   - Claude Desktop's console (Help > Toggle Developer Tools)
+   - The Chrome browser's console (F12)
+   - The console of the extension's service worker (`chrome://extensions/` > Service Worker)
+   - In Edge, the same addresses lead to `edge://version` and `edge://extensions/`, where the
+     service worker's link reads *service worker*
 
-3. **Testez minimal** :
-   - Un seul profil
-   - Une seule page simple (ex: example.com)
-   - Une seule commande (`navigate`)
+3. **Test with the minimum**:
+   - A single profile
+   - A single simple page (e.g. example.com)
+   - A single command (`navigate`)
 
 ---
 [< Previous: Security](security.md) | [Next: Usage >](usage.md)

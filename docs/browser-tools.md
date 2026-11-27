@@ -1,186 +1,186 @@
-# Piloter le navigateur avec les outils MCP 🕹️
+# Driving the browser with the MCP tools 🕹️
 
-*Le parcours complet, de l'exigence à la campagne, est dans [usage.md](usage.md). Cette page détaille comment un agent pilote le navigateur avec les outils de base.*
+*The whole path, from a requirement to a campaign, is in [usage.md](usage.md). This page details how an agent drives the browser with the basic tools.*
 
-Une fois IziTest Agent configuré, vous pouvez interagir avec votre navigateur via Claude en utilisant le langage naturel ou les outils MCP directement.
-
----
-
-## Protocole de découverte d'éléments
-
-Pour interagir de manière fiable avec les éléments d'une page, suivez toujours ce protocole :
-
-### Étape 1 : Screenshot (toujours commencer ici)
-
-Le screenshot annoté capture TOUS les éléments visibles, y compris ceux qui peuvent être masqués mais interactifs dans les SPAs (Instagram, Twitter, etc.).
-
-```
-"Fais un screenshot de la page"
-```
-
-Le résultat contient :
-- Une image avec les éléments encadrés
-- Une liste `@e1`, `@e2`, `@e3`... correspondant aux éléments interactifs
-
-### Étape 2 : Utiliser les références `@eX`
-
-Si vous voyez l'élément souhaité dans le mapping :
-```
-"Clique sur @e5"
-"Remplis @e12 avec 'mon texte'"
-```
-
-### Étape 3 : Snapshot (fallback)
-
-Si l'élément n'est pas visible dans le screenshot (élément hors écran, chargé dynamiquement) :
-```
-"Fais un snapshot avec purposeFilter='fill' et searchText='email'"
-```
-
-Options utiles pour `snapshot` :
-- `purposeFilter="fill"` → champs de saisie uniquement
-- `purposeFilter="click"` → boutons/liens uniquement  
-- `purposeFilter="read"` → tous les éléments
-- `searchText="motclé"` → filtre par texte (insensible à la casse)
-- `includeHidden=true` → inclut les éléments masqués
+Once IziTest Agent is set up, you can interact with your browser through Claude, in natural language or with the MCP tools directly.
 
 ---
 
-## Navigation de base
+## Element discovery protocol
+
+To interact reliably with the elements of a page, always follow this protocol:
+
+### Step 1: Screenshot (always start here)
+
+The annotated screenshot captures ALL the visible elements, including those that may be hidden yet interactive in SPAs (Instagram, Twitter, etc.).
 
 ```
-"Va sur youtube.com"
-"Ouvre twitter.com dans un nouvel onglet avec le profil compte-pro"
-"Liste les onglets ouverts"
-"Ferme l'onglet 3"
+"Take a screenshot of the page"
 ```
 
-### Avec un profil spécifique
+The result contains:
+- An image with a box drawn around each element
+- A list `@e1`, `@e2`, `@e3`... matching the interactive elements
+
+### Step 2: Use the `@eX` references
+
+If you see the element you want in the mapping:
+```
+"Click @e5"
+"Fill @e12 with 'my text'"
+```
+
+### Step 3: Snapshot (fallback)
+
+If the element is not visible in the screenshot (element off screen, loaded dynamically):
+```
+"Take a snapshot with purposeFilter='fill' and searchText='email'"
+```
+
+Useful options for `snapshot`:
+- `purposeFilter="fill"` → input fields only
+- `purposeFilter="click"` → buttons/links only  
+- `purposeFilter="read"` → all the elements
+- `searchText="keyword"` → filters by text (case-insensitive)
+- `includeHidden=true` → includes hidden elements
+
+---
+
+## Basic navigation
 
 ```
-"Sur le profil youtube-work, va sur youtube.com/studio"
-"Utilise le profil compte-personnel pour cliquer sur 'Se connecter'"
+"Go to youtube.com"
+"Open twitter.com in a new tab with the profile work-account"
+"List the open tabs"
+"Close tab 3"
+```
+
+### With a specific profile
+
+```
+"On the profile youtube-work, go to youtube.com/studio"
+"Use the profile personal-account to click 'Sign in'"
 ```
 
 ---
 
-## Interactions avancées
+## Advanced interactions
 
-### Formulaires
+### Forms
 
 ```
-"Remplis le champ email avec 'test@example.com'"
-"Coche la case 'J'accepte les conditions'"
-"Sélectionne 'France' dans le menu déroulant"
-"Appuie sur Entrée"
-"Appuie sur Tab pour passer au champ suivant"
+"Fill the email field with 'test@example.com'"
+"Check the 'I accept the terms' box"
+"Select 'France' in the dropdown"
+"Press Enter"
+"Press Tab to move to the next field"
 ```
 
 ### Scroll
 
 ```
-"Scroll vers le bas de 500 pixels"
-"Scroll jusqu'à l'élément #results"
-"Scroll vers le haut"
+"Scroll down 500 pixels"
+"Scroll to the element #results"
+"Scroll up"
 ```
 
-### Attente
+### Waiting
 
 ```
-"Attends 2 secondes"
-"Attends que l'élément .loading disparaisse"
-"Attends que #results apparaisse (le délai du projet, 10 s par défaut)"
-"Attends que #export-ready apparaisse, jusqu'à 2 minutes"
-```
-
----
-
-## Extraction de données
-
-```
-"Extrais le texte de tous les h1 sur la page"
-"Récupère les href de tous les liens dans .nav"
-"Combien d'éléments ont la classe 'video-title' ?"
-"Exécute ce JavaScript : document.querySelectorAll('.price').map(e => e.textContent)"
+"Wait 2 seconds"
+"Wait for the element .loading to disappear"
+"Wait for #results to appear (the project's wait for an element, 10 s by default)"
+"Wait for #export-ready to appear, up to 2 minutes"
 ```
 
 ---
 
-## JavaScript arbitraire
-
-Pour des interactions complexes :
+## Data extraction
 
 ```
-"Exécute ce code JavaScript :"
+"Extract the text of every h1 on the page"
+"Get the href of every link in .nav"
+"How many elements have the class 'video-title'?"
+"Run this JavaScript: document.querySelectorAll('.price').map(e => e.textContent)"
+```
+
+---
+
+## Arbitrary JavaScript
+
+For complex interactions:
+
+```
+"Run this JavaScript code:"
 ```
 
 ```javascript
-// Exemples d'utilisation
-window.scrollTo(0, document.body.scrollHeight);  // Scroll en bas
-document.querySelector('#accept-cookies').click(); // Accepter cookies
-localStorage.getItem('user_id');                   // Lire localStorage
+// Usage examples
+window.scrollTo(0, document.body.scrollHeight);  // Scroll to the bottom
+document.querySelector('#accept-cookies').click(); // Accept cookies
+localStorage.getItem('user_id');                   // Read localStorage
 ```
 
 ---
 
-## Cookies et authentification
+## Cookies and authentication
 
 ```
-"Récupère les cookies pour youtube.com"
-"Vérifie si le cookie 'session_id' existe"
-"Liste tous les cookies du domaine .google.com"
+"Get the cookies for youtube.com"
+"Check whether the cookie 'session_id' exists"
+"List all the cookies of the domain .google.com"
 ```
 
-> **Note** : Pour des raisons de sécurité, les valeurs des cookies sont tronquées à 50 caractères dans les réponses.
+> **Note**: For security reasons, cookie values are truncated to 50 characters in the answers.
 
 ---
 
-## Workflows complets
+## Complete workflows
 
-### Exemple : Recherche YouTube
-
-```
-1. "Va sur youtube.com"
-2. "Fais un screenshot"
-3. "Remplis @e2 (le champ de recherche) avec 'tutoriel python'"
-4. "Clique sur @e3 (le bouton recherche)"
-5. "Attends que #results apparaisse"
-6. "Extrais les titres des vidéos : .video-title"
-```
-
-### Exemple : Connexion à un site
+### Example: YouTube search
 
 ```
-1. "Va sur exemple.com/login"
-2. "Fais un snapshot avec purposeFilter='fill'"
-3. "Remplis @e1 avec 'monemail@example.com'"
-4. "Remplis @e2 avec 'monmotdepasse'"
-5. "Clique sur @e3 (Se connecter)"
-6. "Attends que .dashboard apparaisse"
-7. "Fais un screenshot pour vérifier"
+1. "Go to youtube.com"
+2. "Take a screenshot"
+3. "Fill @e2 (the search field) with 'python tutorial'"
+4. "Click @e3 (the search button)"
+5. "Wait for #results to appear"
+6. "Extract the video titles: .video-title"
+```
+
+### Example: Logging in to a site
+
+```
+1. "Go to example.com/login"
+2. "Take a snapshot with purposeFilter='fill'"
+3. "Fill @e1 with 'myemail@example.com'"
+4. "Fill @e2 with 'mypassword'"
+5. "Click @e3 (Sign in)"
+6. "Wait for .dashboard to appear"
+7. "Take a screenshot to check"
 ```
 
 ---
 
-## Raccourcis utiles
+## Useful shortcuts
 
-| Action | Commande équivalente |
+| Action | Equivalent command |
 |--------|---------------------|
 | Screenshot + mapping | `screenshot(annotate=true)` |
-| Voir tous les éléments interactifs | `snapshot(purposeFilter="read")` |
-| Trouver un champ spécifique | `snapshot(purposeFilter="fill", searchText="email")` |
-| Trouver un bouton | `snapshot(purposeFilter="click", searchText="connexion")` |
-| Info page complète | `get_page_info()` |
+| See all the interactive elements | `snapshot(purposeFilter="read")` |
+| Find a specific field | `snapshot(purposeFilter="fill", searchText="email")` |
+| Find a button | `snapshot(purposeFilter="click", searchText="connexion")` |
+| Full page info | `get_page_info()` |
 
 ---
 
-## Conseils et bonnes pratiques
+## Tips and good practices
 
-1. **Toujours commencer par un screenshot** avant d'interagir avec une page inconnue
-2. **Utilisez les `@eX`** plutôt que les sélecteurs CSS quand possible (plus stable)
-3. **Précisez le profil** si vous utilisez plusieurs comptes
-4. **Attendez les chargements** : les pages modernes chargent du contenu dynamiquement
-5. **Vérifiez visuellement** avec des screenshots après des actions critiques
+1. **Always start with a screenshot** before interacting with an unknown page
+2. **Use the `@eX` references** rather than CSS selectors when possible (more stable)
+3. **Name the profile** if you use several accounts
+4. **Wait for loading**: modern pages load content dynamically
+5. **Check visually** with screenshots after critical actions
 
 ---
 [< Previous: Troubleshooting](troubleshooting.md) | [Next: MCP Tools Reference >](mcp-tools.md)

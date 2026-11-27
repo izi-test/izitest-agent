@@ -1,79 +1,79 @@
 # Configuration ⚙️
 
-Ce document décrit toutes les options de configuration disponibles pour IziTest Agent.
+This document describes all the configuration options available for IziTest Agent.
 
 ---
 
-## Variables d'environnement
+## Environment variables
 
-### Ports réseau
+### Network ports
 
-| Variable | Défaut | Description |
+| Variable | Default | Description |
 |----------|--------|-------------|
-| `WS_PORT` | `3466` | Port WebSocket pour la communication avec l'extension Chrome |
-| `MCP_PORT` | `3467` | Port HTTP/SSE pour le serveur MCP (mode non-stdio) |
+| `WS_PORT` | `3466` | WebSocket port for the communication with the Chrome extension |
+| `MCP_PORT` | `3467` | HTTP/SSE port for the MCP server (non-stdio mode) |
 
-**Exemple** :
+**Example**:
 ```bash
 export WS_PORT=3458
 export MCP_PORT=3459
 node mcp-server/server.js
 ```
 
-### Accès et sécurité
+### Access and security
 
-| Variable | Défaut | Description |
+| Variable | Default | Description |
 |----------|--------|-------------|
-| `MCP_HOST` | `127.0.0.1` | Interface d'écoute du serveur HTTP/SSE. Une interface autre que la boucle locale exige `IZITEST_TOKEN` |
-| `IZITEST_TOKEN` | aucun | Jeton exigé sur toutes les routes (`Authorization: Bearer …` ou `?token=…`), sauf `/health` |
-| `IZITEST_ALLOWED_ORIGINS` | aucune | Sans jeton : origines supplémentaires, séparées par des virgules, dont les pages peuvent lire les réponses du serveur (ex. un Poste de pilotage hébergé). Les pages locales passent toujours |
+| `MCP_HOST` | `127.0.0.1` | Interface the HTTP/SSE server listens on. An interface other than the loopback requires `IZITEST_TOKEN` |
+| `IZITEST_TOKEN` | none | Token required on every route (`Authorization: Bearer …` or `?token=…`), except `/health` |
+| `IZITEST_ALLOWED_ORIGINS` | none | Without a token: additional origins, separated by commas, whose pages can read the server's answers (e.g. a cockpit hosted elsewhere). Local pages always pass |
 
-Voir [security.md](security.md).
+See [security.md](security.md).
 
-### Secrets et questions de l'agent
+### Secrets and the agent's questions
 
-| Variable | Défaut | Description |
+| Variable | Default | Description |
 |----------|--------|-------------|
-| `IZITEST_SECRET_KEY` | aucune | La clé qui chiffre les secrets des projets : 32 octets en base64 (`openssl rand -base64 32`). Sans elle, `~/.izitest/secret.key`, créée au premier secret |
-| `IZITEST_SECRET_KEY_FILE` | `~/.izitest/secret.key` | Où lire ou créer cette clé (`IZITEST_HOME/secret.key` si `IZITEST_HOME` est défini) |
-| `IZITEST_SECRET_<NOM>` | aucune | Remplace la valeur gardée du secret `NOM`, dans tous les projets : une CI donne les siennes |
-| `IZITEST_ASK_WAIT_MS` | `45000` | Combien de temps un appel à `ask_user` attend la réponse avant de dire à l'agent de rappeler |
-| `IZITEST_ASK_TIMEOUT_MS` | `900000` (15 min) | Après quoi une question sans réponse est abandonnée, et l'agent prié d'arrêter |
+| `IZITEST_SECRET_KEY` | none | The key that encrypts the projects' secrets: 32 bytes in base64 (`openssl rand -base64 32`). Without it, `~/.izitest/secret.key`, created at the first secret |
+| `IZITEST_SECRET_KEY_FILE` | `~/.izitest/secret.key` | Where to read or create this key (`IZITEST_HOME/secret.key` if `IZITEST_HOME` is set) |
+| `IZITEST_SECRET_<NAME>` | none | Replaces the stored value of the secret `NAME`, in every project: a CI gives its own |
+| `IZITEST_ASK_WAIT_MS` | `45000` | How long a call to `ask_user` waits for the answer before telling the agent to call again |
+| `IZITEST_ASK_TIMEOUT_MS` | `900000` (15 min) | How long before an unanswered question is dropped, and the agent asked to stop |
 
-Voir [mcp-tools.md](mcp-tools.md#secrets--ce-quun-test-tape-sans-que-personne-le-lise).
+See [mcp-tools.md](mcp-tools.md#secrets-what-a-test-types-without-anyone-reading-it).
 
-### Navigateur sans fenêtre et réseau d'entreprise
+### Headless browser and company network
 
-| Variable | Défaut | Description |
+| Variable | Default | Description |
 |---|---|---|
-| `IZITEST_CHROME_PATH` | aucun | Un Chrome for Testing installé à la main (`chrome.exe`), quand le téléchargement est bloqué |
-| `IZITEST_SYSTEM_CA` | activé | `0` : ne pas ajouter les certificats du système à ceux de Node (Node 22.15 / 23.8 et plus) |
-| `NODE_EXTRA_CA_CERTS` | aucun | Le certificat racine de l'entreprise (`.pem`), pour un Node plus ancien derrière un proxy qui inspecte HTTPS |
+| `IZITEST_CHROME_PATH` | none | A Chrome for Testing installed by hand (`chrome.exe`), when the download is blocked |
+| `IZITEST_SYSTEM_CA` | on | `0`: do not add the system's certificates to Node's (Node 22.15 / 23.8 and later) |
+| `NODE_EXTRA_CA_CERTS` | none | The company's root certificate (`.pem`), for an older Node behind a proxy that inspects HTTPS |
 
-### Vue en direct
+### Live view
 
-| Variable | Défaut | Description |
+| Variable | Default | Description |
 |----------|--------|-------------|
-| `IZITEST_LIVE` | activée | `off` coupe la vue en direct, sans possibilité de la rallumer avant le redémarrage |
-| `IZITEST_LIVE_RECORD` | activé | `off` coupe l'enregistrement continu des sessions, sans possibilité de le rallumer avant le redémarrage |
-| `IZITEST_LIVE_SESSION_MAX_FRAMES` | `300` | Images de flux gardées par session (les plus récentes ; les images d'action sont toutes gardées) |
-| `IZITEST_LIVE_RECORD_INTERVAL_MS` | `1000` | Enregistrement continu coupé : écart entre deux images gardées pendant qu'un spectateur regarde |
-| `IZITEST_LIVE_MAX_FRAMES` | `20000` | Nombre maximal d'images gardées (les plus anciennes partent d'abord) |
-| `IZITEST_LIVE_DIR` | `mcp-server/data/live` | Dossier des images |
+| `IZITEST_LIVE` | on | `off` turns the live view off, with no way to turn it back on before a restart |
+| `IZITEST_LIVE_RECORD` | on | `off` turns the continuous recording of sessions off, with no way to turn it back on before a restart |
+| `IZITEST_LIVE_SESSION_MAX_FRAMES` | `300` | Stream frames kept per session (the most recent; action frames are all kept) |
+| `IZITEST_LIVE_RECORD_INTERVAL_MS` | `1000` | With continuous recording off: the interval between two frames kept while a viewer is watching |
+| `IZITEST_LIVE_MAX_FRAMES` | `20000` | Maximum number of frames kept (the oldest go first) |
+| `IZITEST_LIVE_DIR` | `mcp-server/data/live` | Folder of the frames |
 
-Voir [live-view.md](live-view.md).
+See [live-view.md](live-view.md).
 
 ---
 
-## Configuration Claude Desktop
+## Claude Desktop configuration
 
-### Chemin du fichier de configuration
+### Path of the configuration file
 
-- **macOS** : `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows** : `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux** : `~/.config/Claude/claude_desktop_config.json`
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-### Configuration minimale
+### Minimal configuration
 
 ```json
 {
@@ -81,7 +81,7 @@ Voir [live-view.md](live-view.md).
     "izitest-agent": {
       "command": "node",
       "args": [
-        "/CHEMIN/ABSOLU/vers/izitest-agent/mcp-server/server.js",
+        "/ABSOLUTE/PATH/to/izitest-agent/mcp-server/server.js",
         "--stdio"
       ]
     }
@@ -89,7 +89,7 @@ Voir [live-view.md](live-view.md).
 }
 ```
 
-### Configuration avec variables d'environnement
+### Configuration with environment variables
 
 ```json
 {
@@ -98,7 +98,7 @@ Voir [live-view.md](live-view.md).
       "command": "bash",
       "args": [
         "-c",
-        "export WS_PORT=3458 && export MCP_PORT=3459 && node /chemin/vers/izitest-agent/mcp-server/server.js --stdio"
+        "export WS_PORT=3458 && export MCP_PORT=3459 && node /path/to/izitest-agent/mcp-server/server.js --stdio"
       ]
     }
   }
@@ -107,64 +107,64 @@ Voir [live-view.md](live-view.md).
 
 ---
 
-## Modes de fonctionnement
+## Operating modes
 
-### Mode stdio (recommandé pour Claude Desktop)
+### stdio mode (recommended for Claude Desktop)
 
-Communication via entrées/sorties standard. N'utilise pas de port réseau.
+Communication over standard input/output. Uses no network port.
 
 ```bash
 node server.js --stdio
 ```
 
-**Avantages** :
-- Plus sécurisé (pas de port exposé)
-- Démarre à la demande avec Claude
-- Recommandé pour Claude Desktop
+**Advantages**:
+- More secure (no port exposed)
+- Starts on demand with Claude
+- Recommended for Claude Desktop
 
-### Mode SSE (Server-Sent Events)
+### SSE mode (Server-Sent Events)
 
-Serveur HTTP autonome avec interface web.
+Standalone HTTP server with a web interface.
 
 ```bash
 node server.js
 ```
 
-**Endpoints disponibles** :
-- `http://127.0.0.1:3467/` - Interface web
-- `http://127.0.0.1:3467/sse` - Endpoint SSE pour MCP
-- `http://127.0.0.1:3467/messages` - Messages MCP
-- `http://127.0.0.1:3467/health` - Vérification d'état
-- `http://127.0.0.1:3467/api/*` - API REST
+**Available endpoints**:
+- `http://127.0.0.1:3467/` - Web interface
+- `http://127.0.0.1:3467/sse` - SSE endpoint for MCP
+- `http://127.0.0.1:3467/messages` - MCP messages
+- `http://127.0.0.1:3467/health` - Health check
+- `http://127.0.0.1:3467/api/*` - REST API
 
-**Avantages** :
-- Interface web visuelle
-- API REST pour intégrations externes
-- Permet de monitorer les profils connectés
+**Advantages**:
+- Visual web interface
+- REST API for external integrations
+- Lets you monitor the connected profiles
 
 ---
 
-## Configuration de l'extension Chrome
+## Chrome extension configuration
 
-### Paramètres du popup
+### Popup settings
 
-Cliquez sur l'icône IziTest Agent dans Chrome pour configurer :
+Click the IziTest Agent icon in Chrome to configure:
 
-| Paramètre | Description |
+| Setting | Description |
 |-----------|-------------|
-| **Profile ID** | Identifiant unique du profil (ex: `youtube-work`, `compte-pro`) |
-| **Server URL** | URL du serveur WebSocket (défaut: `ws://127.0.0.1:3466`) |
+| *Profile ID* | Unique identifier of the profile (e.g. `youtube-work`, `work-account`) |
+| Server URL | URL of the WebSocket server (default: `ws://127.0.0.1:3466`) |
 
-### Modifier l'URL du serveur WebSocket
+### Changing the WebSocket server URL
 
-Si vous avez changé `WS_PORT` :
-1. Cliquez sur l'icône IziTest Agent
-2. Modifiez l'URL : `ws://127.0.0.1:VOTRE_PORT`
-3. Cliquez sur "Reconnect"
+If you changed `WS_PORT`:
+1. Click the IziTest Agent icon
+2. Change the URL: `ws://127.0.0.1:YOUR_PORT`
+3. Click *Save & Reconnect*
 
 ---
 
-## Dossiers de données
+## Data folders
 
 ### Structure
 
@@ -172,58 +172,58 @@ Si vous avez changé `WS_PORT` :
 izitest-agent/
 ├── mcp-server/
 │   └── data/
-│       ├── tests.db              # Base de données SQLite
-│       ├── baselines/            # Screenshots de référence VRT
-│       └── assertion-screenshots/# Screenshots d'assertions
+│       ├── tests.db              # SQLite database
+│       ├── baselines/            # VRT reference screenshots
+│       └── assertion-screenshots/# Assertion screenshots
 └── scripts/
     └── launch-profile.sh
 
 ~/.izitest/
 └── profiles/
-    ├── default/                  # Profil par défaut
-    ├── youtube-work/            # Profil personnalisé
+    ├── default/                  # Default profile
+    ├── youtube-work/            # Custom profile
     └── ...
 ```
 
-### Personnaliser le dossier des profils
+### Customizing the profiles folder
 
-Modifiez `scripts/launch-profile.sh` :
+Edit `scripts/launch-profile.sh`:
 
 ```bash
-PROFILES_DIR="/chemin/personnalise/profiles"
+PROFILES_DIR="/custom/path/profiles"
 ```
 
 ---
 
-## Options avancées
+## Advanced options
 
-### Limite de caractères pour les snapshots
+### Character limit for snapshots
 
-Dans `mcp-server/lib/tools/browser.js` :
-- `MAX_SNAPSHOT_CHARS` : 30000 (par défaut)
-- `MAX_MAPPING_CHARS` : 15000 (pour les screenshots)
+In `mcp-server/lib/tools/browser.js`:
+- `MAX_SNAPSHOT_CHARS`: 30000 (by default)
+- `MAX_MAPPING_CHARS`: 15000 (for screenshots)
 
-### Timeout des commandes
+### Command timeout
 
-Les commandes du navigateur ont un timeout implicite de 10 secondes pour l'attente d'éléments.
+Browser commands have an implicit timeout of 10 seconds when waiting for elements.
 
 ---
 
-## Configuration Claude Code
+## Claude Code configuration
 
-### Ajouter le serveur MCP
+### Add the MCP server
 
 ```bash
-claude mcp add izitest-agent node /chemin/vers/izitest-agent/mcp-server/server.js --stdio
+claude mcp add izitest-agent node /path/to/izitest-agent/mcp-server/server.js --stdio
 ```
 
-### Voir les serveurs configurés
+### See the configured servers
 
 ```bash
 claude mcp list
 ```
 
-### Supprimer le serveur
+### Remove the server
 
 ```bash
 claude mcp remove izitest-agent
@@ -231,15 +231,15 @@ claude mcp remove izitest-agent
 
 ---
 
-## Récapitulatif des fichiers de configuration
+## Summary of the configuration files
 
-| Fichier | Usage |
+| File | Use |
 |---------|-------|
-| `claude_desktop_config.json` | Configuration Claude Desktop |
-| `scripts/launch-profile.sh` | Lancement des profils Chrome |
-| `mcp-server/data/tests.db` | Base de données des tests |
-| `extension/dist/manifest.json` | Manifest de l'extension |
-| `~/.izitest/profiles/*` | Données Chrome des profils |
+| `claude_desktop_config.json` | Claude Desktop configuration |
+| `scripts/launch-profile.sh` | Launching the Chrome profiles |
+| `mcp-server/data/tests.db` | Tests database |
+| `extension/dist/manifest.json` | The extension's manifest |
+| `~/.izitest/profiles/*` | Chrome data of the profiles |
 
 ---
 [< Previous: Architecture Details](architecture-details.md) | [Next: Security >](security.md)

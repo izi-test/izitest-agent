@@ -58,7 +58,7 @@ driven by name and share neither cookies nor local storage (checked with Edge 15
 Once your profiles are connected, you can tell Claude exactly which one to use.
 
 ### List Profiles
-Ask Claude: `"Quelle est la liste des profils connectés ?"` (or in English: `"List connected profiles"`).
+Ask Claude: `"List connected profiles"`.
 
 ### Target a Profile
 Claude will automatically include the `profile` parameter in MCP tool calls if you specify it in your request:
@@ -67,7 +67,8 @@ Claude will automatically include the `profile` parameter in MCP tool calls if y
 
 If you don't specify a profile, IziTest Agent will default to the first one that connected to the bridge — never the
 `headless` one, the Chrome without windows the server starts to replay tests out of sight (see
-[MCP Tools Reference → Rejouer sans fenêtre](mcp-tools.md)): it is used only when named.
+[MCP Tools Reference → Replaying without a window](mcp-tools.md#replaying-without-a-window-the-headless-chrome)):
+it is used only when named.
 
 ---
 

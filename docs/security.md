@@ -71,8 +71,8 @@ IziTest Agent stores data locally in the following locations:
 
 ### Database
 - **Location** : `mcp-server/data/izitest.db` (SQLite)
-- **Content** : Tests enregistrés, variables, étapes, assertions
-- **Protection** : Les fichiers ne sont accessibles que par l'utilisateur courant
+- **Content** : Recorded tests, variables, steps, assertions
+- **Protection** : The files can be read by the current user only
 
 ### Secrets of a project
 - **Location** : the `secrets` table of the database, each value encrypted (AES-256-GCM); the key is
@@ -82,17 +82,17 @@ IziTest Agent stores data locally in the following locations:
   place; snapshots mask password fields
 - **Not covered** : a screenshot, or a run's video, of a page that shows a secret in plain text (a
   password field shows dots). Keep secrets for test accounts. See
-  [mcp-tools.md](mcp-tools.md#secrets--ce-quun-test-tape-sans-que-personne-le-lise)
+  [mcp-tools.md](mcp-tools.md#secrets-what-a-test-types-without-anyone-reading-it)
 
 ### Screenshots
-- **Location** : `mcp-server/data/baselines/` et `mcp-server/data/assertion-screenshots/`
-- **Content** : Captures d'écran pour VRT (Visual Regression Testing)
-- **Lifecycle** : Les screenshots d'assertion échouées sont conservés pour diagnostic
+- **Location** : `mcp-server/data/baselines/` and `mcp-server/data/assertion-screenshots/`
+- **Content** : Screenshots for VRT (Visual Regression Testing)
+- **Lifecycle** : The screenshots of failed assertions are kept, to diagnose them
 
 ### Chrome Profiles
 - **Location** : `~/.izitest/profiles/<profile-name>/`
-- **Content** : Données Chrome isolées (cookies, historique, localStorage)
-- **Note** : Ces données sont gérées par Chrome lui-même
+- **Content** : Chrome data kept apart (cookies, history, localStorage)
+- **Note** : This data is managed by Chrome itself
 
 ---
 [< Previous: Configuration](configuration.md) | [Next: Troubleshooting >](troubleshooting.md)

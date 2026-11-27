@@ -18,7 +18,7 @@ page, in its video, in its report — reads `{{secret.NAME}}`, never the value.
 
 *Requirements → New requirement*, or *Import*: a file (CSV, Excel, JSON, Markdown, Word, a Postman
 collection or an OpenAPI document — a request per requirement), Jira, or GitHub Issues
-([connectors](mcp-tools.md#connecteurs--les-outils-doù-viennent-les-exigences-et-où-vont-les-résultats)).
+([connectors](mcp-tools.md#connectors-the-tools-requirements-come-from-and-results-go-to)).
 Any other document — a Word spec written freely, an email, notes, the text of a PDF — is read by the
 agent set in Settings: tick *Have the agent read it*, then choose the file or paste the text. It keeps
 the document's keys, titles and words, writes only the criteria the document states, and lists the
@@ -71,7 +71,7 @@ as soon as the test is saved, for every recording, yours and your agent's.
 1. Describe what the test should check, then *Generate Gherkin*. The agent writes the scenario
    with the project's **library**: its business steps wherever one does what the test needs, its
    phrases with the elements of the app by name. What no step says, it writes as a **new step**, in
-   the words of the domain ("Quand j'ajoute le premier produit trouvé au panier").
+   the words of the domain ("When I add the first product found to the cart").
    An account or a password is one of the project's secrets or a value of its datasets, never an
    invented one: when none fits, the value is left empty (`""`), and the agent asks you for it while
    recording.
@@ -162,9 +162,9 @@ an edited step may now aim at another element. Each step keeps what it types and
 agent works in, live; on the right what you ask and what it answers. Ask in your own words, in
 your language:
 
-> Ce test échoue, répare-le.
+> This test fails, repair it.
 >
-> Ajoute une étape qui coche « Remember me » juste avant le clic sur Sign in.
+> Add a step that checks "Remember me" just before the click on Sign in.
 >
 > Run it and tell me what it checks.
 
@@ -317,7 +317,7 @@ its *Code* tab exports it to Playwright, plain or with Cucumber, a test or an *E
 
 ---
 
-More: driving the browser with the basic tools ([browser-tools.md](browser-tools.md), in French),
+More: driving the browser with the basic tools ([browser-tools.md](browser-tools.md)),
 watching a run ([live-view.md](live-view.md)), several agents at once
 ([parallel-sessions.md](parallel-sessions.md)).
 
