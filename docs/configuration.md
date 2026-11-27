@@ -10,8 +10,10 @@ This document describes all the configuration options available for IziTest Agen
 
 | Variable | Default | Description |
 |----------|--------|-------------|
-| `WS_PORT` | `3466` | WebSocket port for the communication with the Chrome extension |
+| `WS_PORT` | `3466` | WebSocket port for the communication with the Chrome extension. The extension does not read it: see [Changing the WebSocket server URL](#changing-the-websocket-server-url) |
 | `MCP_PORT` | `3467` | HTTP/SSE port for the MCP server (non-stdio mode) |
+| `IZITEST_URL` | `http://127.0.0.1:3467` | Address of the server for `mcp-server/bin/campaign.js`, which does not read `MCP_PORT` |
+| `PORT` | `8777` | Port of the Test Arena that `npm run arena` serves. The server does not read it |
 
 **Example**:
 ```bash
@@ -49,6 +51,8 @@ See [mcp-tools.md](mcp-tools.md#secrets-what-a-test-types-without-anyone-reading
 | `IZITEST_CHROME_PATH` | none | A Chrome for Testing installed by hand (`chrome.exe`), when the download is blocked |
 | `IZITEST_SYSTEM_CA` | on | `0`: do not add the system's certificates to Node's (Node 22.15 / 23.8 and later) |
 | `NODE_EXTRA_CA_CERTS` | none | The company's root certificate (`.pem`), for an older Node behind a proxy that inspects HTTPS |
+| `IZITEST_HOME` | `~/.izitest` | Folder of the headless browser (`browsers/`), of its profiles (`profiles/headless`, `profiles/headless-2`…) and of the secrets' key (`secret.key`). The profiles `scripts/launch-profile.sh` starts stay in `~/.izitest/profiles` |
+| `IZITEST_EXTENSION_DIR` | `extension/dist` | The built extension the headless browser starts with |
 
 ### Live view
 
@@ -60,12 +64,30 @@ See [mcp-tools.md](mcp-tools.md#secrets-what-a-test-types-without-anyone-reading
 | `IZITEST_LIVE_RECORD_INTERVAL_MS` | `1000` | With continuous recording off: the interval between two frames kept while a viewer is watching |
 | `IZITEST_LIVE_MAX_FRAMES` | `20000` | Maximum number of frames kept (the oldest go first) |
 | `IZITEST_LIVE_DIR` | `mcp-server/data/live` | Folder of the frames |
+| `IZITEST_RUN_VIDEO` | on | `off` records no video of a run |
+| `IZITEST_VIDEO_DAYS` | `30` | Days the video of a run is kept |
+| `IZITEST_VIDEO_MAX_FRAMES` | `3000` | Images kept for the video of a run: a longer run keeps its first ones only |
+| `IZITEST_VIDEOS_DIR` | `mcp-server/data/videos` | Folder of the runs' videos (with `IZITEST_DB_PATH` set: a `videos` folder beside the database) |
 
 See [live-view.md](live-view.md).
+
+### Tests and runs
+
+| Variable | Default | Description |
+|----------|--------|-------------|
+| `IZITEST_DB_PATH` | `mcp-server/data/izitest.db` | The file of the SQLite database |
+| `IZITEST_TYPING` | none | `insert`: the `fill` and `act` tools put the whole value in a field at once, instead of one key event per character, unless the call gives `typing` |
+| `IZITEST_ASSERT_TIMEOUT_MS` | none | How long a run reads an assertion again before it fails, for every project, in place of the project's wait for an element (10 s by default). `0`: read once |
+| `VRT_THRESHOLD` | `0.001` (0.1 %) | Share of the pixels that may differ from the reference in a screenshot comparison before it fails |
+| `IZITEST_TEST_CHAT_IDLE_MS` | `1800000` (30 min) | How long a test's conversation with the agent (*Ask the agent*) stays without a message before its browser window is closed |
 
 ---
 
 ## Claude Desktop configuration
+
+The usual way to connect an agent is over SSE, at `http://127.0.0.1:3467/sse`, to a server that is
+already running ([installation.md](installation.md#4-connect-your-agent)); the configurations below
+start a server in stdio mode instead, which is for a single agent.
 
 ### Path of the configuration file
 
@@ -109,18 +131,18 @@ See [live-view.md](live-view.md).
 
 ## Operating modes
 
-### stdio mode (recommended for Claude Desktop)
+### stdio mode (a single agent)
 
-Communication over standard input/output. Uses no network port.
+Communication with the agent over standard input/output: the HTTP port (`MCP_PORT`) is not
+opened. The WebSocket port (`WS_PORT`) still is, for the extension.
 
 ```bash
 node server.js --stdio
 ```
 
 **Advantages**:
-- More secure (no port exposed)
+- No HTTP port exposed
 - Starts on demand with Claude
-- Recommended for Claude Desktop
 
 ### SSE mode (Server-Sent Events)
 
@@ -148,19 +170,27 @@ node server.js
 
 ### Popup settings
 
-Click the IziTest Agent icon in Chrome to configure:
+Click the IziTest Agent icon in Chrome, then the *⚡ Connection* tab, to configure:
 
 | Setting | Description |
 |-----------|-------------|
 | *Profile ID* | Unique identifier of the profile (e.g. `youtube-work`, `work-account`) |
-| Server URL | URL of the WebSocket server (default: `ws://127.0.0.1:3466`) |
+
+*Save & Reconnect* keeps it and connects again. The popup has no setting for the server's URL.
 
 ### Changing the WebSocket server URL
 
+The extension connects to `ws://127.0.0.1:3466`. This URL is a constant of its code (`WS_URL` in
+`extension/src/background.ts`): the extension does not read `WS_PORT`.
+
 If you changed `WS_PORT`:
-1. Click the IziTest Agent icon
-2. Change the URL: `ws://127.0.0.1:YOUR_PORT`
-3. Click *Save & Reconnect*
+1. In `extension/src/background.ts`, change `WS_URL`: `ws://127.0.0.1:YOUR_PORT`
+2. Build the extension again: `npm --prefix extension run build`
+3. Reload the extension by hand in `chrome://extensions`, unless the build says
+   `Extension reloaded in Chrome`
+
+The headless browser starts with the same build (`extension/dist`): it takes the new one at its
+next start.
 
 ---
 
@@ -172,7 +202,7 @@ If you changed `WS_PORT`:
 izitest-agent/
 ├── mcp-server/
 │   └── data/
-│       ├── tests.db              # SQLite database
+│       ├── izitest.db            # SQLite database
 │       ├── baselines/            # VRT reference screenshots
 │       └── assertion-screenshots/# Assertion screenshots
 └── scripts/
@@ -205,13 +235,18 @@ In `mcp-server/lib/tools/browser.js`:
 
 ### Command timeout
 
-Browser commands have an implicit timeout of 10 seconds when waiting for elements.
+A replayed step waits for its element as long as its project says: 10 s by default, from 1 s to
+120 s, set in *Projects → Edit* (see [usage.md](usage.md)). A command sent to the extension times
+out after 30 s by default.
 
 ---
 
 ## Claude Code configuration
 
 ### Add the MCP server
+
+This command starts a server in stdio mode, for a single agent; the usual way is over SSE, with the
+command of [installation.md](installation.md#4-connect-your-agent).
 
 ```bash
 claude mcp add izitest-agent node /path/to/izitest-agent/mcp-server/server.js --stdio
@@ -237,7 +272,7 @@ claude mcp remove izitest-agent
 |---------|-------|
 | `claude_desktop_config.json` | Claude Desktop configuration |
 | `scripts/launch-profile.sh` | Launching the Chrome profiles |
-| `mcp-server/data/tests.db` | Tests database |
+| `mcp-server/data/izitest.db` | Tests database |
 | `extension/dist/manifest.json` | The extension's manifest |
 | `~/.izitest/profiles/*` | Chrome data of the profiles |
 

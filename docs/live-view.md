@@ -10,7 +10,7 @@ They are read-only: GET only, except the setting.
 
 | Route | Response |
 |---|---|
-| `GET /live/sessions` | The active sessions: `name`, `client` (name and version announced by the MCP client), `windowId`, `tabs` (`tabId`, `url`, `title`, `active`, `viewers`, `recording`, `popup`), `lastAction` (`tool`, `at`, `endedAt`, `status`, `frameId`), `recording` (the tabs being recorded) |
+| `GET /live/sessions` | The active sessions: `id`, `name`, `client` (name and version announced by the MCP client), `windowId`, `tabs` (`tabId`, `url`, `title`, `active`, `viewers`, `recording`, `popup`), `lastAction` (`tool`, `at`, `endedAt`, `status`, `frameId`), `recording` (the tabs being recorded), `createdAt` |
 | `GET /live/tabs/{tabId}/stream?fps=10` | MJPEG stream (`multipart/x-mixed-replace`), usable as is in an `<img src>` |
 | `GET /live/frames/{frameId}.jpg` | One kept image |
 | `GET /live/tabs/{tabId}/recording` | The tab's images since its session started (JSON, with the `src` of each image) |
@@ -28,7 +28,7 @@ They are read-only: GET only, except the setting.
 - A viewer that is too slow skips images, but always gets the last one, the one that shows
   the current screen.
 - Only the agents' tabs are visible: windows opened by IziTest Agent and popups opened from
-  them. A tab of the user's answers `403`.
+  them. A tab of the user's answers `403`, unless a session works in it.
 
 **Tab in the background.** Chrome no longer paints a hidden tab (another tab in front, the
 window minimized or covered), and the screencast goes quiet. The extension then captures the
@@ -37,7 +37,7 @@ stream goes on without bringing anything to the front.
 
 ## In the dashboard
 
-The dashboard shows this stream in three places.
+The dashboard shows this stream in four places.
 
 - **The *Live* page** (left menu, `/watch`): each connected agent, with the tabs of its
   window; the tab of the agent that acted last is shown, a click shows another. This is where
@@ -48,7 +48,10 @@ The dashboard shows this stream in three places.
   browser is on the left, the agent's log on the right. The form folds into one line that
   recalls the request; it comes back if the agent fails or is stopped, to try again.
 - **Running a test**: the steps panel widens, with the browser beside it. It is the only
-  way to see a headless run.
+  way to see a headless run while it plays: the *Live* page lists the agents' sessions, not
+  the runs of tests.
+- **Asking the agent about a test** (*Ask the agent*, on the test's page): the browser the
+  agent works in is on the left, the conversation on the right.
 
 At the end, the last image stays on screen.
 
@@ -92,9 +95,9 @@ where it was when a new page loads.
 
 ## One image per action
 
-After each `navigate`, `click`, `fill`, `select`, `keyboard` and `act`, the image of the tab
-is kept once the page has settled (100 ms without a change to the DOM, 300 ms at most). Its
-id comes back in the result:
+After each `navigate`, `click`, `fill`, `select`, `upload_file`, `drag`, `keyboard` and `act`,
+the image of the tab is kept once the page has settled (100 ms without a change to the DOM,
+300 ms at most). Its id comes back in the result:
 
 ```json
 { "success": true, "tag": "button", "changes": ["…"], "frameId": "mv9kgok0-33292a14c0a1" }
@@ -135,8 +138,8 @@ When continuous recording is turned off, a watched tab still keeps one image of 
 second (`IZITEST_LIVE_RECORD_INTERVAL_MS`), as before.
 
 The images are kept **24 h** in `mcp-server/data/live/` (20,000 at most,
-`IZITEST_LIVE_MAX_FRAMES`). A session's recording can still be viewed for 24 h after
-it ends.
+`IZITEST_LIVE_MAX_FRAMES`), each from the moment it was taken. A session's recording can
+still be viewed after it ends, its oldest images going first.
 
 ## Read-only
 
@@ -146,14 +149,16 @@ it ends.
   (The `screenshot` tool, for its part, uses `captureVisibleTab`, which has to activate the tab.)
 - Nothing is drawn on the page: no border, no bar.
 - No snapshot is taken: the agent's `@eX` refs do not move.
-- The only thing put in the tab is a `MutationObserver` in the extension's isolated
-  world, to know when the page is stable. The page does not see it.
+- The only things put in the tab are `MutationObserver`s and listeners of `scroll`, `input`,
+  `resize` and `load`, in the extension's isolated world, to know when the page changes and
+  when it is stable. The page does not see them.
 
 ## Turning it off
 
 - `PUT /live/settings {"enabled": false}`: stops every stream, takes no more images
-  after actions, and all the `/live/*` routes answer `503`. The setting is kept in the
-  database and survives a restart. `{"enabled": true}` turns it back on.
+  after actions, and the `/live/*` routes answer `503`, except `/live/settings`, which
+  still answers. The setting is kept in the database and survives a restart.
+  `{"enabled": true}` turns it back on.
 - `IZITEST_LIVE=off` in the server's environment: turned off, and impossible to
   turn back on without a restart.
 - `PUT /live/settings {"continuousRecording": false}`: turns off continuous recording
@@ -169,8 +174,9 @@ answer `Access-Control-Allow-Origin: *`. They still require the token and change
 nothing. The other routes keep their policy.
 
 Without a token, only local pages and the origins in `IZITEST_ALLOWED_ORIGINS` can
-read `/live/`: these images show the user's tabs, and any site open in the piloted
-Chrome could otherwise read them. A cockpit hosted elsewhere must be added to this
+read `/live/`: these images show the agents' tabs, not the user's, but those tabs are
+open in the piloted Chrome with the sessions the user is signed in to, and any site open
+in that Chrome could otherwise read them. A cockpit hosted elsewhere must be added to this
 list (`IZITEST_ALLOWED_ORIGINS=https://pilotage.example.com`).
 An `<img src>` on the MJPEG stream, which sends no `Origin`, always displays. See
 [security.md](security.md).
@@ -182,8 +188,8 @@ An `<img src>` on the MJPEG stream, which sends no `Origin`, always displays. Se
 - `scroll` leaves no image (it is not in the requested list); the stream shows it.
 - The stream of a hidden tab costs one capture per period (`1/fps`) as long as someone
   is watching. The screencast of a visible tab costs nothing when the page does not move.
-- On a hidden tab, a purely visual change (video, canvas, CSS animation) is only seen
-  at the safety capture, every 5 s.
+- On a hidden tab that is recorded with no viewer, a purely visual change (video, canvas,
+  CSS animation) is only seen at the safety capture, every 5 s.
 - After a restart of the extension, the stream resumes by itself within 5 s.
 
 ## The video of a run

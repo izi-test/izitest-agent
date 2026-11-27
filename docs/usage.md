@@ -51,8 +51,8 @@ also be planned by hand, criterion by criterion.
 
 A planned case becomes a test in one of two ways:
 
-- **Create**, when every step of its scenario is a phrase of the project: the test is made from
-  the Gherkin, nothing to record;
+- **Create**, when every step of its scenario is a phrase of the project: the scenario opens
+  ready, and at *Create test* the agent records it in the browser, phrase by phrase;
 - **Record**: the agent opens the application in Chrome and follows the scenario, finding on the
   page what its steps say in plain words. The dashboard shows its browser live.
 

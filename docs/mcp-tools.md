@@ -105,8 +105,9 @@ These tools are used for direct, real-time control of the browser.
 
 ### Recommended Workflow: The Element Discovery Protocol
 To ensure high reliability, follow this sequence when interacting with elements:
-1.  **Step 1**: Use `screenshot()`. It's the most robust way to find elements, even in complex SPAs.
-2.  **Step 2**: If the element isn't in the mapping, use `snapshot(includeHidden=true, purposeFilter="...")`. Use `searchText` to narrow down the results.
+1.  **Step 1**: Use `snapshot()` with a `purposeFilter` matching what you are about to do (`"fill"`, `"click"`), and `searchText` to narrow down the results. It is fast and cheap: use the `@eX` ref of the element found.
+2.  **Step 2**: If the element isn't in the output, call `snapshot()` again with broader filters: without `purposeFilter`, with another `searchText`, or with `includeHidden=true` if the element might be in a hidden container.
+3.  **Step 3**: Use `screenshot()` only as a last resort, after `snapshot` failed twice or more to find the element: it is expensive (a large image).
 
 ---
 
@@ -1301,9 +1302,12 @@ the kept values are not columns of the Outline.
 | `variables` | object | Replaces the `{{variable}}` placeholders with custom values |
 | `substitutions` | object | Raw text replacement in all the parameters (key → value) |
 | `start_step` | number | Resume the run at a specific step (1-indexed) |
-| `new_window` | boolean | If `true`, runs in a new window instead of a new tab |
+| `new_window` | boolean | Runs the test in a new browser window: `true` by default. `false` reuses the current tab |
 | `close_window` | boolean | Closes the window of a run that passed. By default, as the user chose in *Settings → Browser windows*; `false` leaves it open, for an `add_assertion` on the page where the test stopped. The window of a failed run always stays open: the agent repairs the step there. Never a tab of the user's (`new_window: false`) |
+| `debug` | boolean | `true` runs the test in debug mode: the run starts paused, step by step, and `run_test` answers at once with the execution's number. `debug_action` takes it from there: `step` (one step), `resume` (up to the next breakpoint), `continue`, `toggle_breakpoint`, `abort` |
+| `breakpoints` | number[] | With `debug: true` only: the steps (1-indexed) a resumed run pauses at |
 | `row` | number | For a test that has rows (its own, or those of its dataset): the only row to play, numbered from 1. Without `row`, every row is played, a run each; with `start_step` or `debug`, the first one only |
+| `record_video` | boolean | `true` keeps the video of the run even if it passes; a failed run keeps its video anyway (see Video of a run) |
 
 ### Requirements: what a test is the proof of
 
@@ -1433,7 +1437,7 @@ check it: the agent follows the document, it invents nothing.
 
 A requirement is an object of IziTest, wherever it comes from. A team's tools — Jira, GitHub
 Issues, tomorrow Notion or Linear — are plugged into it by **connectors** (`lib/connectors`): one
-file per tool, which declares how it is reached and what it can do. Three roles, a connector
+file per tool, which declares how it is reached and what it can do. Four roles, a connector
 has one or several:
 
 | Role | What it does | Today |
@@ -1441,6 +1445,7 @@ has one or several:
 | `requirements` | reads the tool's requirements: by a query in its language, their keys, or again (`sync`) to see what changed | Jira (JQL), GitHub Issues (GitHub's search) |
 | `coverage` | tells the tool where each requirement that comes from it stands: a comment of IziTest's, updated afterwards | Jira |
 | `results` | sends a campaign's results, updated if they were sent already | Xray (a Test Execution) |
+| `bugs` | sends a bug of IziTest's as an item of the tool, updated if it was sent already | Jira (an issue) |
 
 The rest is common to all, and done only once:
 - **the settings**: each connector has its card in *Settings* (Jira, Xray, GitHub Issues…), made of
@@ -1452,7 +1457,7 @@ The rest is common to all, and done only once:
   import; the requirement keeps as its `source` the connector's id (`jira`, `github`), its key and its
   link;
 - **writing** is done only on request, after a dry run that shows what would be sent; what was
-  sent (the comment of a story, the Test Execution of a campaign) is remembered
+  sent (the comment of a story, the Test Execution of a campaign, the issue of a bug) is remembered
   (`connector_refs`): sent again, it is updated, not repeated.
 
 | Route or tool | Role |
@@ -1464,7 +1469,8 @@ The rest is common to all, and done only once:
 | `POST /api/connectors/:id/import` | `{ query \| keys \| sync, project_id, dry_run }`: the requirements read, saved when not a dry run |
 | `POST /api/connectors/:id/coverage` | `{ keys \| campaign_id, dry_run }`: the coverage sent, when not a dry run |
 | `POST /api/campaigns/:id/send/:connector` | `{ options, dry_run }`: a campaign's results sent, when not a dry run |
-| `import_from_connector`, `send_coverage`, `send_results` | The same, for an agent: their description lists the connectors and what they take |
+| `POST /api/bugs/:id/send/:connector` | `{ options, dry_run }`: a bug sent, when not a dry run |
+| `import_from_connector`, `send_coverage`, `send_results`, `send_bug` | The same, for an agent: their description lists the connectors and what they take |
 
 #### Writing a connector
 
@@ -1490,6 +1496,7 @@ export const notion = {
   },
   // coverage: { where, render(requirement, { campaign }) → { body, text }, async post(ctx, requirement, body, { ref }) → { ref, action, url } }
   // results:  { what, options, note, prepare(campaign, options, { ref }) → { target, items, payload }, async send(ctx, prepared, { ref }) → { ref, url } }
+  // bugs:     { what, options, note, prepare(bug, options, { ref, suggestedProject }) → { target, type, summary, text, payload }, async send(ctx, prepared, { ref }) → { ref, action, url }, urlOf(ctx, ref) → its link }
 };
 ```
 
@@ -1801,17 +1808,20 @@ stopped at the end of the campaign. Each learns its name from the page it starts
 first (`list_profiles` points it out); an agent uses it only by naming it (`profile: "headless"`).
 Its pages see an ordinary Chrome (no "HeadlessChrome" in the user agent).
 
-- **Dashboard**: the *Headless — no window* option (a test's *Run options*, the campaign form,
-  *Settings*), a single preference remembered; *Run as campaign* and *Run its tests* follow it;
-  *Run again* does as the original campaign did. Not in debug nor with *Use Agent*: the first is
-  watched step by step, the second repairs in the user's Chrome. The window of a headless replay
-  is closed after.
+- **Dashboard**: the *Headless — no window* option (a test's *Run options*, *New campaign*) and
+  *Run headless by default* (*Settings → Headless browser*), a single preference remembered; *Run
+  as campaign* and *Run its tests* follow it; *Run again* does as the original campaign did. Not in
+  debug nor with *Use Agent*: the first is watched step by step, the second repairs in the user's
+  Chrome. The window of a headless replay is closed after.
 - **MCP**: `run_campaign(…, headless: true)`.
 - **CI**: `node mcp-server/bin/campaign.js --project 3 --headless`.
 - **API**: `GET /api/headless` (installed, being installed, started, connected, the lanes connected,
   `idle_minutes`), `POST /api/headless/install|start|stop`, `PUT /api/headless/settings { idle_minutes }`
   (whole minutes, 0 to 1440); `headless: true` in `POST /api/tests/:name/execute` and `POST
   /api/campaigns`.
+
+Its profile is its own: cookies, sessions and storage are not those of the user's Chrome. A
+test of an app behind a login logs in itself.
 
 #### The recording read over before it is saved
 
@@ -1906,9 +1916,6 @@ headless browser that of each run.
 - **API**: `GET /api/settings/windows` → `{ after_run, after_recording }`; `PUT /api/settings/windows
   { after_run?, after_recording? }` (what is not given does not change; a wrong value → 400).
 
-Its profile is its own: cookies, sessions and storage are not those of the user's Chrome. A
-test of an app behind a login logs in itself.
-
 #### Sending a campaign to Xray: `send_results` (`xray` connector)
 
 Xray's API key is set in the dashboard (*Settings → Xray*): its client id and its secret,
@@ -1961,7 +1968,7 @@ form is submitted: to explore in depth (fill in, submit), the connected agent us
 Each bug is kept once (same kind, same page, same click, same message, request, link or
 rule): a later exploration counts it again without duplicating it, a bug marked fixed and
 seen again is reopened, a dismissed bug stays dismissed. Each new bug gets a test that reproduces it,
-`bug_<id>_<type>`: the page, the click that caused it, a second, then the check that fails as long as
+`bug_<id>_<kind>`: the page, the click that caused it, a second, then the check that fails as long as
 the bug is there — and passes the day it is fixed. This test is replayed at once (`confirm`): the bug
 is marked *reproduced by its test* if it does fail on this check. The exploration runs in a window of
 its own, closed at the end, like those of replayed tests. Allow 2 to 10 s per page: Chrome slows down

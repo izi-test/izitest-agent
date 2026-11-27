@@ -35,7 +35,7 @@ errors of the installation itself are in
 2. **The extension is not connected to the server**
    - Click the IziTest Agent icon in Chrome's toolbar
    - Check that the status reads *Online* (green)
-   - If it reads *Offline*, click *Save & Reconnect*
+   - If it reads *Offline*, click *Save & Reconnect*, in the *Connection* tab
 
 3. **The WebSocket server is not running**
    - Check that nothing uses port 3466:
@@ -46,7 +46,10 @@ errors of the installation itself are in
    ```bat
    netstat -ano | findstr LISTENING | findstr :3466
    ```
-   - If it is taken, change the port: `export WS_PORT=3458` (on Windows: `set WS_PORT=3458`)
+   - If it is taken, stop what holds it: often another IziTest server (see
+     [Full reset](#full-reset)). Changing `WS_PORT` alone does not help: the extension connects
+     to port 3466 (see
+     [Changing the WebSocket server URL](configuration.md#changing-the-websocket-server-url))
 
 4. **Firewall / antivirus**
    - Make sure localhost (127.0.0.1) is not blocked
@@ -61,6 +64,21 @@ errors of the installation itself are in
 **Symptom**: The IziTest Agent tools do not appear in Claude.
 
 **Solutions**:
+
+Claude reaches the server in one of two ways. Check the one you set up.
+
+**Claude connects to a server that is already running** (SSE), as in
+[installation, step 4](installation.md#4-connect-your-agent):
+
+- **The server must be running**: `curl http://127.0.0.1:3467/health` answers when it is. If it
+  does not, start it (`npm start`)
+- **The address** Claude is given is `http://127.0.0.1:3467/sse`
+- **The token**: when the server has one (`IZITEST_TOKEN`), Claude must send it in the header
+  `Authorization: Bearer <token>`. Without it, the server answers 403 and Claude has no IziTest
+  tool
+
+**Claude Desktop starts the server itself** (stdio). No other IziTest server may be running
+then: the one Claude Desktop starts says `Port 3466 is already in use` and stops.
 
 1. **Check the Claude Desktop configuration**:
    ```json
@@ -151,7 +169,9 @@ ticked. In your Chrome, nothing is cleared: log out of the application before th
 **Solutions**:
 
 1. **Use the discovery protocol**:
-   - Always start with a `screenshot()` to see the annotated elements
+   - Always start with a `snapshot()` and a `purposeFilter` (`"click"`, `"fill"`): it lists the
+     elements with their `@eX` references. A `screenshot()` is the last resort, after two
+     snapshots did not find the element
    - Use the `@eX` references rather than CSS selectors
 
 2. **Wait for the page to load**:
@@ -159,7 +179,10 @@ ticked. In your Chrome, nothing is cleared: log out of the application before th
    "Wait for .my-element to appear"
    ```
 
-3. **Check the iframes**: IziTest Agent cannot reach elements in cross-origin iframes
+3. **Check the iframes**: IziTest Agent reaches the elements of iframes, those of another site
+   (cross-origin) included: `snapshot`, `click`, `fill`, `select`, `extract` and `wait` work
+   there. The content of an invisible iframe, or of one the extension cannot be injected into,
+   is not in the snapshot: the limits are in [Iframes](iframes.md)
 
 4. **Dynamic elements**: Use `snapshot(includeHidden=true)` for dropdown menus, modals, etc.
 
@@ -187,15 +210,21 @@ ticked. In your Chrome, nothing is cleared: log out of the application before th
 **Symptom**: A saved test cannot be loaded.
 
 **Checks**:
+
+A test is found by its exact name, whatever its project. `list_tests` gives the names of the
+saved tests: compare.
+
 ```bash
 # Check the database
 ls -la mcp-server/data/
 ```
 
-The SQLite database should exist. If it is corrupted, you can recreate it:
+The SQLite database should exist: it is `izitest.db`, and it holds every project, test,
+requirement and campaign. If it is corrupted, do not delete it. Stop the server, which keeps it
+open, then set it aside with its files `izitest.db-wal` and `izitest.db-shm`:
 ```bash
-rm mcp-server/data/tests.db
-cd mcp-server && node -e "require('./lib/db.js').initDatabase()"
+mkdir mcp-server/data/old
+mv mcp-server/data/izitest.db* mcp-server/data/old/
 ```
 
 On Windows, `dir mcp-server\data` lists the folder. The database is `izitest.db`, with its files
@@ -324,7 +353,9 @@ the next action. Agents now do so while recording.
 
 **Optimizations**:
 - Close the tabs you do not need
-- Use `snapshot(compact=true)` to reduce the size of the data
+- Narrow the snapshot to reduce the size of the data: `snapshot(purposeFilter="click")` or
+  `snapshot(purposeFilter="fill")` keeps only what can be clicked or filled in, and `searchText`
+  only the elements whose text matches. `compact` is already on by default
 - Limit the depth with `maxDepth` in snapshot
 
 ---
@@ -334,7 +365,7 @@ the next action. Agents now do so while recording.
 ### Check the state of the system
 
 ```bash
-# 1. Check the WebSocket server
+# 1. Check the server
 curl http://127.0.0.1:3467/health
 
 # 2. Check the connected profiles
@@ -350,20 +381,15 @@ background (`npm --prefix mcp-server run ensure`) has no console: its messages a
 
 ### Debug mode
 
-To see the communications in real time:
+There is no debug mode to turn on, and the server reads no `DEBUG` variable: it always writes
+what it does, the commands sent to the browser (`[OUT]`) and their answers (`[IN]`) included. To
+see the communications in real time, look at:
 
-```bash
-cd mcp-server
-DEBUG=* node server.js --stdio
-```
-
-On Windows:
-
-```bat
-cd mcp-server
-set DEBUG=*
-node server.js --stdio
-```
+- the console the server runs in, when it was started with `npm start`
+- `mcp-server/data/server.log` (on Windows, `mcp-server\data\server.log`), when it was started
+  in the background with `npm --prefix mcp-server run ensure`
+- `curl http://127.0.0.1:3467/health` for the server's state: it answers with the connected
+  profiles and how long the server has been running
 
 ### Full reset
 
