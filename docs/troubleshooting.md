@@ -2,6 +2,11 @@
 
 Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
 
+**Sous Windows** : là où une commande diffère, sa forme Windows suit, pour l'Invite de commandes.
+Pour PowerShell, voir [les commandes qui diffèrent](installation.md#commands-that-differ). Les
+erreurs de l'installation elle-même sont dans
+[When something fails](installation.md#when-something-fails).
+
 ---
 
 ## Problèmes de connexion
@@ -19,7 +24,13 @@ Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
 1. **L'extension Chrome n'est pas installée**
    - Vérifiez que l'extension est chargée dans `chrome://extensions/`
    - Activez le "Mode développeur" en haut à droite
-   - Cliquez sur "Charger l'extension non empaquetée" et sélectionnez le dossier `extension/`
+   - Cliquez sur "Charger l'extension non empaquetée" et sélectionnez le dossier `extension/dist`
+   - Dans Edge, la même adresse mène à `edge://extensions/`. « Mode développeur » est en bas du
+     menu de gauche, derrière ☰ quand la fenêtre est étroite. « Charger l'extension décompressée »
+     est sur la ligne « Options pour les développeurs » qui apparaît alors : dans une fenêtre
+     étroite, c'est la première de ses trois icônes, sans son nom
+   - Dans Edge, sans le mode développeur, l'extension est là mais « désactivée » (« Pour utiliser
+     cette extension, activez le mode développeur. »)
 
 2. **L'extension n'est pas connectée au serveur**
    - Cliquez sur l'icône IziTest Agent dans la barre Chrome
@@ -31,7 +42,11 @@ Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
    ```bash
    lsof -i :3466
    ```
-   - Si occupé, changez de port : `export WS_PORT=3458`
+   Sous Windows (le nombre qui termine la ligne est le numéro du processus qui l'occupe) :
+   ```bat
+   netstat -ano | findstr LISTENING | findstr :3466
+   ```
+   - Si occupé, changez de port : `export WS_PORT=3458` (sous Windows : `set WS_PORT=3458`)
 
 4. **Pare-feu / antivirus**
    - Assurez-vous que localhost (127.0.0.1) n'est pas bloqué
@@ -63,11 +78,20 @@ Ce guide vous aide à résoudre les problèmes courants avec IziTest Agent.
    ```
    > **Important** : Le flag `--stdio` est obligatoire !
 
+   > **Sous Windows** : dans ce fichier, écrivez le chemin avec des `/`
+   > (`"C:/izitest-agent/mcp-server/server.js"`) ou en doublant chaque `\`
+   > (`"C:\\izitest-agent\\mcp-server\\server.js"`). Avec des `\` simples, le fichier n'est plus
+   > du JSON valide.
+
 2. **Redémarrez Claude Desktop** après modification de la config
 
 3. **Vérifiez les permissions** :
    ```bash
    ls -la /chemin/vers/izitest-agent/mcp-server/server.js
+   ```
+   Sous Windows (le fichier doit être listé) :
+   ```bat
+   dir C:\chemin\vers\izitest-agent\mcp-server\server.js
    ```
 
 4. **Testez le serveur manuellement** :
@@ -173,6 +197,18 @@ La base SQLite devrait exister. Si elle est corrompue, vous pouvez la recréer :
 rm mcp-server/data/tests.db
 cd mcp-server && node -e "require('./lib/db.js').initDatabase()"
 ```
+
+Sous Windows, `dir mcp-server\data` liste le dossier. La base est `izitest.db`, avec ses fichiers
+`izitest.db-wal` et `izitest.db-shm`. Pour repartir d'une base vide, arrêtez d'abord le serveur :
+tant qu'il tourne, Windows refuse d'y toucher (« … utilisé par un autre processus »). Mettez ensuite
+ces fichiers de côté :
+
+```bat
+mkdir mcp-server\data\old
+move mcp-server\data\izitest.db* mcp-server\data\old
+```
+
+Au démarrage suivant, le serveur crée une base neuve. Vos projets et vos tests restent dans `old`.
 
 ### Le test échoue à une étape spécifique
 
@@ -309,6 +345,10 @@ curl http://127.0.0.1:3467/health
 # Dans le dossier mcp-server, consultez les erreurs dans la console
 ```
 
+Sous Windows, dans PowerShell, tapez `curl.exe` à la place de `curl`. Un serveur démarré en
+arrière-plan (`npm --prefix mcp-server run ensure`) n'a pas de console : ses messages sont dans
+`mcp-server\data\server.log`.
+
 ### Mode debug
 
 Pour voir les communications en temps réel :
@@ -316,6 +356,14 @@ Pour voir les communications en temps réel :
 ```bash
 cd mcp-server
 DEBUG=* node server.js --stdio
+```
+
+Sous Windows :
+
+```bat
+cd mcp-server
+set DEBUG=*
+node server.js --stdio
 ```
 
 ### Réinitialisation complète
@@ -340,6 +388,31 @@ lsof -i :3466,3467
 # 6. Redémarrez Claude Desktop
 ```
 
+Sous Windows, les étapes 2 à 4 se font ainsi, depuis le dossier d'IziTest :
+
+- **Fermer le navigateur des tests.** Cette commande ferme toutes les fenêtres de Chrome, les
+  vôtres comprises. Pour Edge, écrivez `msedge.exe`.
+
+  ```bat
+  taskkill /IM chrome.exe /F
+  ```
+
+- **Arrêter le serveur.** La première commande montre qui écoute sur ses deux ports. Le nombre
+  qui termine la ligne va à la place de `<numéro>` dans la seconde. Relancée ensuite, la
+  première ne doit plus rien afficher.
+
+  ```bat
+  netstat -ano | findstr LISTENING | findstr ":3466 :3467"
+  taskkill /PID <numéro> /T /F
+  ```
+
+- **Redémarrer le navigateur avec le profil.** La commande démarre Chrome, ou Edge là où Chrome
+  n'est pas installé.
+
+  ```bat
+  powershell -ExecutionPolicy Bypass -File scripts\launch-profile.ps1 default
+  ```
+
 ---
 
 ## Obtenir de l'aide
@@ -355,6 +428,8 @@ Si le problème persiste :
    - Console Claude Desktop (Help > Toggle Developer Tools)
    - Console du navigateur Chrome (F12)
    - Console du service worker de l'extension (`chrome://extensions/` > Service Worker)
+   - Dans Edge, les mêmes adresses mènent à `edge://version` et `edge://extensions/`, où le lien
+     du service worker s'appelle « travailleur du service »
 
 3. **Testez minimal** :
    - Un seul profil

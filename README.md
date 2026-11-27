@@ -67,6 +67,9 @@ only.
 **You need** Node.js 22.12 or newer, Google Chrome and git. To have tests written by an agent: Claude
 Code (or another MCP client). For the Dolibarr demo: Docker.
 
+**On Windows**, git is optional, Microsoft Edge can stand in for Chrome, and the terminal and a
+few commands differ: read [On Windows](docs/installation.md#on-windows) first.
+
 **1. Install and build** (the server, its dashboard and the extension):
 
 ```bash

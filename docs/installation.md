@@ -10,6 +10,8 @@ you connect to it.
 - To have tests written by an agent: **Claude Code**, Claude Desktop or another MCP client. The
   dashboard's own agent can also be a model reached with an API key.
 - For the [Dolibarr demo](../demo/dolibarr): **Docker**.
+- **On Windows**, git is optional and Microsoft Edge can stand in for Chrome. Read
+  [On Windows](#on-windows) before step 1: the terminal and a few commands differ.
 
 ## 1. Install and build
 
@@ -201,6 +203,117 @@ curl http://127.0.0.1:3467/health
 
 lists the connected Chrome profiles: one per Chrome where the extension runs. If it lists none,
 see [troubleshooting](troubleshooting.md).
+
+## On Windows
+
+The five steps are the same on Windows. What changes is what you install, the terminal you type
+in, and a few commands. This was checked on Windows 11 (an ARM64 PC) with Node.js 22 and 26.
+
+### What to install
+
+- **Node.js**: the Windows installer of an LTS version, from <https://nodejs.org>. Keep its
+  default choices. If it offers tools for native modules, leave them out: IziTest compiles
+  nothing. Then open a new terminal: one opened before the installation does not find `node`.
+- **git is optional.** Without it, on the repository's page, *Code → Download ZIP*, then unzip
+  it: the folder is named `izitest-agent-main`. To update later, download the ZIP again and take
+  your `mcp-server\data` folder along: your projects, tests and runs are in it, and the ZIP has
+  none.
+- **A browser.** Microsoft Edge, which Windows already has, can stand in for Chrome, and tests
+  replay in it. There, `chrome://extensions` leads to `edge://extensions`. **Developer mode** is
+  at the bottom of the menu on the left, behind ☰ when the window is narrow. **Load unpacked**
+  is on the *Developer options* line that then appears: in a narrow window, it is the first of
+  its three icons, without its name. With no browser to put the extension in,
+  [step 5](#5-replay-without-windows-optional) is enough.
+
+Put the folder in a short path, such as `C:\izitest-agent`. Once set up, its longest path is
+about 180 characters, and several Windows tools stop at 260 in all (deleting the folder, for
+one).
+
+### The terminal
+
+Type the commands in **Command Prompt** (search `cmd` in the Start menu). In **PowerShell**,
+Windows refuses `npm` by default:
+
+```
+npm : File C:\Program Files\nodejs\npm.ps1 cannot be loaded because running scripts is disabled on this system.
+```
+
+Nothing is broken, and no setting has to change: type `npm.cmd` in place of `npm`
+(`npm.cmd run setup`, `npm.cmd start`), or use Command Prompt. The same goes for the commands
+npm installs, such as `pm2`.
+
+`npm run setup` takes about two minutes. Its `npm warn` lines are not errors.
+
+### Commands that differ
+
+| In this documentation | Command Prompt | PowerShell |
+|---|---|---|
+| `npm …` | the same | `npm.cmd …` |
+| `$IZITEST_TOKEN` | `%IZITEST_TOKEN%` | `$env:IZITEST_TOKEN` |
+| `curl http://127.0.0.1:3467/health` | the same | `curl.exe http://127.0.0.1:3467/health` |
+| `~/.izitest` | `%USERPROFILE%\.izitest` | `$env:USERPROFILE\.izitest` |
+| `export NAME=value` | `set NAME=value` | `$env:NAME = "value"` |
+| `lsof -i :3466` | `netstat -ano \| findstr :3466` | the same |
+
+So the command of step 4 is, in Command Prompt:
+
+```bat
+claude mcp add --transport sse -s local izitest-agent http://127.0.0.1:3467/sse -H "Authorization: Bearer %IZITEST_TOKEN%"
+```
+
+Typed as in step 4, `$IZITEST_TOKEN` is sent empty by PowerShell and as those very letters by
+Command Prompt: a server that has a token answers 403.
+
+### The token, on Windows
+
+1. Make a random value (Windows has no `openssl`):
+
+   ```bat
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
+2. Keep it for your account, the value in place of `<value>`, then open a new terminal: one
+   already open does not have it.
+
+   ```bat
+   setx IZITEST_TOKEN <value>
+   ```
+
+3. Stop the server if it runs, and start it from the new terminal.
+
+### Start and stop the server
+
+- `npm start` runs in its terminal: leave the window open. **Ctrl+C** stops the server and its
+  browser without windows. Windows then asks `Terminate batch job (Y/N)?`: the server has
+  already stopped, answer `Y`. Closing the window stops them as well.
+- `npm --prefix mcp-server run ensure` starts it in the background: it goes on when the
+  terminal is closed, and writes to `mcp-server\data\server.log`. It does not start with
+  Windows: run the command again after a restart.
+- To stop a server started that way, find its process (the number that ends the line), then
+  stop it. `/T` stops its browser without windows with it.
+
+  ```bat
+  netstat -ano | findstr LISTENING | findstr :3467
+  taskkill /PID <number> /T /F
+  ```
+
+### The dashboard's agent
+
+The CLI chosen in *Settings* (`claude`, `gemini`, `copilot`, `opencode`) is looked for on the
+`PATH` the server started with. After installing one, open a new terminal and start the server
+again from it. *Test* then says whether it answers.
+
+### When something fails
+
+- **`'node' is not recognized`** (or `'npm'`): Node.js is not installed, or the terminal was
+  opened before it was. Open a new one.
+- **`npm.ps1 cannot be loaded`**: see [the terminal](#the-terminal).
+- **`No prebuilt binaries found`** during `npm run setup`: this Node.js is newer than the ones
+  IziTest's database module is built for (22, 24 and 26 today). Install an LTS version.
+- **`Port 3466 is already in use`**: a server is already running, in another window or in the
+  background. Use it, or [stop it](#start-and-stop-the-server).
+- ***Test* answers `not found or not executable`**: see
+  [the dashboard's agent](#the-dashboards-agent).
 
 ---
 [< Introduction](introduction.md) | [Usage >](usage.md)
