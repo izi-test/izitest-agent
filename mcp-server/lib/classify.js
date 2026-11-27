@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { log } from './logger.js';
 import { evaluate, getOpenRouterKey } from './jev.js';
 import { itemLabel, isNavigation } from './variable-detection.js';
+import { resolveCli } from './agent/cli-spawn.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -103,9 +104,12 @@ export async function classifyWithLLM(listContext, intent) {
   ].filter(Boolean).join('\n');
 
   try {
-    const { stdout } = await execFileAsync('copilot', ['--model', 'gpt-4.1', '-p', prompt], {
+    // On Windows, what the .cmd of a CLI installed with npm starts (lib/agent/cli-spawn.js).
+    const cli = resolveCli('copilot');
+    const { stdout } = await execFileAsync(cli.command, [...cli.args, '--model', 'gpt-4.1', '-p', prompt], {
       timeout: 30000,
-      encoding: 'utf-8'
+      encoding: 'utf-8',
+      windowsHide: true
     });
 
     const jsonMatch = stdout.match(/\{[\s\S]*?\}/);

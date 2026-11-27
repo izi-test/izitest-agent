@@ -1,11 +1,12 @@
 // REST API routes for test & step CRUD
 
-import { execFile, spawn } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { writeFileSync, unlinkSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { writeAgentMcpConfig, dashboardToolName } from './agent/cli-mcp.js';
 import { cliModelArgs, isModelName } from './agent/cli-model.js';
+import { resolveCli, spawnCliProcess, stopCliProcess } from './agent/cli-spawn.js';
 import { runVideo, runVideoFrame } from './run-video.js';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -1711,10 +1712,14 @@ export async function apiRouter(req, res, url) {
       if (model && !isModelName(model)) return json(res, 200, { success: false, error: `"${model.slice(0, 80)}" is not a model name` });
 
       const baseCmd = command.trim().split(/\s+/)[0];
-      const run = (flag) => execFileAsync(baseCmd, [flag], {
+      // On Windows, what the .cmd of a CLI installed with npm starts (lib/agent/cli-spawn.js).
+      let cli;
+      try { cli = resolveCli(baseCmd); } catch (err) { return json(res, 200, { success: false, error: err.message }); }
+      const run = (flag) => execFileAsync(cli.command, [...cli.args, flag], {
         timeout: 10000,
         encoding: 'utf-8',
-        env: { ...process.env, PATH: process.env.PATH }
+        env: { ...process.env, PATH: process.env.PATH },
+        windowsHide: true
       });
       let output;
       try {
@@ -1927,11 +1932,21 @@ export async function apiRouter(req, res, url) {
       log(`Agent run: spawning ${baseCmd} with args: ${JSON.stringify(args.map(a => a.length > 200 ? a.substring(0, 200) + '...' : a))}`);
       log(`Agent prompt:\n--- AGENT PROMPT START ---\n${body.prompt}\n--- AGENT PROMPT END ---`);
 
-      const child = spawn(baseCmd, args, {
-        env: { ...process.env, PATH: process.env.PATH },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: true
-      });
+      let child;
+      try {
+        child = spawnCliProcess(baseCmd, args, {
+          env: { ...process.env, PATH: process.env.PATH },
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: true
+        });
+      } catch (err) {
+        // A command IziTest cannot start (lib/agent/cli-spawn.js): said to the page, like a CLI not found.
+        log(`Agent spawn error: ${err.message}`);
+        if (tmpMcpConfig) { try { unlinkSync(tmpMcpConfig); } catch {} }
+        res.write(`data: ${JSON.stringify({ type: 'error', error: `Failed to start agent: ${err.message}` })}\n\n`);
+        res.end();
+        return;
+      }
 
       let outputBuffer = '';
       let lineBuffer = '';
@@ -2015,10 +2030,12 @@ export async function apiRouter(req, res, url) {
         res.end();
       });
 
-      // If client disconnects, kill the agent process group
-      req.on('close', () => {
+      // If client disconnects (Stop, the page closed), kill the agent and what it started. Heard
+      // on the response: the request's own 'close' comes once its body is read, long before this.
+      res.on('close', () => {
+        if (res.writableEnded) return; // the run ended by itself: all of this is done
         if (!child.killed) {
-          try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+          stopCliProcess(child);
           log('Agent process group killed (client disconnected)');
         }
         cleanupTmpConfig();
