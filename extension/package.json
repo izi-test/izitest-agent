@@ -5,8 +5,8 @@
   "scripts": {
     "build": "npm run clean && npm run copy && node build.js",
     "watch": "npm run copy && node watch.js",
-    "copy": "mkdir -p dist && cp manifest.json popup.html popup.js dist/ && cp -R icons dist/ && cp node_modules/axe-core/axe.min.js dist/",
-    "clean": "rm -rf dist",
+    "copy": "node copy-static.js",
+    "clean": "node copy-static.js --clean",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.mjs"
   },
